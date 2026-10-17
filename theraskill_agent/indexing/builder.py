@@ -315,6 +315,10 @@ def _verify_files(root, manifest):
         if name not in manifest['files']:
             raise ValueError(f'required index artifact missing: {name}')
         with closing(sqlite3.connect(f'{(Path(root) / name).as_uri()}?mode=ro', uri=True)) as db:
+            # Full releases contain millions of records. SQLite's default
+            # 2 MiB page cache makes quick_check repeatedly fetch index pages
+            # from network storage; bound one verification connection at 256 MiB.
+            db.execute('PRAGMA cache_size=-262144')
             if db.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
                 raise ValueError(f'SQLite integrity check failed: {name}')
     with closing(sqlite3.connect(f'{(Path(root) / DB).as_uri()}?mode=ro', uri=True)) as db:

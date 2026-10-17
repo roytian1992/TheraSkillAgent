@@ -31,6 +31,13 @@ embedding service. Model identity and dimensions must match at query time.
 
 ## Query understanding and feature routes
 
+Local retrieval reserves one matching item from the skill's primary knowledge
+family. If response examples fill the global candidate pool, it recalls that
+family with the same query and hard filters before ranking the remaining items
+by relevance. It never inserts arbitrary records from a family with no text
+match. The result marks this choice with
+`selection_reason: skill_primary_evidence`.
+
 Retrieval starts with a shared local layer that normalizes Unicode and transcript
 punctuation, detects Chinese/English/mixed text, identifies task and risk cues,
 and creates bounded lexical variants. It expands only concepts actually present

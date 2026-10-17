@@ -44,7 +44,7 @@ def _match(terms):
 
 
 def rank_candidates(hits, understanding):
-    """Fuse channel ranks; a small route prior cannot drown out relevance."""
+    """Keep a matching primary evidence item, then order the rest by relevance."""
     preferred = (understanding.get('route') or {}).get('preferred_families') or []
     priority = {family: rank for rank, family in enumerate(preferred)}
     for hit in hits:
@@ -54,7 +54,17 @@ def rank_candidates(hits, understanding):
         hit['route_reason'] = 'skill_preferred_family' if family in priority else 'general_knowledge_match'
         relevance = hit.get('relevance_score', 0.0)
         hit['ranking_score'] = relevance * (1 + 0.08 / (rank + 1))
-    return sorted(hits, key=lambda hit: (-hit['ranking_score'], str(hit.get('retrieval_id'))))
+    ranked = sorted(hits, key=lambda hit: (-hit['ranking_score'], str(hit.get('retrieval_id'))))
+    # Response examples outnumber method/rubric records by several orders of
+    # magnitude. One matching item from the skill's primary family keeps those
+    # examples from displacing the evidence needed to perform the actual task.
+    # This only selects recalled matches; an absent family is never fabricated.
+    if preferred:
+        anchor = next((hit for hit in ranked if hit.get('dedup_family') == preferred[0]), None)
+        if anchor is not None:
+            anchor['selection_reason'] = 'skill_primary_evidence'
+            ranked = [anchor] + [hit for hit in ranked if hit is not anchor]
+    return ranked
 
 
 def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit=80):
@@ -66,12 +76,23 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         terms = understanding.get('lexical_terms') or []
         channels = []
+        preferred = (understanding.get('route') or {}).get('preferred_families') or []
+        primary = preferred[0] if preferred else None
         if terms:
             rows = db.execute(f'''SELECT m.*,f.retrieval_text,bm25(retrieval_fts) AS score
                 FROM retrieval_fts f JOIN retrieval_meta m USING(retrieval_id)
                 WHERE retrieval_fts MATCH ? AND {where} ORDER BY f.rank LIMIT ?''',
                 (_match(terms[:80]), *params, limit)).fetchall()
             channels.append(('bm25', rows))
+            if primary and not any(row['dedup_family'] == primary for row in rows):
+                # Scope inside recall: otherwise a large style corpus can fill
+                # every candidate slot before the much smaller rubric is seen.
+                primary_rows = db.execute(f'''SELECT m.*,f.retrieval_text,bm25(retrieval_fts) AS score
+                    FROM retrieval_fts f JOIN retrieval_meta m USING(retrieval_id)
+                    WHERE retrieval_fts MATCH ? AND {where} AND m.dedup_family=?
+                    ORDER BY f.rank LIMIT ?''',
+                    (_match(terms[:80]), *params, primary, min(limit, 8))).fetchall()
+                channels.append(('primary_bm25', primary_rows))
         cjk = understanding.get('cjk_terms') or []
         indexed_cjk = [term for term in cjk if len(term) in (2, 3)]
         if indexed_cjk and 'retrieval_cjk_fts' in tables:
@@ -84,6 +105,14 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
                 WHERE retrieval_cjk_fts MATCH ? AND {where} ORDER BY c.rank LIMIT ?''',
                 (_match(indexed_cjk), *params, limit)).fetchall()
             channels.append(('cjk_bm25', rows))
+            if primary and not any(row['dedup_family'] == primary for row in rows):
+                primary_rows = db.execute(f'''SELECT m.*,f.retrieval_text,bm25(retrieval_cjk_fts) AS score
+                    FROM retrieval_cjk_fts c JOIN retrieval_meta m USING(retrieval_id)
+                    JOIN retrieval_fts f ON f.rowid=c.rowid AND f.retrieval_id=c.retrieval_id
+                    WHERE retrieval_cjk_fts MATCH ? AND {where} AND m.dedup_family=?
+                    ORDER BY c.rank LIMIT ?''',
+                    (_match(indexed_cjk), *params, primary, min(limit, 8))).fetchall()
+                channels.append(('primary_cjk_bm25', primary_rows))
         elif cjk:
             # Historical artifacts lack the segmented token index. This path
             # trades latency for compatibility; rebuilding enables indexed recall.

@@ -106,6 +106,35 @@ def test_concept_expansion_crosses_languages_without_changing_explicit_skill(tmp
     assert search_index(tmp_path / 'zh-index', 'cognitive reframing', skill='cognitive-reframing-support')[0]['release_unit_id'] == 'reframe_zh'
 
 
+def test_primary_evidence_survives_a_large_style_pool_without_bypassing_filters(tmp_path):
+    template = json.loads(DEMO.read_text().splitlines()[0])
+    records = [
+        {**template, 'id': f'style_{i}', 'family': 'style_response', 'language': 'en',
+         'title': 'evidence', 'text': 'evidence ' * 40}
+        for i in range(120)
+    ]
+    records.extend([
+        {**template, 'id': 'method', 'family': 'method_rubric', 'language': 'zh',
+         'title': 'Structured method', 'text': 'evidence ' + 'collaborative ' * 60},
+        {**template, 'id': 'unrelated_method', 'family': 'method_rubric', 'language': 'en',
+         'title': 'Unrelated method', 'text': 'headache'},
+    ])
+    source = tmp_path / 'knowledge.jsonl'
+    source.write_text(''.join(json.dumps(row) + '\n' for row in records))
+    output = tmp_path / 'index'
+    build_index(source, output)
+
+    # The unscoped pool really is dominated by examples in this fixture.
+    general = search_index(output, 'evidence', limit=50)
+    assert all(hit['dedup_family'] == 'style_response' for hit in general)
+    scoped = search_index(output, 'evidence', skill='cognitive-reframing-support')
+    assert scoped[0]['release_unit_id'] == 'method'
+    assert scoped[0]['selection_reason'] == 'skill_primary_evidence'
+    assert 'unrelated_method' not in [hit['release_unit_id'] for hit in scoped]
+    filtered = search_index(output, 'evidence', skill='cognitive-reframing-support', filters={'language': 'en'})
+    assert filtered and all(hit['dedup_family'] == 'style_response' for hit in filtered)
+
+
 @pytest.mark.parametrize('filters', [[], {'unknown': 'x'}, {'language': {'value': 'zh'}}, {'language': [1]}, {'language': True}])
 def test_invalid_filters_are_rejected(filters):
     with pytest.raises(ValueError):
