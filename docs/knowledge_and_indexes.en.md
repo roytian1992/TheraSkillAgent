@@ -21,7 +21,11 @@ theraskill-agent knowledge activate --index demo-v2
 The included bilingual demo contains six self-authored synthetic records. Full
 knowledge and simulation resources are distributed separately; there is currently
 no public download URL. Default indexes live in `data/theraskill/indexes/<id>/`.
-Lexical builds require neither model requests nor NumPy/FAISS.
+Lexical builds include the main FTS, a compact English FTS partition, metadata,
+and compact-label SQLite files. The English partition keeps language-scoped
+queries away from the full mixed-language corpus; older indexes can still run
+without it, with higher latency. Lexical builds require neither model requests
+nor NumPy/FAISS.
 
 For hybrid indexes, install `pip install -e '.[retrieval]'` and add `--mode hybrid`
 to plan/build. The embedding model, URL and key come from the independent
@@ -85,11 +89,12 @@ theraskill-agent index search --index demo-v2 \
   --filters '{"language":"zh"}'
 ```
 
-New builds add a Chinese 2/3-character token FTS index inside the main SQLite file.
-Historical indexes use a substring fallback that may be slower. Rebuild under a new
-ID to enable indexed Chinese recall and the language column. The new projection
-version prevents reuse of old build checkpoints. Detected language does not impose
-a hard filter, so cross-language recall remains possible.
+New builds add a Chinese 2/3-character token FTS index inside the main SQLite file
+and an English partition beside it. Historical indexes use a substring fallback
+that may be slower. Rebuild under a new ID to enable indexed Chinese recall, the
+language column, and the English partition. The new projection version prevents
+reuse of old build checkpoints. Detected language does not impose a hard filter,
+so cross-language recall remains possible.
 
 CLI and workbench index tests use local BM25 or BM25/vector fusion. The Agent tool
 and support assistant use the advanced planner, lexical/vector/label channels,

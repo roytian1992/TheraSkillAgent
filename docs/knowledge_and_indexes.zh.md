@@ -19,7 +19,7 @@ theraskill-agent knowledge activate --index demo-v1
 theraskill-agent knowledge list
 ```
 
-默认产物位于 `data/theraskill/indexes/<id>/`。词法构建生成主 FTS、metadata 和 compact-label 三个 SQLite 文件，保留旧检索器使用的来源与路由字段。不会调用 LLM 或 embedding 服务，也不要求安装 NumPy / FAISS。
+默认产物位于 `data/theraskill/indexes/<id>/`。词法构建生成主 FTS、英文分区 FTS、metadata 和 compact-label SQLite 文件，保留旧检索器使用的来源与路由字段。英文分区索引让语言过滤不必扫描全量混合语料；旧索引没有该文件时仍可正常使用，只是可能较慢。词法构建不会调用 LLM 或 embedding 服务，也不要求安装 NumPy / FAISS。
 
 ```bash
 pip install -e '.[retrieval]'
@@ -89,7 +89,7 @@ theraskill-agent index search --index demo-v1 \
 
 输出清单记录所有文件 hash / 大小、输入知识 hash、模型身份、维度和覆盖数量。`total` 是知识总数，`indexed` 是可词法检索数量，`embedding_eligible` / `vectors` 是可嵌入 / 实际嵌入数量；不能把总知识数当向量数。
 
-新增向量或更换 embedding 模型时，可用 `--reuse-lexical 已完成索引ID` 和新的输出 ID 复用词法文件。系统先验证源索引，要求知识 hash、投影版本和字段映射完全一致，再复制三个词法文件；不会复用其他模型的向量。界面混合构建也提供此选项。
+新增向量或更换 embedding 模型时，可用 `--reuse-lexical 已完成索引ID` 和新的输出 ID 复用词法文件。系统先验证源索引，要求知识 hash、投影版本和字段映射完全一致，再复制词法文件（包括可选的英文分区文件）；不会复用其他模型的向量。界面混合构建也提供此选项。
 
 直接 `embedding` 配置可设置 `batch_size` 和 `workers`（默认 1，最高 16）。请求可并发执行，但向量批次与恢复游标按来源顺序提交，避免后完成的失败批次被跳过。这两个吞吐设置不影响模型身份。取消时可能已有未提交的请求在执行，恢复可能重复这部分请求，但不会漏掉或重复保存知识 ID。
 
