@@ -56,11 +56,11 @@ def plan_index(knowledge, *, mode='lexical', mapping=None, embedding_config=None
 def _lexical(source, output, mapping, progress, cancel):
     # An interrupted lexical phase is safely rebuilt. Completed embedding batches
     # are retained separately; no half-committed sidecars are ever activated.
-    for name in (DB, 'metadata_v2.sqlite', 'compact_label_v1.sqlite'):
+    for name in (DB, 'retrieval_en.sqlite', 'metadata_v2.sqlite', 'compact_label_v1.sqlite'):
         for suffix in ('', '-wal', '-shm'):
             (output / (name + suffix)).unlink(missing_ok=True)
     counts = _counts()
-    with closing(sqlite3.connect(output / DB)) as db, closing(metadata.connect_db(output / 'metadata_v2.sqlite', False)) as meta, closing(labels.connect(output / 'compact_label_v1.sqlite', False)) as label:
+    with closing(sqlite3.connect(output / DB)) as db, closing(sqlite3.connect(output / 'retrieval_en.sqlite')) as english, closing(metadata.connect_db(output / 'metadata_v2.sqlite', False)) as meta, closing(labels.connect(output / 'compact_label_v1.sqlite', False)) as label:
         db.executescript('''
             CREATE TABLE retrieval_meta (
               retrieval_id TEXT PRIMARY KEY, release_unit_id TEXT NOT NULL UNIQUE,
@@ -69,8 +69,26 @@ def _lexical(source, output, mapping, progress, cancel):
               primary_evidence_tier TEXT, primary_language TEXT, risk_scope TEXT, default_route TEXT,
               retrieval_eligible INTEGER, embedding_eligible INTEGER, member_count INTEGER,
               retrieval_text_chars INTEGER);
+            CREATE TABLE retrieval_en_meta AS SELECT * FROM retrieval_meta WHERE 0;
+            CREATE INDEX retrieval_en_meta_id ON retrieval_en_meta(retrieval_id);
             CREATE VIRTUAL TABLE retrieval_fts USING fts5(retrieval_id UNINDEXED, retrieval_text);
+            -- English records are a small, frequently filtered partition. A
+            -- compact FTS table avoids ranking a multi-gigabyte mixed-language
+            -- corpus for language-scoped requests on network storage.
+            CREATE VIRTUAL TABLE retrieval_en_fts USING fts5(retrieval_id UNINDEXED, retrieval_text);
             CREATE VIRTUAL TABLE retrieval_cjk_fts USING fts5(retrieval_id UNINDEXED, retrieval_terms);
+        ''')
+        english.executescript('''
+            CREATE TABLE retrieval_meta (
+              retrieval_id TEXT PRIMARY KEY, release_unit_id TEXT NOT NULL UNIQUE,
+              release_unit_type TEXT, dedup_family TEXT, canonical_knowledge_type TEXT,
+              canonical_label TEXT, primary_dataset TEXT, primary_knowledge_type TEXT,
+              primary_evidence_tier TEXT, primary_language TEXT, risk_scope TEXT, default_route TEXT,
+              retrieval_eligible INTEGER, embedding_eligible INTEGER, member_count INTEGER,
+              retrieval_text_chars INTEGER);
+            CREATE VIRTUAL TABLE retrieval_fts USING fts5(retrieval_id UNINDEXED, retrieval_text);
+            CREATE INDEX family ON retrieval_meta(dedup_family);
+            CREATE INDEX route ON retrieval_meta(default_route);
         ''')
         fields = ['retrieval_id','release_unit_id','release_unit_type','dedup_family','canonical_knowledge_type','canonical_label','primary_dataset','primary_knowledge_type','primary_evidence_tier','primary_language','risk_scope','default_route','retrieval_eligible','embedding_eligible','member_count','retrieval_text_chars']
         for row in rows(source, mapping):
@@ -80,6 +98,11 @@ def _lexical(source, output, mapping, progress, cancel):
             except sqlite3.IntegrityError as exc:
                 raise ValueError(f'duplicate knowledge ID: {row["release_unit_id"]}') from exc
             db.execute('INSERT INTO retrieval_fts VALUES (?,?)', (row['retrieval_id'], row['retrieval_text']))
+            if row.get('primary_language') == 'en':
+                english.execute('INSERT INTO retrieval_meta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', tuple(row.get(k) for k in fields))
+                english.execute('INSERT INTO retrieval_fts VALUES (?,?)', (row['retrieval_id'], row['retrieval_text']))
+                db.execute('INSERT INTO retrieval_en_meta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', tuple(row.get(k) for k in fields))
+                db.execute('INSERT INTO retrieval_en_fts VALUES (?,?)', (row['retrieval_id'], row['retrieval_text']))
             db.execute('INSERT INTO retrieval_cjk_fts VALUES (?,?)', (row['retrieval_id'], ' '.join(cjk_index_terms(row['retrieval_text']))))
             meta.execute('INSERT INTO metadata_v2 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', metadata.metadata_row(row))
             meta.executemany('INSERT INTO metadata_v2_tokens VALUES (?,?,?)', metadata.token_rows(row))
@@ -89,7 +112,7 @@ def _lexical(source, output, mapping, progress, cancel):
             counts['eligible'] += int(row['retrieval_eligible'])
             counts['embedding_eligible'] += int(row['embedding_eligible'])
             if counts['total'] % 1000 == 0:
-                for connection in (db, meta, label):
+                for connection in (db, english, meta, label):
                     connection.commit()
                 progress('lexical', dict(counts))
         if not counts['total']:
@@ -97,7 +120,7 @@ def _lexical(source, output, mapping, progress, cancel):
         db.executescript('CREATE INDEX family ON retrieval_meta(dedup_family); CREATE INDEX route ON retrieval_meta(default_route);')
         metadata.create_indexes(meta)
         labels.create_indexes(label)
-        for connection in (db, meta, label):
+        for connection in (db, english, meta, label):
             connection.commit()
             connection.execute('PRAGMA wal_checkpoint(TRUNCATE)')
             connection.execute('PRAGMA journal_mode=DELETE')
@@ -278,14 +301,20 @@ def build_index(knowledge, output, *, mode='lexical', embedding_config=None,
                     previous = verify_index(parent)
                     if any(previous['input'].get(k) != signature[k] for k in ('knowledge_sha256', 'projection', 'mapping')):
                         raise ValueError('reused lexical index has different knowledge, projection or mapping')
-                    for name in (DB, 'metadata_v2.sqlite', 'compact_label_v1.sqlite'):
+                    names = [DB, 'metadata_v2.sqlite', 'compact_label_v1.sqlite']
+                    if (parent / 'retrieval_en.sqlite').is_file():
+                        names.insert(1, 'retrieval_en.sqlite')
+                    for name in names:
                         _check(cancel)
                         shutil.copy2(parent / name, output / name)
                     counts = {**previous['counts'], 'vectors': 0}
                     state['lexical_source_index_id'] = previous['index_id']
                 else:
                     counts = _lexical(source, output, mapping, notify, cancel)
-                state['lexical_files'] = {name: digest(output / name) for name in (DB, 'metadata_v2.sqlite', 'compact_label_v1.sqlite')}
+                lexical_names = [DB, 'metadata_v2.sqlite', 'compact_label_v1.sqlite']
+                if (output / 'retrieval_en.sqlite').is_file():
+                    lexical_names.insert(1, 'retrieval_en.sqlite')
+                state['lexical_files'] = {name: digest(output / name) for name in lexical_names}
                 state['lexical_complete'] = True
                 notify('lexical_complete', counts)
             else:
@@ -415,6 +444,8 @@ def search_index(path, query, *, limit=8, embedding_config=None, skill=None, fil
         return []
     candidate_limit = max(limit * 6, 80)
     hits = lexical_candidates(root / DB, understanding, candidate_limit)
+    if not manifest.get('embedding'):
+        return hits[:limit]
     with closing(sqlite3.connect(f'{(root / DB).as_uri()}?mode=ro', uri=True)) as db:
         db.row_factory = sqlite3.Row
         clauses, filter_params = compile_scope(db, understanding)
