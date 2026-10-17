@@ -128,6 +128,24 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
                 # Keep each IN clause below SQLite's conservative variable
                 # limit. Each chunk is still answered by the FTS postings list.
                 table_name = 'retrieval_cjk_fts' if cjk else 'retrieval_fts'
+                if cjk:
+                    # Filtering a large CJK postings list with hundreds of
+                    # string IDs inside SQLite can be slower than taking a
+                    # bounded ranked page and applying the small family set in
+                    # Python. Hydrate only the matching rowids afterwards.
+                    ranked = db.execute('''SELECT rowid,retrieval_id,bm25(retrieval_cjk_fts) AS score
+                        FROM retrieval_cjk_fts WHERE retrieval_cjk_fts MATCH ? ORDER BY rank LIMIT ?''',
+                        (match, max(limit * 64, 512))).fetchall()
+                    allowed = set(ids)
+                    ranked = [row for row in ranked if row['retrieval_id'] in allowed][:min(limit, 8)]
+                    if not ranked:
+                        return []
+                    rowids = [row['rowid'] for row in ranked]
+                    text_by_id = {row['retrieval_id']: row['retrieval_text'] for row in db.execute(
+                        f'SELECT retrieval_id,retrieval_text FROM retrieval_fts WHERE rowid IN ({",".join("?" for _ in rowids)})', rowids
+                    ).fetchall()}
+                    return [{**primary_pool[row['retrieval_id']], 'retrieval_text': text_by_id[row['retrieval_id']], 'score': row['score']}
+                            for row in ranked if row['retrieval_id'] in text_by_id]
                 for start in range(0, len(ids), 500):
                     chunk = ids[start:start + 500]
                     placeholders = ','.join('?' for _ in chunk)
@@ -201,11 +219,31 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
             # Our builder inserts both FTS tables in the same source order.
             # retrieval_id is UNINDEXED in FTS: joining by it alone can turn
             # every Chinese match into a scan of the entire text corpus.
-            rows = db.execute(f'''SELECT m.*,f.retrieval_text,bm25(retrieval_cjk_fts) AS score
-                FROM retrieval_cjk_fts c JOIN retrieval_meta m USING(retrieval_id)
-                JOIN retrieval_fts f ON f.rowid=c.rowid AND f.retrieval_id=c.retrieval_id
-                WHERE retrieval_cjk_fts MATCH ? AND {where} ORDER BY c.rank LIMIT ?''',
-                (_match(indexed_cjk), *params, limit)).fetchall()
+            # First rank a bounded rowid page in the compact token index, then
+            # hydrate only those rows. Doing the text join before ORDER BY rank
+            # makes SQLite touch the multi-gigabyte response FTS table for every
+            # posting on a network mount.
+            cjk_rows = db.execute('''SELECT rowid,retrieval_id,bm25(retrieval_cjk_fts) AS score
+                FROM retrieval_cjk_fts WHERE retrieval_cjk_fts MATCH ? ORDER BY rank LIMIT ?''',
+                (_match(indexed_cjk), limit)).fetchall()
+            rows = []
+            ids = [row['retrieval_id'] for row in cjk_rows]
+            metadata = {}
+            text_by_id = {}
+            if ids:
+                placeholders = ','.join('?' for _ in ids)
+                metadata = {row['retrieval_id']: dict(row) for row in db.execute(
+                    f'SELECT * FROM retrieval_meta WHERE retrieval_id IN ({placeholders})', ids
+                ).fetchall()}
+                rowids = [row['rowid'] for row in cjk_rows]
+                text_by_id = {row['retrieval_id']: row['retrieval_text'] for row in db.execute(
+                    f'SELECT retrieval_id,retrieval_text FROM retrieval_fts WHERE rowid IN ({",".join("?" for _ in rowids)})', rowids
+                ).fetchall()}
+            for row in cjk_rows:
+                item = metadata.get(row['retrieval_id'])
+                text = text_by_id.get(row['retrieval_id'])
+                if item and text is not None and matches_scope({**item, 'retrieval_text': text}, understanding):
+                    rows.append({**item, 'retrieval_text': text, 'score': row['score']})
             channels.append(('cjk_bm25', rows))
             if primary and not any(row['dedup_family'] == primary for row in rows):
                 primary_rows = recall_primary(_match(indexed_cjk), cjk=True)
