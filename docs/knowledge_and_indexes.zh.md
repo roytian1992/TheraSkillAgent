@@ -23,12 +23,12 @@ theraskill-agent knowledge list
 
 ```bash
 pip install -e '.[retrieval]'
-theraskill-agent index plan --knowledge examples/knowledge/demo.jsonl --mode hybrid --embedding-profile local_bge
-theraskill-agent index build --knowledge examples/knowledge/demo.jsonl --id demo-bge --mode hybrid --embedding-profile local_bge
-theraskill-agent index search --index demo-bge --query uncertainty --embedding-profile local_bge
+theraskill-agent index plan --knowledge examples/knowledge/demo.jsonl --mode hybrid
+theraskill-agent index build --knowledge examples/knowledge/demo.jsonl --id demo-bge --mode hybrid
+theraskill-agent index search --index demo-bge --query uncertainty
 ```
 
-`plan` 扫描输入并估计请求量，不发 embedding 请求。磁盘估算为粗略的词法估算，向量另需空间。完整文件的扫描和 hash 会耗时。`build` 才调用配置的 embedding 服务；可设置 profile 中的 `dimensions`、`batch_size`、`revision`。`dimensions` 会发送给服务，并验证响应。模型服务不提供 revision 时应自行维护配置版本，系统无法识别同名服务在后台静默换权重。
+`plan` 扫描输入并估计请求量，不发 embedding 请求。磁盘估算为粗略的词法估算，向量另需空间。完整文件的扫描和 hash 会耗时。`build` 才调用 `providers.yaml` 的 `embedding` 服务；可在该块设置 `dimensions`、`batch_size`、`revision`。`dimensions` 会发送给服务，并验证响应。模型服务不提供 revision 时应自行维护配置版本，系统无法识别同名服务在后台静默换权重。
 
 中断后传相同参数并加 `--resume`。词法阶段中断会重建词法文件；已完成的 embedding 批次由 SQLite 事务保存，恢复时只补缺失记录。恢复前核对输入 hash、映射、投影版本、模型身份和已有词法文件；不兼容则拒绝。已完成索引不可覆盖，需使用新 ID。
 

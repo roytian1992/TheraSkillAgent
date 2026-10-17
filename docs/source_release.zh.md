@@ -8,7 +8,7 @@
 
 Git 管理 Python 代码、12 个内置业务技能、前端源码、配置模板、提示词、schema、文档和少量自编示例。node_modules、dist、模型、完整知识、数据库、会话、运行状态、密钥和缓存不入库。旧通用宿主实现留在原开发设备供迁移参考，不进入公开源码清单或 wheel；旧宿主 AIAgent 的专属回归不算本项目的独立验收。
 
-抽取 planner / executor / contracts 已迁入 `theraskill_agent.extraction`。旧脚本入口保留兼容导出，调用正式包。索引投影与 SQLite / metadata / label 构建逻辑已迁入 `theraskill_agent.indexing`，不依赖旧研究目录或外部 release QA 文件。默认模型解析、概览 API、记忆适配器和 profile 模板也已解除相关宿主导入。
+抽取 planner / executor / contracts 已迁入 `theraskill_agent.extraction`。旧脚本入口保留兼容导出，调用正式包。索引投影与 SQLite / metadata / label 构建逻辑已迁入 `theraskill_agent.indexing`，不依赖旧研究目录或外部 release QA 文件。默认模型解析、概览 API、记忆适配器和直接 provider 模板也已解除相关宿主导入。
 
 ## 验证范围
 

@@ -32,7 +32,7 @@ theraskill-agent knowledge activate --index demo-v1
 
 以上不调用模型。工作台的「知识与索引」也能完成上传、计划、构建、检索测试、启用和回滚。样例是 3 个类别、每类中英文各 1 条自编记录，仅演示格式，不代表正式临床知识。
 
-需要混合检索时安装 `pip install -e '.[retrieval]'`，构建时增加 `--mode hybrid --embedding-profile local_bge`，或者填写自己的 embedding 配置名。更换 embedding 模型需要重建或选择对应索引。未完成构建可用相同输入、名称和配置加 `--resume` 继续。
+需要混合检索时安装 `pip install -e '.[retrieval]'`，构建时增加 `--mode hybrid`；embedding 模型、URL 和密钥直接读取 `configs/theraskill/providers.yaml` 的 `embedding` 块。更换 embedding 模型需要重建对应索引。未完成构建可用相同输入、名称和配置加 `--resume` 继续。
 
 ## 发布边界
 

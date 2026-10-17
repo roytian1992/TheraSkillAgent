@@ -1,21 +1,10 @@
-# TheraSkillAgent retrieval. Generation and embedding profiles are selected in config.yaml.
+# TheraSkillAgent retrieval. The embedding service is configured directly in
+# configs/theraskill/providers.yaml.
 embedding:
   enabled: true
-  provider: openai-compatible
-  name: bge-m3
-  base_url: http://127.0.0.1:8081
-  api_key_env: THERASKILL_EMBEDDING_API_KEY
   timeout_seconds: 120
   retry_attempts: 2
   ssl_verify: false
   batch_size: 32
-  endpoint: http://127.0.0.1:8081/v1/embeddings
 reranker:
   enabled: false
-  provider: openai-compatible
-  name: bge-reranker-v2-m3
-  base_url: http://127.0.0.1:8082
-  api_key_env: THERASKILL_RERANKER_API_KEY
-  timeout_seconds: 120
-  retry_attempts: 2
-  ssl_verify: false

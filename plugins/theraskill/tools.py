@@ -478,7 +478,6 @@ def _handle_transcript(args: dict[str, Any], **runtime: Any) -> dict[str, Any]:
                     document,
                     analysis,
                     skills=skills,
-                    provider_profile=request.parameters.get("provider_profile"),
                     max_turns=max_turns,
                 )
                 workflow.state["reviews"] = reviews
@@ -816,7 +815,6 @@ THERASKILL_TRANSCRIPT_SCHEMA = {
                 "exclude_raw": {"type": "boolean"},
                 "mode": {"type": "string", "enum": ["plan", "model"]},
                 "skills": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
-                "provider_profile": {"type": "string"},
                 "max_turns": {"type": "integer", "minimum": 1, "maximum": 10000},
             },
             "required": ["operation", "source_path"],
@@ -856,7 +854,7 @@ THERASKILL_RESOURCES_SCHEMA = {
     "type": "object", "properties": {"parameters": {
         "type": "object", "properties": {
             "operation": {"type": "string", "enum": ["list", "plan", "build", "verify", "search", "install", "activate", "rollback", "status", "cancel"]},
-            **{key: {"type": "string"} for key in ("knowledge", "index_id", "index", "embedding_profile", "archive", "catalog", "package", "sha256", "job_id", "query")},
+            **{key: {"type": "string"} for key in ("knowledge", "index_id", "index", "archive", "catalog", "package", "sha256", "job_id", "query")},
             "mode": {"type": "string", "enum": ["lexical", "hybrid"]},
             "resume": {"type": "boolean"}, "mapping": {"type": "object"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 50},

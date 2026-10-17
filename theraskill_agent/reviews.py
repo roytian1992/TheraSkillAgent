@@ -148,7 +148,6 @@ def run_skill_reviews(
     analysis: Mapping[str, Any],
     *,
     skills: Iterable[str] | None = None,
-    provider_profile: str | None = None,
     max_turns: int | None = None,
     manager: SkillManager | None = None,
 ) -> dict[str, Any]:
@@ -158,7 +157,7 @@ def run_skill_reviews(
     from domains.theraskill.theraskill_llm import OpenAICompatibleClient, chat_json_with_repair
 
     plans = build_review_plan(document, analysis, skills=skills, max_turns=max_turns, manager=manager)
-    config = resolve_model_config({"profile": provider_profile} if provider_profile else {})
+    config = resolve_model_config()
     client = OpenAICompatibleClient(config)
     valid_turn_ids = {turn.turn_id for turn in document.turns}
     results: list[dict[str, Any]] = []
@@ -179,7 +178,7 @@ def run_skill_reviews(
             results.append({"skill": plan["skill"], "status": "error", "findings": [], "overall": "", "limitations": ["provider call failed"], "error": message})
     payload = {
         "mode": "model",
-        "provider": {"profile": provider_profile or "active", "model": getattr(client, "model", "")},
+        "provider": {"model": getattr(client, "model", "")},
         "document_id": document.document_id,
         "reviews": results,
     }

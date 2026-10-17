@@ -38,9 +38,13 @@ def embedding_server(workspace):
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
     import yaml
-    profile = {'kind': 'embedding', 'provider': 'openai-compatible', 'name': 'mock-A', 'base_url': f'http://127.0.0.1:{server.server_port}/v1', 'batch_size': 2, 'retry_attempts': 0, 'dimensions': 4}
+    profile = {'active': {'llm': 'local_llm', 'embedding': 'local_embedding'},
+               'llm': {'model': 'mock-llm', 'base_url': 'http://127.0.0.1:1/v1'},
+               'embedding': {'model': 'mock-A', 'base_url': f'http://127.0.0.1:{server.server_port}/v1',
+                             'endpoint': f'http://127.0.0.1:{server.server_port}/v1/embeddings',
+                             'batch_size': 2, 'retry_attempts': 0, 'dimensions': 4}}
     folder = workspace / 'configs/theraskill'; folder.mkdir(parents=True)
-    (folder / 'providers.yaml').write_text(yaml.safe_dump({'active': {'embedding': 'A'}, 'profiles': {'A': profile, 'B': {**profile, 'name': 'mock-B', 'dimensions': 6}}}))
+    (folder / 'providers.yaml').write_text(yaml.safe_dump(profile))
     yield calls
     server.shutdown(); server.server_close(); thread.join()
 
@@ -100,19 +104,28 @@ def test_hybrid_resume_and_model_compatibility(workspace, embedding_server):
     def progress(event):
         if event['stage'] == 'embedding': stop.set()
     with pytest.raises(BuildCancelled):
-        build_index(DEMO, output, mode='hybrid', embedding_profile='A', progress=progress, cancel=stop.is_set)
+        build_index(DEMO, output, mode='hybrid', progress=progress, cancel=stop.is_set)
     assert sum(len(c['input']) for c in embedding_server) == 2
     with pytest.raises(ValueError, match='same input'):
-        build_index(DEMO, output, mode='hybrid', embedding_profile='B', resume=True)
-    built = build_index(DEMO, output, mode='hybrid', embedding_profile='A', resume=True)
+        (workspace / 'configs/theraskill/providers.yaml').write_text(
+            (workspace / 'configs/theraskill/providers.yaml').read_text().replace('mock-A', 'mock-B').replace('dimensions: 4', 'dimensions: 6')
+        )
+        build_index(DEMO, output, mode='hybrid', resume=True)
+    (workspace / 'configs/theraskill/providers.yaml').write_text(
+        (workspace / 'configs/theraskill/providers.yaml').read_text().replace('mock-B', 'mock-A').replace('dimensions: 6', 'dimensions: 4')
+    )
+    built = build_index(DEMO, output, mode='hybrid', resume=True)
     assert sum(len(c['input']) for c in embedding_server) == 6
     assert built['embedding']['dimension'] == 4
     assert built['counts']['vectors'] == 6
-    assert search_index(output, 'evidence', embedding_profile='A')
+    assert search_index(output, 'evidence')
     before = len(embedding_server)
-    with pytest.raises(ValueError, match='differs'): search_index(output, 'evidence', embedding_profile='B')
+    (workspace / 'configs/theraskill/providers.yaml').write_text(
+        (workspace / 'configs/theraskill/providers.yaml').read_text().replace('mock-A', 'mock-B').replace('dimensions: 4', 'dimensions: 6')
+    )
+    with pytest.raises(ValueError, match='differs'): search_index(output, 'evidence')
     assert len(embedding_server) == before
-    other = build_index(DEMO, workspace / 'hybrid-B', mode='hybrid', embedding_profile='B')
+    other = build_index(DEMO, workspace / 'hybrid-B', mode='hybrid')
     assert other['embedding']['dimension'] == 6
     assert all(c.get('dimensions') in {4, 6} for c in embedding_server)
 

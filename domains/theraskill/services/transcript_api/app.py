@@ -28,7 +28,6 @@ class TranscriptRequest(BaseModel):
     speaker_role_overrides: dict[str, str] = Field(default_factory=dict)
     skills: list[str] = Field(default_factory=list, max_length=20)
     mode: str = Field(default="plan", pattern="^(plan|model)$")
-    provider_profile: str | None = None
     max_turns: int | None = Field(default=None, ge=1, le=10000)
     include_raw: bool = False
 
@@ -86,7 +85,6 @@ def create_app() -> FastAPI:
                 document,
                 analysis,
                 skills=skills,
-                provider_profile=request.provider_profile,
                 max_turns=request.max_turns,
             )
         else:
@@ -113,7 +111,6 @@ def create_app() -> FastAPI:
                 document,
                 analysis,
                 skills=request.skills or analysis["recommended_skills"],
-                provider_profile=request.provider_profile,
                 max_turns=request.max_turns,
             )
         bundle_id = f"bundle_{uuid.uuid4().hex[:16]}"

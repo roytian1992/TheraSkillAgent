@@ -15,6 +15,7 @@ from plugins.theraskill import TOOL_DEFINITIONS, register
 from plugins.theraskill.service import service_config
 from theraskill_agent.memory import TheraSkillMemoryProvider
 from domains.theraskill import launcher
+from domains.theraskill.provider_config import resolve_model_config
 from domains.theraskill.theraskill_llm import OpenAICompatibleClient, merged_model_config
 from theraskill_agent.apps import list_apps, open_app
 
@@ -42,7 +43,7 @@ def test_runtime_model_config_uses_active_project_provider() -> None:
     )
 
     assert resolved["provider"] == "openai-compatible"
-    assert resolved["name"] == "Qwen3.8-27B"
+    assert resolved["name"] == resolve_model_config()["name"]
     assert resolved["base_url"].endswith("/v1")
 
 

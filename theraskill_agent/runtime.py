@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import hashlib
-import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,7 +58,7 @@ class AgentRuntime:
             run_id=run_id,
             task_id=task.task_id,
             skill_name=str(selected_skill) if selected_skill else None,
-            provider_profile=str(params.get("provider_profile") or os.environ.get("THERASKILL_LLM_PROFILE") or "") or None,
+            provider_kind="llm",
             model=str(params.get("model") or "") or None,
             prompt_version=str(params.get("prompt_version") or "") or None,
             knowledge_release_id=str(params.get("knowledge_release_id") or active_release_id()),
@@ -154,7 +153,6 @@ class AgentRuntime:
                                 document,
                                 analysis,
                                 skills=skills,
-                                provider_profile=params.get("provider_profile"),
                                 max_turns=max_turns,
                             )
                         elif mode == "plan":

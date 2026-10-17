@@ -2,11 +2,6 @@
 # Runtime artifacts are always resolved below the project data directory.
 name: theraskill
 artifact_root: data/theraskill
-providers:
-  # The active model provider is the default generation route. Switch to
-  # deepseek_v4_pro or another registry profile in the runtime config.
-  llm_profile: active_llm
-  embedding_profile: local_bge
 runtime:
   host: 127.0.0.1
   services:

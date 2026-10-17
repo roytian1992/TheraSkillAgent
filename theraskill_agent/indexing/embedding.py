@@ -3,9 +3,9 @@ from urllib.parse import urlsplit
 from .common import identity
 
 
-def resolve(profile=None, config=None):
+def resolve(config=None):
     from domains.theraskill.provider_config import resolve_embedding_config
-    return resolve_embedding_config(config or ({'profile': profile} if profile else {}))
+    return resolve_embedding_config(config)
 
 
 def fingerprint(config):
@@ -21,4 +21,4 @@ def fingerprint(config):
 
 def require_compatible(stored, config):
     if not stored or stored.get('fingerprint') != fingerprint(config)['fingerprint']:
-        raise ValueError('embedding configuration differs from this index; select a matching profile or rebuild')
+        raise ValueError('embedding configuration differs from this index; update providers.yaml or rebuild')

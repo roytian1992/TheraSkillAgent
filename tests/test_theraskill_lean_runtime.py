@@ -21,7 +21,6 @@ from theraskill_agent.webapp import UI_APPS, create_app
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("THERASKILL_AGENT_ROOT", str(tmp_path))
-    monkeypatch.delenv("THERASKILL_LLM_PROFILE", raising=False)
     initialize_project(tmp_path)
     return tmp_path
 
@@ -53,12 +52,18 @@ def test_native_alias_calls_configured_endpoint_without_host(workspace, monkeypa
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        profile = {"active": {"llm": "demo"}, "profiles": {"demo": {
-            "name": "configured-model", "base_url": f"http://127.0.0.1:{server.server_port}/v1",
-            "api_key_env": "THERASKILL_TEST_API_KEY", "max_output_tokens": 42, "response_format_json": True,
-        }}}
+        profile = {
+            "active": {"llm": "demo", "embedding": "embedding"},
+            "llm": {
+                "model": "configured-model", "base_url": f"http://127.0.0.1:{server.server_port}/v1",
+                "api_key": "synthetic-key", "max_output_tokens": 42, "response_format_json": True,
+            },
+            "embedding": {
+                "model": "configured-embedding", "base_url": "http://127.0.0.1:1/v1",
+                "endpoint": "http://127.0.0.1:1/v1/embeddings",
+            },
+        }
         (workspace / "configs/theraskill/providers.yaml").write_text(yaml.safe_dump(profile))
-        monkeypatch.setenv("THERASKILL_TEST_API_KEY", "synthetic-key")
         monkeypatch.setitem(sys.modules, "agent", None)
         client = OpenAICompatibleClient({"provider": alias, "name": "agent-default", "temperature": 0.2})
         assert json.loads(client.chat("system", {"text": "hello"})) == {"ok": True}
@@ -76,7 +81,11 @@ def test_native_alias_calls_configured_endpoint_without_host(workspace, monkeypa
 
 
 def test_self_referencing_provider_fails_clearly(workspace):
-    profile = {"active": {"llm": "bad"}, "profiles": {"bad": {"provider": "agent", "name": "agent-default"}}}
+    profile = {
+        "active": {"llm": "bad", "embedding": "embedding"},
+        "llm": {"provider": "agent", "model": "agent-default", "base_url": "http://agent/v1"},
+        "embedding": {"model": "embedding", "base_url": "http://embedding/v1", "endpoint": "http://embedding/v1/embeddings"},
+    }
     (workspace / "configs/theraskill/providers.yaml").write_text(yaml.safe_dump(profile))
     with pytest.raises(ValueError, match="concrete provider"):
         OpenAICompatibleClient({"provider": "agent"})

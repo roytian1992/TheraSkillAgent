@@ -8,15 +8,15 @@ description: 导入独立知识包，规划和构建可配置的检索索引，�
 ## Input
 
 A user-selected knowledge JSONL path or installed knowledge ID; retrieval mode;
-optional embedding profile. Fields may use a declarative mapping. Do not infer
+the active embedding block. Fields may use a declarative mapping. Do not infer
 approval of candidate knowledge from a request to index it.
 
 ## Workflow
 
 1. Call `theraskill_resources` with `parameters.operation=list` to inspect installed resources.
 2. Use `plan` with `knowledge` and `mode` to inspect counts and estimated embedding requests. This does not call a model.
-3. Use `build` with the same input plus `index_id`. Only select `hybrid` and an `embedding_profile` when the user's task includes model-backed construction. Poll `status` with the returned `job_id`; report failures explicitly. `cancel` stops work at the next batch boundary.
-4. For interrupted builds use the same input, ID and embedding profile with `resume=true`. A changed input or model requires a new index ID.
+3. Use `build` with the same input plus `index_id`. Only select `hybrid` when the user's task includes model-backed construction; the active embedding block in `configs/theraskill/providers.yaml` supplies the service. Poll `status` with the returned `job_id`; report failures explicitly. `cancel` stops work at the next batch boundary.
+4. For interrupted builds use the same input, ID and direct embedding configuration with `resume=true`. A changed input or model requires a new index ID.
 5. Use `verify`, then `search` with `index` and `query`. Use `activate` only when the user wants this index enabled. Use `rollback` to restore the previous selection.
 6. A separately downloaded package is installed using `install` and either `archive` or `catalog` + `package`. Installation does not activate it.
 

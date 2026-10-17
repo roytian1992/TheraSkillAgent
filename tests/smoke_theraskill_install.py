@@ -20,7 +20,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="theraskill-smoke-") as directory:
         root = Path(directory)
         os.environ["THERASKILL_AGENT_ROOT"] = str(root)
-        for key in ("HERMES_HOME", "THERASKILL_LLM_PROFILE", "THERASKILL_EMBEDDING_PROFILE"):
+        for key in ("HERMES_HOME",):
             os.environ.pop(key, None)
         for name in ("agent", "tools", "gateway", "providers", "hermes_cli", "torch", "transformers", "numpy", "faiss"):
             assert importlib.util.find_spec(name) is None, f"not a lean isolated installation: {name}"

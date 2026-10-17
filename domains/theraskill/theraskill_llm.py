@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import signal
 import ssl
 import threading
@@ -21,7 +20,6 @@ from json_repair import repair_json
 
 from .provider_config import (
     ProviderConfigError,
-    configured_profile,
     resolve_embedding_config,
     resolve_model_config,
 )
@@ -152,47 +150,20 @@ def select_records(
 
 def merged_model_config(extraction_config: Dict[str, Any], local_model_config: Dict[str, Any]) -> Dict[str, Any]:
     local_model = dict(local_model_config.get("model") or {})
-    selected_profile = configured_profile("llm")
     extraction_model = dict((extraction_config.get("extraction") or {}).get("model") or {})
-    # An explicit TheraSkillAgent provider selection is authoritative. This lets every
-    # domain service switch from local Qwen to a remote OpenAI-compatible model
-    # without editing each service's legacy model YAML.
-    if selected_profile:
-        resolved = resolve_model_config({"profile": selected_profile})
-        resolved.update({
-            key: value for key, value in extraction_model.items()
-            if key not in {"provider", "name", "base_url", "api_key", "api_key_env", "profile", "provider_profile"}
-            and value is not None
-        })
-        resolved.update({
-            key: value for key, value in local_model.items()
-            if key not in {"provider", "name", "base_url", "api_key", "api_key_env", "profile", "provider_profile"}
-            and value is not None
-        })
-        return resolved
-    # Runtime retrieval configs intentionally omit a model section. Generation
-    # must then use the project's active provider/model instead of inheriting the
-    # historical extraction endpoint from extraction_config.
-    if not local_model:
-        resolved = resolve_model_config()
-        resolved.update({key: value for key, value in extraction_model.items()
-                         if key in {"temperature", "max_output_tokens", "timeout_seconds", "retry_attempts", "response_format_json"}
-                         and value is not None})
-        return resolved
-    base_model = dict((extraction_config.get("extraction") or {}).get("model") or {})
-    base_model.update({key: value for key, value in local_model.items() if value is not None})
+    # Connection details always come from the direct providers.yaml block.
+    # Domain YAML may still tune request-time controls without selecting a
+    # second hidden model catalog.
     try:
-        resolved = resolve_model_config(base_model)
+        resolved = resolve_model_config()
     except ProviderConfigError as exc:
         raise ValueError(str(exc)) from exc
-    if str(resolved.get("provider") or "").lower() in {"agent", "hermes", "hermes-native", "runtime", "host"}:
-        return resolved
-    if not resolved.get("api_key") and resolved.get("api_key_env"):
-        raise ValueError(f"environment variable {resolved['api_key_env']} is not configured")
-    if not resolved.get("base_url"):
-        raise ValueError("base_url is required in local model config")
-    if not resolved.get("name"):
-        raise ValueError("model name is required in local model config")
+    for source in (extraction_model, local_model):
+        resolved.update({
+            key: value for key, value in source.items()
+            if key in {"temperature", "max_output_tokens", "timeout_seconds", "retry_attempts", "response_format_json", "thinking", "reasoning_effort"}
+            and value is not None
+        })
     return resolved
 
 
@@ -220,31 +191,19 @@ def merged_embedding_config(extraction_config: Dict[str, Any], local_model_confi
     base_embedding = dict(retrieval_config.get("embedding") or {})
     local_embedding = dict(local_model_config.get("embedding") or {})
     base_embedding.update({key: value for key, value in local_embedding.items() if value is not None})
-    selected_profile = configured_profile("embedding")
-    if selected_profile:
-        selected = resolve_embedding_config({"profile": selected_profile})
-        selected.update({
-            key: value for key, value in base_embedding.items()
-            if key not in {"provider", "name", "base_url", "endpoint", "api_key", "api_key_env", "profile", "provider_profile"}
-            and value is not None
-        })
-        base_embedding = selected
-    for key in ("api_key", "base_url", "endpoint", "name"):
-        env_name = str(base_embedding.get(f"{key}_env") or "").strip()
-        if env_name and os.environ.get(env_name):
-            base_embedding[key] = os.environ[env_name]
     enabled = bool(base_embedding.get("enabled", False))
     if not enabled:
         return {}
-    if not base_embedding.get("base_url") and not base_embedding.get("endpoint"):
-        raise ValueError("base_url or endpoint is required in local embedding config")
-    if not base_embedding.get("name"):
-        raise ValueError("embedding model name is required in local embedding config")
     try:
-        base_embedding = resolve_embedding_config(base_embedding)
+        resolved = resolve_embedding_config()
     except ProviderConfigError as exc:
         raise ValueError(str(exc)) from exc
-    return base_embedding
+    resolved.update({
+        key: value for key, value in base_embedding.items()
+        if key in {"enabled", "batch_size", "timeout_seconds", "retry_attempts", "dimensions"}
+        and value is not None
+    })
+    return resolved
 
 
 def parse_retry_attempts(extraction_config: Dict[str, Any], local_model_config: Dict[str, Any]) -> int:
@@ -425,16 +384,13 @@ _NATIVE_PROVIDERS = {"agent", "hermes", "hermes-native", "runtime", "host"}
 
 
 class AgentNativeLLMClient:
-    """Resolve the active project provider without importing the legacy host."""
+    """Resolve the active project provider without importing a host runtime."""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
-        from domains.theraskill.provider_config import resolve_profile
-
         config = config or {}
-        resolved = resolve_profile("llm", config.get("profile") or config.get("provider_profile"))
+        resolved = resolve_model_config()
         if str(resolved.get("provider") or "").strip().lower() in _NATIVE_PROVIDERS:
-            raise ValueError("active LLM profile must specify a concrete provider and base_url, not an agent alias")
-        # Alias names such as agent-default never replace the actual model.
+            raise ValueError("active LLM config must specify a concrete provider and base_url, not an agent alias")
         for key in ("temperature", "max_output_tokens", "timeout_seconds", "retry_attempts",
                     "response_format_json", "thinking", "reasoning_effort"):
             if config.get(key) is not None:

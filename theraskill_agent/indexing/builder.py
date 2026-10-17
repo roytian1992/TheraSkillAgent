@@ -22,14 +22,14 @@ class BuildCancelled(RuntimeError):
 
 def _check(cancel):
     if cancel and cancel():
-        raise BuildCancelled('index build cancelled; resume with the same input and profile')
+        raise BuildCancelled('index build cancelled; resume with the same input and direct embedding configuration')
 
 
 def _counts():
     return dict(total=0, eligible=0, indexed=0, excluded=0, embedding_eligible=0, vectors=0, failed=0)
 
 
-def plan_index(knowledge, *, mode='lexical', mapping=None, embedding_profile=None):
+def plan_index(knowledge, *, mode='lexical', mapping=None, embedding_config=None):
     if mode not in {'lexical', 'hybrid'}:
         raise ValueError('mode must be lexical or hybrid')
     path = Path(knowledge).expanduser().resolve()
@@ -39,7 +39,7 @@ def plan_index(knowledge, *, mode='lexical', mapping=None, embedding_profile=Non
         counts['eligible'] += int(row['retrieval_eligible'])
         counts['embedding_eligible'] += int(row['embedding_eligible'])
     counts['excluded'] = counts['total'] - counts['eligible']
-    profile = resolve(embedding_profile) if mode == 'hybrid' else None
+    profile = resolve(embedding_config) if mode == 'hybrid' else None
     return {'mode': mode, 'knowledge_sha256': digest(path), 'source_bytes': path.stat().st_size,
             'counts': counts, 'embedding': fingerprint(profile) if profile else None,
             'embedding_requests_estimate': math.ceil(counts['embedding_eligible'] / max(1, int(profile.get('batch_size', 32)))) if profile else 0,
@@ -178,14 +178,14 @@ def _dense(output, config, counts, progress, cancel):
     return embedding
 
 
-def build_index(knowledge, output, *, mode='lexical', embedding_profile=None, embedding_config=None,
+def build_index(knowledge, output, *, mode='lexical', embedding_config=None,
                 mapping=None, resume=False, progress=None, cancel=None):
     if mode not in {'lexical', 'hybrid'}:
         raise ValueError('mode must be lexical or hybrid')
     source, output = Path(knowledge).expanduser().resolve(), Path(output).expanduser().resolve()
     if source.is_relative_to(output):
         raise ValueError('index output must not contain its knowledge input')
-    config = resolve(embedding_profile, embedding_config) if mode == 'hybrid' else None
+    config = resolve(embedding_config) if mode == 'hybrid' else None
     signature = {'knowledge_sha256': digest(source), 'projection': PROJECTION_VERSION, 'mapping': mapping or {},
                  'mode': mode, 'embedding': fingerprint(config) if config else None}
     output.mkdir(parents=True, exist_ok=True)
@@ -291,7 +291,7 @@ def verify_index(path):
     return manifest
 
 
-def search_index(path, query, *, limit=8, embedding_profile=None):
+def search_index(path, query, *, limit=8, embedding_config=None):
     root = Path(path).expanduser().resolve()
     manifest = read_json(root / 'manifest.json')
     if manifest.get('status') != 'complete':
@@ -306,11 +306,11 @@ def search_index(path, query, *, limit=8, embedding_profile=None):
         hits = [dict(row) for row in db.execute('''SELECT m.*, f.retrieval_text, bm25(retrieval_fts) AS score
             FROM retrieval_fts f JOIN retrieval_meta m USING(retrieval_id)
             WHERE retrieval_fts MATCH ? AND m.retrieval_eligible=1 ORDER BY score LIMIT ?''', (match, limit))]
-        if embedding_profile:
+        if manifest.get('embedding'):
             from domains.theraskill.theraskill_llm import OpenAICompatibleEmbeddingClient
             import numpy as np
             import faiss
-            config = resolve(embedding_profile)
+            config = resolve(embedding_config)
             require_compatible(manifest.get('embedding'), config)
             vector = np.asarray(OpenAICompatibleEmbeddingClient(config).embed([query]), dtype=np.float32)
             if vector.shape != (1, manifest['embedding']['dimension']) or not np.isfinite(vector).all() or not np.linalg.norm(vector):

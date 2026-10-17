@@ -55,12 +55,12 @@ def test_runtime_result_has_reproducible_execution_context(tmp_path: Path) -> No
             "kind": "text.normalize",
             "text": "  a  b  ",
             "allowed_skills": ["text-normalizer"],
-            "parameters": {"provider_profile": "local_qwen", "prompt_version": "p1"},
+            "parameters": {"prompt_version": "p1"},
         }
     )
     assert result.status == "succeeded"
     assert result.run_id and result.provenance["skill_name"] == "text-normalizer"
-    assert result.provenance["provider_profile"] == "local_qwen"
+    assert result.provenance["provider_kind"] == "llm"
     assert result.provenance["input_fingerprint"]
 
 

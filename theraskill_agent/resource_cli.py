@@ -11,7 +11,6 @@ def add_commands(sub):
         command = commands.add_parser(name)
         command.add_argument('--knowledge', required=True, help='JSONL path or installed knowledge ID')
         command.add_argument('--mode', choices=['lexical', 'hybrid'], default='lexical')
-        command.add_argument('--embedding-profile')
         command.add_argument('--mapping', help='JSON object of standard fields to dotted source paths')
         if name == 'build':
             command.add_argument('--id', help='installed index slot name')
@@ -19,7 +18,7 @@ def add_commands(sub):
             command.add_argument('--resume', action='store_true')
     verify = commands.add_parser('verify'); verify.add_argument('--index', required=True)
     search = commands.add_parser('search'); search.add_argument('--index', required=True); search.add_argument('--query', required=True)
-    search.add_argument('--limit', type=int, default=8); search.add_argument('--embedding-profile')
+    search.add_argument('--limit', type=int, default=8)
     knowledge = sub.add_parser('knowledge', help='manage separately distributed knowledge and index resources')
     commands = knowledge.add_subparsers(dest='knowledge_command', required=True)
     commands.add_parser('list'); commands.add_parser('rollback')
@@ -40,7 +39,7 @@ def run_command(args):
         action = args.index_command
         if action in {'plan', 'build'}:
             source = resources.knowledge_path(args.knowledge)
-            options = {'mode': args.mode, 'embedding_profile': args.embedding_profile,
+            options = {'mode': args.mode,
                        'mapping': read_json(args.mapping) if args.mapping else None}
             if action == 'plan':
                 return plan_index(source, **options)
@@ -50,7 +49,7 @@ def run_command(args):
             return build_index(source, output, resume=args.resume, **options)
         if action == 'verify':
             return verify_index(resources.index_path(args.index))
-        return {'hits': search_index(resources.index_path(args.index), args.query, limit=args.limit, embedding_profile=args.embedding_profile)}
+        return {'hits': search_index(resources.index_path(args.index), args.query, limit=args.limit)}
     action = args.knowledge_command
     if action == 'list':
         return resources.list_resources()

@@ -24,13 +24,12 @@ theraskill-agent ui --start-services
 ```
 
 Open <http://127.0.0.1:5176/>. A built wheel includes the interfaces, so an
-installation from a wheel does not require Node. Configure shared model
-profiles in `configs/theraskill/providers.yaml`; copy
+installation from a wheel does not require Node. Configure the direct `llm`
+and `embedding` blocks in `configs/theraskill/providers.yaml`; copy
 `configs/theraskill/providers.local.example.yaml` to
-`configs/theraskill/providers.local.yaml` and fill the separate `llm` and
-`embedding` blocks with arbitrary model names, URLs and credentials. Enable
-the local blocks in `active`; the file is ignored by Git and loaded
-automatically.
+`configs/theraskill/providers.local.yaml` and fill the separate blocks with
+arbitrary model names, URLs and credentials. The `active` mapping names the
+two direct blocks; the local file is ignored by Git and loaded automatically.
 The local default endpoints are examples, not bundled model servers.
 
 ## Rebuild an index without a model
@@ -47,11 +46,12 @@ The six synthetic bilingual demo records illustrate the format; they are not a
 validated clinical knowledge base. Import, build, verify, search, activate and
 rollback are also available in **Knowledge & indexes** on the workbench.
 
-For vectors, install `pip install -e '.[retrieval]'`, then select your profile:
+For vectors, install `pip install -e '.[retrieval]'`; the active `embedding`
+block in `configs/theraskill/providers.yaml` supplies the service:
 
 ```bash
 theraskill-agent index build --knowledge examples/knowledge/demo.jsonl \
-  --id demo-hybrid --mode hybrid --embedding-profile local_bge
+  --id demo-hybrid --mode hybrid
 ```
 
 Use `--resume` with the same input and configuration after an interruption.

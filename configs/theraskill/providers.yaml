@@ -1,64 +1,27 @@
-# TheraSkillAgent shareable model profiles. Put machine-specific URLs and
-# credentials in the ignored providers.local.yaml sibling when needed.
+# TheraSkillAgent provider configuration.
+# Model names, URLs and credentials are configured in these two blocks.
+# For machine-local overrides, use the ignored providers.local.yaml sibling.
 active:
-  llm: active_llm
-  embedding: local_bge
-profiles:
-  active_llm:
-    kind: llm
-    provider: openai-compatible
-    name: Qwen3.8-27B
-    base_url: http://127.0.0.1:8002/v1
-    api_key_env: THERASKILL_LOCAL_API_KEY
-    temperature: 0.0
-    max_output_tokens: 4096
-    timeout_seconds: 600
-    retry_attempts: 1
-    response_format_json: true
-    ssl_verify: false
-  local_qwen:
-    kind: llm
-    provider: openai-compatible
-    name: Qwen3.8-27B
-    base_url: http://127.0.0.1:8002/v1
-    api_key_env: THERASKILL_LOCAL_API_KEY
-    temperature: 0.0
-    max_output_tokens: 4096
-    timeout_seconds: 600
-    retry_attempts: 1
-    response_format_json: true
-    ssl_verify: false
-  deepseek_v4_pro:
-    kind: llm
-    provider: openai-compatible
-    name: deepseek-v4-pro
-    base_url: https://zgc.apihy.com/v1
-    api_key_env: THERASKILL_REMOTE_API_KEY
-    temperature: 0.0
-    max_output_tokens: 4096
-    timeout_seconds: 600
-    retry_attempts: 2
-    response_format_json: true
-    ssl_verify: true
-  local_bge:
-    kind: embedding
-    provider: openai-compatible
-    name: bge-m3
-    base_url: http://127.0.0.1:8081/v1
-    endpoint: http://127.0.0.1:8081/v1/embeddings
-    api_key_env: THERASKILL_EMBEDDING_API_KEY
-    timeout_seconds: 120
-    retry_attempts: 2
-    batch_size: 32
-    ssl_verify: false
-  text_embedding_3_large:
-    kind: embedding
-    provider: openai-compatible
-    name: text-embedding-3-large
-    base_url: https://zgc.apihy.com/v1
-    endpoint: https://zgc.apihy.com/v1/embeddings
-    api_key_env: THERASKILL_REMOTE_API_KEY
-    timeout_seconds: 120
-    retry_attempts: 2
-    batch_size: 32
-    ssl_verify: true
+  llm: local_llm
+  embedding: local_embedding
+
+llm:
+  model: Qwen3.8-27B
+  base_url: http://127.0.0.1:8002/v1
+  api_key: ""
+  temperature: 0.0
+  max_output_tokens: 4096
+  timeout_seconds: 600
+  retry_attempts: 1
+  response_format_json: true
+  ssl_verify: false
+
+embedding:
+  model: bge-m3
+  base_url: http://127.0.0.1:8081/v1
+  endpoint: http://127.0.0.1:8081/v1/embeddings
+  api_key: ""
+  timeout_seconds: 120
+  retry_attempts: 2
+  batch_size: 32
+  ssl_verify: false

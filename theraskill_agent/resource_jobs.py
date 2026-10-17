@@ -57,7 +57,7 @@ def run_operation(operation, parameters, *, progress=None, cancel=None):
     p = dict(parameters)
     if operation in {'plan', 'build'}:
         source = resources.knowledge_path(p['knowledge'])
-        options = {'mode': p.get('mode', 'lexical'), 'embedding_profile': p.get('embedding_profile'), 'mapping': p.get('mapping')}
+        options = {'mode': p.get('mode', 'lexical'), 'mapping': p.get('mapping')}
         if operation == 'plan':
             return plan_index(source, **options)
         output = data_root() / 'indexes' / safe_id(p['index_id'])
@@ -65,7 +65,7 @@ def run_operation(operation, parameters, *, progress=None, cancel=None):
     if operation == 'verify':
         return verify_index(resources.index_path(p['index']))
     if operation == 'search':
-        return {'hits': search_index(resources.index_path(p['index']), p['query'], limit=p.get('limit', 8), embedding_profile=p.get('embedding_profile'))}
+        return {'hits': search_index(resources.index_path(p['index']), p['query'], limit=p.get('limit', 8))}
     if operation == 'activate':
         return resources.activate_index(p['index'], knowledge=p.get('knowledge'))
     if operation == 'rollback':

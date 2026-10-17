@@ -82,7 +82,7 @@ class SkillExecutionContext:
     run_id: str
     task_id: str
     skill_name: str | None = None
-    provider_profile: str | None = None
+    provider_kind: str | None = None
     model: str | None = None
     prompt_version: str | None = None
     knowledge_release_id: str | None = None

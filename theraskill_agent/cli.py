@@ -53,16 +53,9 @@ def _read_input(path: str) -> str:
 def _status(manager: SkillManager) -> dict[str, Any]:
     providers: dict[str, Any] = {}
     try:
-        from domains.theraskill.provider_config import load_provider_registry
+        from .provider_smoke import list_providers
 
-        registry = load_provider_registry()
-        def display_name(name: str) -> str:
-            return name
-
-        providers = {
-            "llm": sorted(display_name(name) for name, value in (registry.get("profiles") or {}).items() if value.get("kind", "llm") == "llm" and name != "hermes_active"),
-            "embedding": sorted(name for name, value in (registry.get("profiles") or {}).items() if value.get("kind") == "embedding"),
-        }
+        providers = list_providers()
     except Exception as exc:
         providers = {"error": redact_secrets(str(exc))}
     return {
@@ -134,7 +127,6 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--exclude-raw", action="store_true", help="do not copy raw transcript text into a transcript bundle")
     run.add_argument("--mode", choices=["plan", "model"], default="plan", help="review mode for transcript.review")
     run.add_argument("--skill", action="append", dest="skills", help="skill to run for transcript.review; repeatable")
-    run.add_argument("--provider-profile", help="explicit LLM profile for transcript.review --mode model")
     run.add_argument("--max-turns", type=int, help="cap transcript turns sent to model review")
 
     source = sub.add_parser("source", help="inspect and sample extraction inputs")
@@ -176,7 +168,6 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "review":
             command.add_argument("--mode", choices=["plan", "model"], default="plan")
             command.add_argument("--skill", action="append", dest="skills")
-            command.add_argument("--provider-profile")
             command.add_argument("--max-turns", type=int)
 
     service = sub.add_parser("service", help="manage project-local domain services")
@@ -185,12 +176,11 @@ def build_parser() -> argparse.ArgumentParser:
         command = service_sub.add_parser(name)
         command.add_argument("--service", action="append", choices=["simulation", "support", "expert", "contribution", "extraction", "transcript"])
 
-    provider = sub.add_parser("provider", help="inspect configured model profiles and run safe smoke checks")
+    provider = sub.add_parser("provider", help="inspect the configured LLM and embedding services")
     provider_sub = provider.add_subparsers(dest="provider_command", required=True)
-    provider_sub.add_parser("list", help="list providers without exposing credentials")
+    provider_sub.add_parser("list", help="show direct provider configuration without exposing credentials")
     check = provider_sub.add_parser("check", help="check configuration, optionally making one live request")
     check.add_argument("--kind", choices=["llm", "embedding"], default="llm")
-    check.add_argument("--profile")
     check.add_argument("--live", action="store_true", help="make one bounded network request")
     from .resource_cli import add_commands
     add_commands(sub)
@@ -243,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
                 _json(extract_sections(value))
             return 0
         if args.command == "run":
-            task = AgentTask(kind=args.task, text=args.goal or args.text, input_path=args.path, parameters={"max_chars": args.max_chars, "overlap": args.overlap, "target": args.target, "write": args.write, "limit": args.limit, "output_dir": args.output_dir, "exclude_raw": args.exclude_raw, "mode": args.mode, "skills": args.skills, "provider_profile": args.provider_profile, "max_turns": args.max_turns})
+            task = AgentTask(kind=args.task, text=args.goal or args.text, input_path=args.path, parameters={"max_chars": args.max_chars, "overlap": args.overlap, "target": args.target, "write": args.write, "limit": args.limit, "output_dir": args.output_dir, "exclude_raw": args.exclude_raw, "mode": args.mode, "skills": args.skills, "max_turns": args.max_turns})
             result = AgentRuntime(manager=manager).run(task)
             _json(result.to_dict())
             return 0 if result.status == "succeeded" else 2
@@ -293,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
 
                 analysis = analyze_transcript(document)
                 if args.mode == "model":
-                    review = run_skill_reviews(document, analysis, skills=args.skills, provider_profile=args.provider_profile, max_turns=args.max_turns)
+                    review = run_skill_reviews(document, analysis, skills=args.skills, max_turns=args.max_turns)
                     payload = {"document": document.to_dict(include_raw=False), "analysis": analysis, "reviews": review}
                 else:
                     payload = {"document": document.to_dict(include_raw=False), "analysis": analysis, "review_plan": build_review_plan(document, analysis, skills=args.skills, max_turns=args.max_turns)}
@@ -313,11 +303,11 @@ def main(argv: list[str] | None = None) -> int:
             _json(result)
             return 0
         if args.command == "provider":
-            from .provider_smoke import check_profile, list_profiles
+            from .provider_smoke import check_provider, list_providers
             if args.provider_command == "list":
-                _json(list_profiles())
+                _json(list_providers())
             else:
-                result = check_profile(args.kind, args.profile, live=args.live)
+                result = check_provider(args.kind, live=args.live)
                 _json(result)
                 return 0 if result.get("status") in {"configured", "ok"} else 2
             return 0

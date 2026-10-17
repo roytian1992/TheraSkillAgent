@@ -18,7 +18,7 @@ theraskill-agent run extraction.plan --goal 'Extract response strategies grounde
 
 ## 模型配置
 
-共享的 provider 模板在 `configs/theraskill/providers.yaml`，本机凭据和覆盖项放在自动读取的 `configs/theraskill/providers.local.yaml`。这个本地文件被 Git 忽略，也不会进入 wheel 或源码发布物。LLM 和 embedding 使用独立 profile，因此可以分别填写 URL、模型名和 API key。
+共享的 provider 模板在 `configs/theraskill/providers.yaml`，本机凭据和覆盖项放在自动读取的 `configs/theraskill/providers.local.yaml`。这个本地文件被 Git 忽略，也不会进入 wheel 或源码发布物。LLM 和 embedding 是两个直接配置块，可以分别填写 URL、模型名和 API key。
 
 首次配置可复制模板：
 
@@ -27,7 +27,7 @@ cp configs/theraskill/providers.local.example.yaml configs/theraskill/providers.
 chmod 600 configs/theraskill/providers.local.yaml
 ```
 
-编辑本地文件中的两个 `api_key`、模型名和 URL，并取消 `active` 注释让这两个本地块成为当前 provider：
+编辑本地文件中的两个 `api_key`、模型名和 URL；`active` 直接指定两个服务块：
 
 ```yaml
 active:
@@ -44,17 +44,15 @@ embedding:
   api_key: "Embedding 的密钥"
 ```
 
-`api_key` 可以不同；如果两个服务共用一个密钥，也分别填写同一值。环境变量仍可作为旧部署的回退方式，但不再是必需项。
+`api_key` 可以不同；如果两个服务共用一个密钥，也分别填写同一值。
 
 ```bash
-export THERASKILL_LLM_PROFILE=local_qwen
-export THERASKILL_EMBEDDING_PROFILE=local_bge
 theraskill-agent provider list
 theraskill-agent provider check --kind llm
 theraskill-agent provider check --kind embedding
 ```
 
-加 `--live` 会发起一次真实请求。默认配置包含本地 Qwen、BGE 和远程兼容 API 示例，端点本身需另外准备。更换生成 LLM 不需重建已有索引；更换 embedding 应使用对应索引或重建。
+加 `--live` 会发起一次真实请求。默认配置只提供本地服务地址示例，端点本身需另外准备。更换生成 LLM 不需重建已有索引；更换 embedding 应使用对应索引或重建。
 
 ## 启动
 
