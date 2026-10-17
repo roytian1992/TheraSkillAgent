@@ -84,3 +84,4 @@ python scripts/AdvancedRetrieval/evaluate_managed_retrieval.py \
 9. 修正后的六个中文高级检索 smoke 全部生成有效模型计划，均只需一次规划请求、未降级，所有策略和质量检查通过；这是 768 条真实知识上的有限预检。见 `advanced-smoke-v2/advanced-smoke.json`。最新自动化检查为 143 项通过，4 条既有依赖警告，见 `tests-final.log`。
 10. 六个英文高级检索 smoke 同样全部生成有效计划且无降级、无策略/质量检查失败；结果在 `advanced-smoke-en/advanced-smoke.json`。当前服务实测支持 base64 embedding，两个中英文输入与浮点响应的 float32 值最大绝对差为 0；见 `embedding-encoding-check.json`。全量向量构建使用此传输格式，模型与维度保持不变。
 11. 通过 SQLite 原生 `rank` 排序减少候选排序开销。中文行号连接与提前元数据过滤保持有效；构建期间的诊断对比记录在 `fts-rank-speed-check.json`，不把这一动态语料测量当作最终全量延迟结果。
+12. 全量写入完成：总数 2,196,286、可检索/可嵌入 1,808,415、排除 387,871。正在完成持久化副本校验；此阶段尚未启用新索引。向量构建改为按对齐行号顺序读取元数据，使用同事务保存的恢复游标避免对每条待构建知识再做一次随机缓存查询。对应构建/恢复检查 15 项通过；完整回归在此前传输与排序改动后为 144 项通过。

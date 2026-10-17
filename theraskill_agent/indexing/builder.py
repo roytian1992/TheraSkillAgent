@@ -116,6 +116,8 @@ def _dense(output, config, counts, progress, cancel):
     workers = max(1, min(int(config.get('workers', 1)), 16))
     cache = output / 'embedding-checkpoint.sqlite'
     with closing(sqlite3.connect(cache)) as vectors, closing(sqlite3.connect(output / DB)) as source:
+        vectors.execute('PRAGMA cache_size=-65536')
+        source.execute('PRAGMA cache_size=-65536')
         vectors.execute('CREATE TABLE IF NOT EXISTS vectors (id TEXT PRIMARY KEY, vector BLOB NOT NULL, dimension INTEGER NOT NULL)')
         vectors.execute('CREATE TABLE IF NOT EXISTS checkpoint (key TEXT PRIMARY KEY, value INTEGER NOT NULL)')
         vectors.commit()
@@ -125,16 +127,18 @@ def _dense(output, config, counts, progress, cancel):
         dimension = vectors.execute('SELECT dimension FROM vectors LIMIT 1').fetchone()
         dimension = dimension[0] if dimension else None
         completed = vectors.execute('SELECT count(*) FROM vectors').fetchone()[0]
-        # Fetch missing batches by ID. Each batch is one SQLite transaction, so a
-        # killed worker can neither duplicate IDs nor partially append vectors.
+        if completed and not cursor_value:
+            raise ValueError('embedding checkpoint cursor is missing; cannot safely resume')
+        # The cursor and vectors commit atomically in source order. Rows after
+        # that cursor cannot already be in the checkpoint. Both lexical tables
+        # share source rowids, avoiding random string-ID lookups per document.
         def batches():
             cursor = last_rowid
             while True:
                 _check(cancel)
                 batch = source.execute('''SELECT f.rowid, m.retrieval_id, f.retrieval_text FROM retrieval_fts f
-                JOIN retrieval_meta m USING(retrieval_id)
-                LEFT JOIN progress.vectors v ON v.id=m.retrieval_id
-                WHERE f.rowid > ? AND m.retrieval_eligible=1 AND m.embedding_eligible=1 AND v.id IS NULL
+                JOIN retrieval_meta m ON m.rowid=f.rowid AND m.retrieval_id=f.retrieval_id
+                WHERE f.rowid > ? AND m.retrieval_eligible=1 AND m.embedding_eligible=1
                 ORDER BY f.rowid LIMIT ?''', (cursor, batch_size)).fetchall()
                 if not batch:
                     return
