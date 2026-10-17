@@ -8,6 +8,7 @@ from domains.theraskill.provider_config import (
 )
 from domains.theraskill.theraskill_llm import merged_embedding_config, merged_model_config
 from theraskill_agent.platform import THERASKILL_PLATFORM
+from theraskill_agent.provider_smoke import check_profile
 
 
 def test_registry_contains_local_and_remote_profiles_without_embedded_secret() -> None:
@@ -27,6 +28,12 @@ def test_profile_secret_is_resolved_from_environment_and_redacted(monkeypatch) -
     public = public_provider_info("llm")
     assert public["api_key"] == "<configured>"
     assert "THERASKILL_REMOTE_API_KEY" not in str(public)
+
+
+def test_provider_check_does_not_treat_secret_name_as_credential(monkeypatch) -> None:
+    monkeypatch.setenv("THERASKILL_REMOTE_API_KEY", "")
+    result = check_profile("llm", "deepseek_v4_pro")
+    assert result["credential_configured"] is False
 
 
 def test_active_profiles_override_legacy_domain_yaml(monkeypatch) -> None:

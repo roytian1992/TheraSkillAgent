@@ -18,7 +18,12 @@ def list_profiles() -> dict[str, list[dict[str, Any]]]:
             continue
         info = public_provider_info(kind, name)
         info["active"] = str((registry.get("active") or {}).get(kind) or "") == name
-        info["credential_configured"] = bool((raw or {}).get("api_key") or (raw or {}).get("api_key_env"))
+        # An ``api_key_env`` entry only names where a credential should come
+        # from.  It must not be reported as configured until resolution found
+        # a non-empty value in the process/runtime environment.
+        info["credential_configured"] = bool(
+            (public_provider_info(kind, name).get("api_key") == "<configured>")
+        )
         result[kind].append(info)
     return result
 
@@ -33,7 +38,7 @@ def check_profile(kind: str, profile: str | None = None, *, live: bool = False) 
         "model": resolved.get("name"),
         "provider": resolved.get("provider"),
         "base_url": resolved.get("base_url") or resolved.get("endpoint"),
-        "credential_configured": bool(resolved.get("api_key") or resolved.get("api_key_env")),
+        "credential_configured": bool(resolved.get("api_key")),
         "live": bool(live),
         "status": "configured",
     }
