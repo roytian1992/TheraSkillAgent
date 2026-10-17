@@ -91,6 +91,23 @@ phase is rebuilt. Completed indexes are immutable. Input/configuration changes
 require a new ID. Manifests record checksums, sizes, model identity, dimensions and
 coverage counts; `total` must not be confused with embedded vector count.
 
+To add vectors or change embedding models without rebuilding the lexical files,
+use `--reuse-lexical <completed-index-id>` with a new output ID. The builder
+verifies the source index and requires identical knowledge hash, projection and
+field mapping, then copies its lexical files. It never reuses another model's
+vectors. The workbench offers the same choice for hybrid builds.
+
+The direct `embedding` configuration also accepts `batch_size` and `workers`
+(default 1, maximum 16). Requests can run concurrently, while vector batches and
+the resume cursor commit in source order. Changing these throughput controls
+does not change model identity. A cancelled build can have uncommitted in-flight
+requests; resuming may repeat those requests, but cannot skip or duplicate IDs.
+
+```bash
+theraskill-agent index build --knowledge /path/to/knowledge.jsonl \
+  --id knowledge-hybrid-v2 --mode hybrid --reuse-lexical knowledge-lexical-v2
+```
+
 ```bash
 theraskill-agent knowledge pack --source examples/knowledge/demo.jsonl \
   --output /tmp/demo.tar.gz --id demo --kind knowledge --license CC0-1.0

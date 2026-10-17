@@ -75,9 +75,12 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
         cjk = understanding.get('cjk_terms') or []
         indexed_cjk = [term for term in cjk if len(term) in (2, 3)]
         if indexed_cjk and 'retrieval_cjk_fts' in tables:
+            # Our builder inserts both FTS tables in the same source order.
+            # retrieval_id is UNINDEXED in FTS: joining by it alone can turn
+            # every Chinese match into a scan of the entire text corpus.
             rows = db.execute(f'''SELECT m.*,f.retrieval_text,bm25(retrieval_cjk_fts) AS score
                 FROM retrieval_cjk_fts c JOIN retrieval_meta m USING(retrieval_id)
-                JOIN retrieval_fts f USING(retrieval_id)
+                JOIN retrieval_fts f ON f.rowid=c.rowid AND f.retrieval_id=c.retrieval_id
                 WHERE retrieval_cjk_fts MATCH ? AND {where} ORDER BY score, m.retrieval_id LIMIT ?''',
                 (_match(indexed_cjk), *params, limit)).fetchall()
             channels.append(('cjk_bm25', rows))

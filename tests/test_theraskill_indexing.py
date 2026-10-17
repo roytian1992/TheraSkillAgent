@@ -138,6 +138,62 @@ def test_manifest_corruption_detected(workspace):
     with pytest.raises(ValueError, match='integrity'): verify_index(output)
 
 
+def test_reuse_verified_lexical_and_concurrent_resume(workspace, embedding_server, monkeypatch):
+    pytest.importorskip('faiss')
+    from domains.theraskill.theraskill_llm import OpenAICompatibleEmbeddingClient
+    lexical = workspace / 'lexical'
+    original = build_index(DEMO, lexical)
+    real_embed = OpenAICompatibleEmbeddingClient.embed
+    slow_started = threading.Event()
+    fast_finished = threading.Event()
+    def out_of_order(self, texts):
+        # Delay the first source batch until a later request finishes. The
+        # checkpoint must still represent a contiguous, committed source prefix.
+        if 'Clarifying a goal' in texts[0]:
+            slow_started.set()
+            assert fast_finished.wait(5)
+        else:
+            assert slow_started.wait(5)
+            fast_finished.set()
+        return real_embed(self, texts)
+    monkeypatch.setattr(OpenAICompatibleEmbeddingClient, 'embed', out_of_order)
+    stopped = threading.Event()
+    def progress(event):
+        if event['stage'] == 'embedding': stopped.set()
+    output = workspace / 'hybrid'
+    with pytest.raises(BuildCancelled):
+        build_index(DEMO, output, mode='hybrid', embedding_config={'workers': 2},
+                    lexical_index=lexical, progress=progress, cancel=stopped.is_set)
+    import sqlite3
+    with sqlite3.connect(output / 'embedding-checkpoint.sqlite') as db:
+        assert db.execute('SELECT count(*) FROM vectors').fetchone()[0] == 2
+    monkeypatch.setattr(OpenAICompatibleEmbeddingClient, 'embed', real_embed)
+    built = build_index(DEMO, output, mode='hybrid', embedding_config={'workers': 2}, resume=True)
+    assert built['counts']['vectors'] == 6
+    assert verify_index(lexical) == original
+    changed = workspace / 'changed.jsonl'
+    changed.write_text(DEMO.read_text() + '\n')
+    with pytest.raises(ValueError, match='different knowledge'):
+        build_index(changed, workspace / 'mismatch', lexical_index=lexical)
+
+
+def test_verify_checks_actual_vectors_instead_of_only_declared_counts(workspace, embedding_server):
+    pytest.importorskip('faiss')
+    from theraskill_agent.indexing.common import digest
+    output = workspace / 'hybrid'
+    manifest = build_index(DEMO, output, mode='hybrid')
+    shard_path = output / 'faiss_shards/manifest.json'
+    shards = read_json(shard_path)
+    shards['shards'][0]['counts']['added_vectors'] += 1
+    write_json(shard_path, shards)
+    manifest['counts']['vectors'] += 1
+    manifest['counts']['embedding_eligible'] += 1
+    manifest['files']['faiss_shards/manifest.json'] = {'sha256': digest(shard_path), 'size': shard_path.stat().st_size}
+    write_json(output / 'manifest.json', manifest)
+    with pytest.raises(ValueError, match='actual vector or ID count'):
+        verify_index(output)
+
+
 def test_package_roundtrip_parts_and_activation(workspace):
     archive = workspace / 'demo.tar.gz'
     record = resources.pack_resource(DEMO, archive, package_id='demo', kind='knowledge', license_id='CC0-1.0', part_bytes=700)

@@ -4,6 +4,10 @@ import json
 import math
 import os
 import sqlite3
+import shutil
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from pathlib import Path
 from contextlib import closing
 from . import labels, metadata
@@ -11,7 +15,7 @@ from .common import digest, identity, read_json, write_json, safe_path, exclusiv
 from .embedding import fingerprint, resolve, require_compatible
 from .knowledge import PROJECTION_VERSION, rows
 from ..query_understanding import understand_query, cjk_index_terms
-from .search import compile_scope, lexical_candidates, rank_candidates
+from .search import compile_scope, lexical_candidates, rank_candidates, matches_scope
 
 SCHEMA = 'theraskill_index_v1'
 DB = 'phase6_retrieval_fts.sqlite'
@@ -108,8 +112,8 @@ def _dense(output, config, counts, progress, cancel):
     except ImportError as exc:
         raise ValueError("hybrid build requires pip install 'theraskill-agent[retrieval]'") from exc
     from domains.theraskill.theraskill_llm import OpenAICompatibleEmbeddingClient
-    client = OpenAICompatibleEmbeddingClient(config)
     batch_size = max(1, min(int(config.get('batch_size', 32)), 512))
+    workers = max(1, min(int(config.get('workers', 1)), 16))
     cache = output / 'embedding-checkpoint.sqlite'
     with closing(sqlite3.connect(cache)) as vectors, closing(sqlite3.connect(output / DB)) as source:
         vectors.execute('CREATE TABLE IF NOT EXISTS vectors (id TEXT PRIMARY KEY, vector BLOB NOT NULL, dimension INTEGER NOT NULL)')
@@ -123,34 +127,59 @@ def _dense(output, config, counts, progress, cancel):
         completed = vectors.execute('SELECT count(*) FROM vectors').fetchone()[0]
         # Fetch missing batches by ID. Each batch is one SQLite transaction, so a
         # killed worker can neither duplicate IDs nor partially append vectors.
-        while True:
-            _check(cancel)
-            batch = source.execute('''SELECT f.rowid, m.retrieval_id, f.retrieval_text FROM retrieval_fts f
+        def batches():
+            cursor = last_rowid
+            while True:
+                _check(cancel)
+                batch = source.execute('''SELECT f.rowid, m.retrieval_id, f.retrieval_text FROM retrieval_fts f
                 JOIN retrieval_meta m USING(retrieval_id)
                 LEFT JOIN progress.vectors v ON v.id=m.retrieval_id
                 WHERE f.rowid > ? AND m.retrieval_eligible=1 AND m.embedding_eligible=1 AND v.id IS NULL
-                ORDER BY f.rowid LIMIT ?''', (last_rowid, batch_size)).fetchall()
-            if not batch:
-                break
-            values = client.embed([r[2] for r in batch])
-            arr = np.asarray(values, dtype=np.float32)
-            if arr.ndim != 2 or arr.shape[0] != len(batch) or arr.shape[1] == 0 or not np.isfinite(arr).all():
-                raise ValueError('embedding service returned invalid vectors')
-            if dimension is not None and arr.shape[1] != dimension:
-                raise ValueError('embedding dimension changed; cannot resume this index')
-            if config.get('dimensions') and arr.shape[1] != int(config['dimensions']):
-                raise ValueError('embedding dimension differs from requested dimensions')
-            norms = np.linalg.norm(arr, axis=1)
-            if (norms == 0).any():
-                raise ValueError('embedding service returned a zero vector')
-            dimension = arr.shape[1]
-            arr /= norms[:, None]
-            vectors.executemany('INSERT INTO vectors VALUES (?,?,?)', [(row[1], vector.tobytes(), dimension) for row, vector in zip(batch, arr)])
-            last_rowid = batch[-1][0]
-            vectors.execute("INSERT OR REPLACE INTO checkpoint VALUES ('rowid', ?)", (last_rowid,))
-            vectors.commit()
-            completed += len(batch)
-            progress('embedding', {**counts, 'vectors': completed})
+                ORDER BY f.rowid LIMIT ?''', (cursor, batch_size)).fetchall()
+                if not batch:
+                    return
+                cursor = batch[-1][0]
+                yield batch
+
+        def embed(batch):
+            # Each request owns its transport; urllib openers are not shared
+            # between worker threads. Only the coordinator writes checkpoints.
+            return OpenAICompatibleEmbeddingClient(config).embed([r[2] for r in batch])
+
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix='index-embedding') as pool:
+            pending = deque()
+            iterator = iter(batches())
+            for _ in range(workers):
+                batch = next(iterator, None)
+                if batch is not None:
+                    pending.append((batch, pool.submit(embed, batch)))
+            while pending:
+                _check(cancel)
+                batch, future = pending.popleft()
+                arr = np.asarray(future.result(), dtype=np.float32)
+                if arr.ndim != 2 or arr.shape[0] != len(batch) or arr.shape[1] == 0 or not np.isfinite(arr).all():
+                    raise ValueError('embedding service returned invalid vectors')
+                if dimension is not None and arr.shape[1] != dimension:
+                    raise ValueError('embedding dimension changed; cannot resume this index')
+                if config.get('dimensions') and arr.shape[1] != int(config['dimensions']):
+                    raise ValueError('embedding dimension differs from requested dimensions')
+                norms = np.linalg.norm(arr, axis=1)
+                if (norms == 0).any():
+                    raise ValueError('embedding service returned a zero vector')
+                dimension = arr.shape[1]
+                arr /= norms[:, None]
+                vectors.executemany('INSERT INTO vectors VALUES (?,?,?)', [(row[1], vector.tobytes(), dimension) for row, vector in zip(batch, arr)])
+                # Commit in source order even if HTTP requests finish out of
+                # order, so the high-water mark cannot skip an unfinished batch.
+                last_rowid = batch[-1][0]
+                vectors.execute("INSERT OR REPLACE INTO checkpoint VALUES ('rowid', ?)", (last_rowid,))
+                vectors.commit()
+                completed += len(batch)
+                progress('embedding', {**counts, 'vectors': completed})
+                _check(cancel)
+                batch = next(iterator, None)
+                if batch is not None:
+                    pending.append((batch, pool.submit(embed, batch)))
         counts['vectors'] = completed
         if completed != counts['embedding_eligible']:
             raise ValueError('embedding coverage differs from eligible count')
@@ -182,7 +211,7 @@ def _dense(output, config, counts, progress, cancel):
 
 
 def build_index(knowledge, output, *, mode='lexical', embedding_config=None,
-                mapping=None, resume=False, progress=None, cancel=None):
+                mapping=None, resume=False, progress=None, cancel=None, lexical_index=None):
     if mode not in {'lexical', 'hybrid'}:
         raise ValueError('mode must be lexical or hybrid')
     source, output = Path(knowledge).expanduser().resolve(), Path(output).expanduser().resolve()
@@ -213,7 +242,20 @@ def build_index(knowledge, output, *, mode='lexical', embedding_config=None,
         try:
             _check(cancel)
             if not state.get('lexical_complete'):
-                counts = _lexical(source, output, mapping, notify, cancel)
+                if lexical_index:
+                    parent = Path(lexical_index).expanduser().resolve()
+                    if parent == output:
+                        raise ValueError('reused lexical index must differ from output')
+                    previous = verify_index(parent)
+                    if any(previous['input'].get(k) != signature[k] for k in ('knowledge_sha256', 'projection', 'mapping')):
+                        raise ValueError('reused lexical index has different knowledge, projection or mapping')
+                    for name in (DB, 'metadata_v2.sqlite', 'compact_label_v1.sqlite'):
+                        _check(cancel)
+                        shutil.copy2(parent / name, output / name)
+                    counts = {**previous['counts'], 'vectors': 0}
+                    state['lexical_source_index_id'] = previous['index_id']
+                else:
+                    counts = _lexical(source, output, mapping, notify, cancel)
                 state['lexical_files'] = {name: digest(output / name) for name in (DB, 'metadata_v2.sqlite', 'compact_label_v1.sqlite')}
                 state['lexical_complete'] = True
                 notify('lexical_complete', counts)
@@ -274,6 +316,7 @@ def _verify_files(root, manifest):
         if total != manifest['counts']['total'] or eligible != manifest['counts']['indexed']:
             raise ValueError('index row counts differ from manifest')
     if manifest.get('embedding'):
+        import faiss
         shard_manifest = read_json(safe_path(root, manifest['artifacts']['faiss_shards']))
         count = 0
         for shard in shard_manifest['shards']:
@@ -282,7 +325,15 @@ def _verify_files(root, manifest):
                 safe_path(root, relative)
                 if relative not in manifest['files']:
                     raise ValueError('shard artifact missing from inventory')
-            count += shard['counts']['added_vectors']
+            index = faiss.read_index(str(safe_path(root / 'faiss_shards', shard['artifacts']['index'])))
+            with safe_path(root / 'faiss_shards', shard['artifacts']['ids']).open() as handle:
+                id_count = sum(1 for line in handle if line.strip())
+            if index.ntotal != shard['counts']['added_vectors'] or id_count != index.ntotal:
+                raise ValueError('actual vector or ID count differs from shard manifest')
+            if index.d != manifest['embedding']['dimension']:
+                raise ValueError('actual vector dimension differs from manifest')
+            count += index.ntotal
+            del index
         if count != manifest['counts']['vectors'] or count != manifest['counts']['embedding_eligible']:
             raise ValueError('vector coverage differs from manifest')
 
@@ -292,6 +343,18 @@ def verify_index(path):
     manifest = read_json(root / 'manifest.json')
     _verify_files(root, manifest)
     return manifest
+
+
+@lru_cache(maxsize=8)
+def _load_dense_shard(index_path, ids_path):
+    """Completed index files are immutable; avoid rereading vectors per query."""
+    import faiss
+    index = faiss.read_index(index_path)
+    with Path(ids_path).open() as handle:
+        ids = [json.loads(line)['retrieval_id'] for line in handle if line.strip()]
+    if len(ids) != index.ntotal:
+        raise ValueError('actual vector and ID counts differ')
+    return index, ids
 
 
 def search_index(path, query, *, limit=8, embedding_config=None, skill=None, filters=None):
@@ -325,21 +388,32 @@ def search_index(path, query, *, limit=8, embedding_config=None, skill=None, fil
             for rank, hit in enumerate(hits[:candidate_limit], 1):
                 scored[hit['retrieval_id']] = 1 / (60 + rank)
             dense_hits = []
-            allowed = {row[0] for row in db.execute(f'SELECT m.retrieval_id FROM retrieval_meta m WHERE {where}', filter_params)}
+            # Family and route are represented by shard boundaries. Only
+            # finer metadata filters require an ID selector inside a shard.
+            scoped = understanding['filters'] or understanding['automatic_filters']
+            allowed = {row[0] for row in db.execute(f'SELECT m.retrieval_id FROM retrieval_meta m WHERE {where}', filter_params)} if scoped else None
             for shard in read_json(root / 'faiss_shards/manifest.json')['shards']:
-                index = faiss.read_index(str(safe_path(root / 'faiss_shards', shard['artifacts']['index'])))
-                ids = [json.loads(s) for s in safe_path(root / 'faiss_shards', shard['artifacts']['ids']).read_text().splitlines()]
-                allowed_positions = np.asarray([i for i, item in enumerate(ids) if item['retrieval_id'] in allowed], dtype=np.int64)
-                if not len(allowed_positions):
+                partition = {**shard, 'retrieval_eligible': 1}
+                # Apply only family/route restrictions here; other metadata is
+                # checked by the SQL-derived selector and final hydration.
+                partition_scope = {**understanding, 'filters': {}, 'automatic_filters': {}}
+                if not matches_scope(partition, partition_scope):
                     continue
-                selector = faiss.IDSelectorBatch(allowed_positions)
-                distances, positions = index.search(vector, min(candidate_limit, len(allowed_positions)), params=faiss.SearchParameters(sel=selector))
-                dense_hits.extend((float(score), ids[int(pos)]['retrieval_id']) for score, pos in zip(distances[0], positions[0]) if pos >= 0)
+                index, ids = _load_dense_shard(str(safe_path(root / 'faiss_shards', shard['artifacts']['index'])), str(safe_path(root / 'faiss_shards', shard['artifacts']['ids'])))
+                if allowed is None:
+                    distances, positions = index.search(vector, min(candidate_limit, index.ntotal))
+                else:
+                    allowed_positions = np.asarray([i for i, rid in enumerate(ids) if rid in allowed], dtype=np.int64)
+                    if not len(allowed_positions):
+                        continue
+                    selector = faiss.IDSelectorBatch(allowed_positions)
+                    distances, positions = index.search(vector, min(candidate_limit, len(allowed_positions)), params=faiss.SearchParameters(sel=selector))
+                dense_hits.extend((float(score), ids[int(pos)]) for score, pos in zip(distances[0], positions[0]) if pos >= 0)
             for rank, (_, rid) in enumerate(sorted(dense_hits, reverse=True)[:candidate_limit], 1):
                 scored[rid] = scored.get(rid, 0) + 1 / (60 + rank)
             hits = []
             for rid, score in sorted(scored.items(), key=lambda v: -v[1]):
-                row = db.execute(f'SELECT m.*,f.retrieval_text FROM retrieval_meta m JOIN retrieval_fts f USING(retrieval_id) WHERE m.retrieval_id=? AND {where}', (rid, *filter_params)).fetchone()
+                row = db.execute(f'SELECT m.*,f.retrieval_text FROM retrieval_meta m JOIN retrieval_fts f ON f.rowid=m.rowid AND f.retrieval_id=m.retrieval_id WHERE m.retrieval_id=? AND {where}', (rid, *filter_params)).fetchone()
                 if row:
                     item = {**dict(row), 'score': score, 'relevance_score': score}
                     hits.append(item)

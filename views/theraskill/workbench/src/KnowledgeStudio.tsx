@@ -12,6 +12,7 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
   const [source, setSource] = useState('')
   const [indexId, setIndexId] = useState('my-knowledge-v1')
   const [mode, setMode] = useState('lexical')
+  const [reuseLexical, setReuseLexical] = useState('')
   const [skill, setSkill] = useState('emotional-support')
   const [languageFilter, setLanguageFilter] = useState('')
   const [archive, setArchive] = useState('')
@@ -64,7 +65,8 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
         }} /></label>
         <label>{zh ? '新索引名称' : 'New index name'}<input value={indexId} onChange={e => setIndexId(e.target.value)} /></label>
         <label>{zh ? '检索方式' : 'Retrieval mode'}<select value={mode} onChange={e => setMode(e.target.value)}><option value="lexical">{zh ? '词法 · 无需模型' : 'Lexical · no model'}</option><option value="hybrid">{zh ? '混合 · 使用 embedding 服务' : 'Hybrid · uses embedding service'}</option></select></label>
-        <div className="resource-actions"><button disabled={busy || !source} onClick={() => void submit('plan', { knowledge: source, index_id: indexId, mode })}>{zh ? '预览构建计划' : 'Preview plan'}</button><button disabled={busy || !source || !indexId} onClick={() => void submit('build', { knowledge: source, index_id: indexId, mode })}>{zh ? '开始构建' : 'Build index'}</button><button disabled={busy || !source || !indexId} onClick={() => void submit('build', { knowledge: source, index_id: indexId, mode, resume: true })}>{zh ? '继续未完成构建' : 'Resume build'}</button></div>
+        {mode === 'hybrid' && <label>{zh ? '复用已有词法索引（可选）' : 'Reuse an existing lexical index (optional)'}<select value={reuseLexical} onChange={e => setReuseLexical(e.target.value)}><option value="">{zh ? '重新构建' : 'Build from scratch'}</option>{catalog.indexes.map(item => <option key={item.id} value={item.id}>{item.id}</option>)}</select><small>{zh ? '仅复用知识内容和投影版本相同且验证通过的索引，向量仍使用当前 embedding 模型重新构建。' : 'Requires matching knowledge and projection with verified files. Vectors are rebuilt using the current embedding model.'}</small></label>}
+        <div className="resource-actions"><button disabled={busy || !source} onClick={() => void submit('plan', { knowledge: source, index_id: indexId, mode })}>{zh ? '预览构建计划' : 'Preview plan'}</button><button disabled={busy || !source || !indexId} onClick={() => void submit('build', { knowledge: source, index_id: indexId, mode, ...(mode === 'hybrid' && reuseLexical ? { reuse_lexical: reuseLexical } : {}) })}>{zh ? '开始构建' : 'Build index'}</button><button disabled={busy || !source || !indexId} onClick={() => void submit('build', { knowledge: source, index_id: indexId, mode, resume: true, ...(mode === 'hybrid' && reuseLexical ? { reuse_lexical: reuseLexical } : {}) })}>{zh ? '继续未完成构建' : 'Resume build'}</button></div>
       </article>
       <article className="panel resource-form"><h2>{zh ? '安装独立资源包' : 'Install a resource package'}</h2>
         <label>{zh ? '本地压缩包路径（tar.gz）' : 'Local archive path (tar.gz)'}<input value={archive} onChange={e => setArchive(e.target.value)} /></label>

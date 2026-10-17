@@ -190,6 +190,7 @@ def test_default_artifact_store_is_inside_hermes_home(monkeypatch, tmp_path) -> 
 
 def test_launcher_rejects_an_occupied_service_port(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes-home"))
+    monkeypatch.setenv("THERASKILL_AGENT_ROOT", str(tmp_path / "project"))
     monkeypatch.setattr(
         launcher,
         "service_specs",

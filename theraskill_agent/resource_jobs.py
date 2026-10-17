@@ -61,7 +61,8 @@ def run_operation(operation, parameters, *, progress=None, cancel=None):
         if operation == 'plan':
             return plan_index(source, **options)
         output = data_root() / 'indexes' / safe_id(p['index_id'])
-        return build_index(source, output, resume=bool(p.get('resume')), progress=progress, cancel=cancel, **options)
+        lexical = resources.index_path(p['reuse_lexical']) if p.get('reuse_lexical') else None
+        return build_index(source, output, resume=bool(p.get('resume')), lexical_index=lexical, progress=progress, cancel=cancel, **options)
     if operation == 'verify':
         return verify_index(resources.index_path(p['index']))
     if operation == 'search':

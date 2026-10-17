@@ -1,0 +1,30 @@
+{"id":"support_zh_anxiety","skill":"emotional-support","query":"最近工作压力大，总是焦虑，想有人理解我","expected_families":["style_response","therapy_process"]}
+{"id":"support_en_anxiety","skill":"emotional-support","query":"I feel overwhelmed and anxious about work; please listen with empathy","expected_families":["style_response","therapy_process"]}
+{"id":"support_zh_grief","skill":"emotional-support","query":"失去亲人后很难过，怎样给予共情和情绪支持","expected_families":["style_response","therapy_process"]}
+{"id":"support_en_grief","skill":"emotional-support","query":"How can I support someone coping with grief and loneliness?","expected_families":["style_response","therapy_process"]}
+{"id":"risk_zh_suicide","skill":"risk-triage","query":"我不想活了，已经有自杀计划，应该怎样询问安全情况","expected_families":["clinical_risk_assessment"]}
+{"id":"risk_en_suicide","skill":"risk-triage","query":"I have a suicide plan and access to the means; assess immediate safety","expected_families":["clinical_risk_assessment"]}
+{"id":"risk_zh_selfharm","skill":"risk-triage","query":"患者反复自伤，如何了解意图并讨论安全支持","expected_families":["clinical_risk_assessment"]}
+{"id":"risk_en_selfharm","skill":"risk-triage","query":"Assess self harm intent, protective factors and safety planning","expected_families":["clinical_risk_assessment"]}
+{"id":"cbt_zh_catastrophe","skill":"cognitive-reframing-support","query":"一次考试失败就觉得一切完了，如何识别灾难化并寻找替代想法","expected_families":["method_rubric","qa_psychoeducation"]}
+{"id":"cbt_en_catastrophe","skill":"cognitive-reframing-support","query":"Use cognitive reframing to examine catastrophizing and develop an alternative thought","expected_families":["method_rubric","qa_psychoeducation"]}
+{"id":"cbt_zh_evidence","skill":"cognitive-reframing-support","query":"认知重构中如何核对自动思维的支持证据和反对证据","expected_families":["method_rubric","qa_psychoeducation"]}
+{"id":"cbt_en_evidence","skill":"cognitive-reframing-support","query":"CBT thought record: evidence for and against an automatic thought","expected_families":["method_rubric","qa_psychoeducation"]}
+{"id":"rebt_zh_belief","skill":"rebt-belief-work-support","query":"REBT 如何区分事件、非理性信念和情绪后果，并开展辩驳","expected_families":["method_rubric","therapy_process"]}
+{"id":"rebt_en_belief","skill":"rebt-belief-work-support","query":"REBT ABC model: identify irrational beliefs and use disputation","expected_families":["method_rubric","therapy_process"]}
+{"id":"rebt_zh_demand","skill":"rebt-belief-work-support","query":"我必须得到所有人的认可，如何讨论绝对化要求和合理信念","expected_families":["method_rubric","therapy_process"]}
+{"id":"rebt_en_demand","skill":"rebt-belief-work-support","query":"How to dispute the belief that everyone must approve of me in rational emotive behavior therapy","expected_families":["method_rubric","therapy_process"]}
+{"id":"generation_zh","skill":"synthetic-dialogue-builder","query":"生成用于教学的咨询对话情景，包含角色目标、困难和逐步披露","expected_families":["synthetic_construction"]}
+{"id":"generation_en","skill":"synthetic-dialogue-builder","query":"Generate a simulated counseling dialogue with a patient persona, scenario goals and progressive disclosure","expected_families":["synthetic_construction"]}
+{"id":"generation_zh_control","skill":"synthetic-dialogue-builder","query":"如何控制合成对话的来访者画像、难度和情绪变化","expected_families":["synthetic_construction"]}
+{"id":"generation_en_control","skill":"synthetic-dialogue-builder","query":"Synthetic dialogue construction: control persona consistency and conversation difficulty","expected_families":["synthetic_construction"]}
+{"id":"review_zh","skill":"therapy-response-reviewer","query":"审核咨询师回复是否共情、忠于原文证据并遵守咨询边界","expected_families":["therapy_process","method_rubric"]}
+{"id":"review_en","skill":"therapy-response-reviewer","query":"Review a therapist response for empathy, evidence faithfulness and appropriate boundaries","expected_families":["therapy_process","method_rubric"]}
+{"id":"review_zh_process","skill":"therapy-response-reviewer","query":"咨询过程评价：是否过早给建议、跳过澄清问题或忽视来访者目标","expected_families":["therapy_process","method_rubric"]}
+{"id":"review_en_process","skill":"therapy-response-reviewer","query":"Evaluate therapeutic process: premature advice, clarification and collaborative goals","expected_families":["therapy_process","method_rubric"]}
+{"id":"filter_zh","skill":"emotional-support","query":"焦虑与共情支持","filters":{"language":"zh"},"expected_families":["style_response","therapy_process"]}
+{"id":"filter_en","skill":"emotional-support","query":"empathy and anxiety support","filters":{"language":"en"},"expected_families":["style_response","therapy_process"]}
+{"id":"filter_methods","skill":"cognitive-reframing-support","query":"cognitive reframing evidence alternative thought","filters":{"family":"method_rubric"},"expected_families":["method_rubric"]}
+{"id":"filter_blocked_construction","skill":"emotional-support","query":"synthetic dialogue construction","filters":{"family":"synthetic_construction"},"expect_empty":true}
+{"id":"punctuation_only","skill":"emotional-support","query":"？！……","expect_empty":true}
+{"id":"mixed_unicode","skill":"cognitive-reframing-support","query":"ＣＢＴ：最近经常 catastrophizing，想寻找替代想法","expected_families":["method_rubric","qa_psychoeducation"]}

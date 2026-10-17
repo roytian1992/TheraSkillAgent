@@ -18,6 +18,7 @@ def add_commands(sub):
             command.add_argument('--id', help='installed index slot name')
             command.add_argument('--output', help='explicit index directory instead of a managed slot')
             command.add_argument('--resume', action='store_true')
+            command.add_argument('--reuse-lexical', help='reuse verified lexical artifacts from a completed index with identical knowledge and projection')
     verify = commands.add_parser('verify'); verify.add_argument('--index', required=True)
     search = commands.add_parser('search'); search.add_argument('--index', required=True); search.add_argument('--query', required=True)
     search.add_argument('--limit', type=int, default=8)
@@ -54,7 +55,8 @@ def run_command(args):
             if not args.output and not args.id:
                 raise ValueError('index build needs --id or --output')
             output = Path(args.output).expanduser() if args.output else data_root() / 'indexes' / safe_id(args.id)
-            return build_index(source, output, resume=args.resume, **options)
+            lexical = resources.index_path(args.reuse_lexical) if args.reuse_lexical else None
+            return build_index(source, output, resume=args.resume, lexical_index=lexical, **options)
         if action == 'verify':
             return verify_index(resources.index_path(args.index))
         filters = json.loads(args.filters) if args.filters else None

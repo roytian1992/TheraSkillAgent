@@ -1,4 +1,7 @@
 from __future__ import annotations
+from pathlib import Path
+import shutil
+import pytest
 
 from domains.theraskill.provider_config import (
     ProviderConfigError,
@@ -12,7 +15,15 @@ from theraskill_agent.platform import THERASKILL_PLATFORM
 from theraskill_agent.provider_smoke import check_provider, list_providers
 
 
-def test_registry_uses_only_direct_blocks_without_embedded_secret() -> None:
+@pytest.fixture
+def clean_provider_config(tmp_path, monkeypatch):
+    monkeypatch.setenv('THERASKILL_AGENT_ROOT', str(tmp_path))
+    target = tmp_path / 'configs/theraskill/providers.yaml'
+    target.parent.mkdir(parents=True)
+    shutil.copyfile(Path(__file__).parents[1] / 'configs/theraskill/providers.yaml', target)
+
+
+def test_registry_uses_only_direct_blocks_without_embedded_secret(clean_provider_config) -> None:
     registry = load_provider_registry()
     assert set(registry) >= {"active", "llm", "embedding"}
     assert "profiles" not in registry
@@ -51,7 +62,7 @@ embedding:
     assert "test-secret" not in str(public)
 
 
-def test_provider_check_reports_direct_credential_state(monkeypatch) -> None:
+def test_provider_check_reports_direct_credential_state(monkeypatch, clean_provider_config) -> None:
     monkeypatch.delenv("THERASKILL_LOCAL_API_KEY", raising=False)
     result = check_provider("llm")
     assert result["credential_configured"] is False
