@@ -97,3 +97,8 @@ python scripts/AdvancedRetrieval/evaluate_managed_retrieval.py \
 22. 网络盘持久化评估进一步暴露小家族主证据召回的随机读取长尾。改为在全局 FTS 倒排结果上施加有限家族 ID 集合；英文语言过滤新增独立的小型 FTS/metadata 分区，并在词法索引路径提前返回，避免再次打开多 GB 混合库。当前英文过滤实测从此前约 710 秒降至约 0.12 秒；相关改动已提交为 `e99c433` 并推送 `main`。
 23. 真实服务验证：词法索引启用后，支持助手通过工作台代理完成一次完整中文支持对话，生成状态回到 `idle`，可见 assistant 回复非空；记录在 `support-after-lexical/summary.json`。浏览器实测工作台中英文切换、知识与索引页面、中文检索提交、异步结果展示和截图均通过，截图在 `ui-after-lexical-*.png` 与 `ui-knowledge-query-after-lexical.png`。
 24. 回归结果：TheraSkillAgent 专属测试 147 项通过、4 条既有依赖警告；检索/索引/模型输出聚焦检查 41 项通过、2 条既有依赖警告。仓库完整 pytest 仍包含未安装的上游 ACP 可选依赖，不能将该集合报告为通过。
+25. 混合索引全量构建完成并通过独立 scratch 校验：总数 2,196,286、可检索/可嵌入 1,808,415、排除 387,871、实际向量 1,808,415、3072 维、9 个 FAISS 分片、失败 0。真实 embedding 使用 `text-embedding-3-large`，指纹为 `813fba430908c8991f809e467fc40aeed636d732054c87b4f22ec0db12fffee5`；校验同时核对文件 SHA、SQLite quick_check、行数、FAISS 向量和 ID 数量。
+26. 混合索引 30 条完整工程评估无错误、无范围越界，28 个有预期知识家族的用例中前五命中 27 条，空结果 2/2，中位 16.6217 秒、最大 42.2656 秒。唯一未命中为 `rebt_zh_demand`；该家族命中指标仍是工程覆盖检查，不是专家相关性或临床效果结论。结果见 `hybrid-evaluation-v2/summary.json`。
+27. 为 CJK FTS 长尾增加两阶段召回：先在中文倒排表取有界 rowid，再按有限 ID 回读正文和元数据；小家族主证据也使用有界 ranked page 后在 Python 侧筛选，避免大量字符串 ID 过滤连接。相关提交为 `92f30d5`，147 项 TheraSkillAgent 专属测试仍全部通过。
+28. 混合索引已原子启用：`idx_d5b9f0077e1ca31b990080de`，当前模式 `hybrid`，active selection 写入 `data/theraskill/active-index.json`。六个领域服务和工作台全部重启并健康返回 200；健康记录在 `service-health-after-hybrid.json`。
+29. 启用后的真实支持 E2E 成功，响应状态回到 `idle`，中文 assistant 回复非空，证据中的检索模式为 `advanced_retrieval_v3_llm_structured_hybrid`，总耗时 150.971 秒，见 `support-after-hybrid/summary.json`。浏览器实测工作台中英文切换和知识页，页面明确显示 active hybrid、1,808,415 条可检索记录及上一词法索引；截图为 `ui-after-hybrid-*.png`、`ui-knowledge-after-hybrid.png`。
