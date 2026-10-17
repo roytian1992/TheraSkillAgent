@@ -239,7 +239,8 @@ def understand_query(
     concepts = [name for name, (pattern, _) in _CONCEPTS.items() if pattern.search(normalized)]
     expansions = _unique([term for name in concepts for term in _CONCEPTS[name][1]], 24)
     cjk_terms = _unique(_cjk_variants(' '.join(expansions)) + cjk_terms, 64)
-    lexical_terms = _unique([term for term in latin_terms if term not in _STOP_WORDS] + cjk_terms + expansions, 80)
+    expanded_latin = [term.lower() for term in _LATIN.findall(' '.join(expansions))]
+    lexical_terms = _unique([term for term in latin_terms + expanded_latin if term not in _STOP_WORDS] + cjk_terms + expansions, 80)
     hard_filters = _normalize_filters(filters)
     risk_detected = bool(_RISK_TERMS.search(normalized))
     automatic_filters: dict[str, list[str]] = {}

@@ -105,6 +105,13 @@ def test_concept_expansion_crosses_languages_without_changing_explicit_skill(tmp
     build_index(source, tmp_path / 'zh-index')
     assert search_index(tmp_path / 'zh-index', 'cognitive reframing', skill='cognitive-reframing-support')[0]['release_unit_id'] == 'reframe_zh'
 
+    # Concept phrases must also expose individual English tokens: the method
+    # may describe the same concept without the exact translated phrase.
+    row.update(id='method_tokens', language='en', title='Method record', text='Examine the original thought before developing a reframing.')
+    source.write_text(json.dumps(row) + '\n')
+    build_index(source, tmp_path / 'token-index')
+    assert search_index(tmp_path / 'token-index', '认知重构', skill='cognitive-reframing-support')[0]['release_unit_id'] == 'method_tokens'
+
 
 def test_primary_evidence_survives_a_large_style_pool_without_bypassing_filters(tmp_path):
     template = json.loads(DEMO.read_text().splitlines()[0])
