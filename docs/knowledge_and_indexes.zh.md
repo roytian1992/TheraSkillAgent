@@ -30,6 +30,55 @@ theraskill-agent index search --index demo-bge --query uncertainty
 
 `plan` 扫描输入并估计请求量，不发 embedding 请求。磁盘估算为粗略的词法估算，向量另需空间。完整文件的扫描和 hash 会耗时。`build` 才调用 `providers.yaml` 的 `embedding` 服务；可在该块设置 `dimensions`、`batch_size`、`revision`。`dimensions` 会发送给服务，并验证响应。模型服务不提供 revision 时应自行维护配置版本，系统无法识别同名服务在后台静默换权重。
 
+## 查询理解和功能路由
+
+```mermaid
+flowchart LR
+    A[问题与当前功能] --> B[本地查询理解]
+    B --> C[知识范围与硬过滤]
+    C --> D[中文词元与英文 BM25]
+    C --> E[可选 LLM 查询规划与向量/标签召回]
+    D --> F[RRF 融合与功能策略排序]
+    E --> F
+    F --> G[来源、证据用途与检索诊断]
+```
+
+Agent 工具、支持助手、CLI 和知识工作台共用查询理解与功能策略。查询理解统一 Unicode 和常见转录标点，识别中文、英文或混合语言，提取任务类型、风险用语、概念与有限查询变体。只对实际出现的概念作中英文扩展，例如「灾难化」扩展为 cognitive reframing / alternative thought；不是把每个 skill 的所有关键词都拼进问题。没有明确功能时返回 `suggested_skill`；已有功能选择保持明确，不会被关键词静默覆盖。风险线索用于路由提示，不是最终风险判断。
+
+本地层不调用模型。高级 hybrid 路径在其上调用现有 LLM planner，补充上下文理解和查询改写；LLM / embedding 不可用时运行带相同功能策略的词法回退，并报告原因。仅标点等信息不足的查询返回 `needs_clarification` 和空结果。
+
+| 功能 | 知识范围重点 |
+| --- | --- |
+| 支持对话 | 回应风格、咨询过程、心理教育 |
+| 风险分流 | 临床风险评估、风险相关回应与心理教育 |
+| 认知重构 | 方法 rubric、心理教育、回应风格与风险边界 |
+| REBT | 方法 rubric、信念工作相关过程与心理教育 |
+| 情景生成 | 合成对话方法、咨询过程、方法 rubric 与回应风格 |
+| 回复审核 | 咨询过程、方法 rubric、构建审核方法、回应风格与心理教育 |
+
+功能同时限制允许的知识家族和禁用路由；合成对话构建方法只进入生成或审核功能。候选/记账记录不能通过回填进入普通支持。路由偏好在范围内影响排序，显式 `filters` 则是硬约束：同一字段的多个值按 OR、不同字段按 AND 组合。支持 `family`、`language`、`dataset`、`evidence_tier`、`knowledge_type`、`route`、`risk` 及其标准元数据字段名。
+
+硬约束在候选召回前生效。LLM 猜测的范围可以放宽；用户过滤和功能边界始终保留，包含 required-family 回填、policy 回填和最终融合。未知过滤字段或旧索引缺少所需列会明确报错，避免静默忽略。
+
+新索引在主 SQLite 中额外构建中文二、三字词元 FTS 表，解决默认 tokenizer 对连续中文召回不足的问题。无需安装中文分词包。历史索引仍可走子串回退，但可能较慢；用新 ID 重建索引才能启用中文词元索引和完整语言过滤。新增投影版本会产生新的索引身份，不复用旧构建检查点。默认不会把查询语言当成硬过滤，因此允许中英文知识互相召回。
+
+```bash
+# 不需要模型或索引，单独检查 query understanding
+theraskill-agent index understand \
+  --query '最近经常灾难化，想学习认知重构' \
+  --skill cognitive-reframing-support
+
+# 比较功能路由与语言约束
+theraskill-agent index search --index demo-v1 \
+  --query '核对原文证据' \
+  --skill therapy-response-reviewer \
+  --filters '{"language":"zh"}'
+```
+
+检索结果包含 `query_understanding`、`skill`、`retrieval_mode`、索引身份、命中记录与 warnings；高级 Agent 路径另有证据角色、允许/禁止用途、规划状态和策略检查。CLI / 工作台的索引测试使用本地 BM25 或 BM25+向量融合，不调用 LLM planner；Agent / 支持助手使用高级查询规划、标签、向量和策略重排，允许结果排序有所不同。
+
+工作台可选择功能路由和语言过滤；结果直接展示查询理解、优先知识家族、识别概念、命中数量、语言和证据等级。LLM 与 embedding 分别读取 `providers.yaml` 的独立配置，不再显示无效的 embedding profile 名称输入。
+
 中断后传相同参数并加 `--resume`。词法阶段中断会重建词法文件；已完成的 embedding 批次由 SQLite 事务保存，恢复时只补缺失记录。恢复前核对输入 hash、映射、投影版本、模型身份和已有词法文件；不兼容则拒绝。已完成索引不可覆盖，需使用新 ID。
 
 输出清单记录所有文件 hash / 大小、输入知识 hash、模型身份、维度和覆盖数量。`total` 是知识总数，`indexed` 是可词法检索数量，`embedding_eligible` / `vectors` 是可嵌入 / 实际嵌入数量；不能把总知识数当向量数。

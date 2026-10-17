@@ -1,7 +1,9 @@
 """CLI surface shared with resource jobs and the workbench."""
+import json
 from pathlib import Path
 from .paths import data_root
 from .indexing.common import read_json, safe_id
+from .query_understanding import SUPPORTED_RETRIEVAL_SKILLS, understand_query
 
 
 def add_commands(sub):
@@ -19,6 +21,12 @@ def add_commands(sub):
     verify = commands.add_parser('verify'); verify.add_argument('--index', required=True)
     search = commands.add_parser('search'); search.add_argument('--index', required=True); search.add_argument('--query', required=True)
     search.add_argument('--limit', type=int, default=8)
+    search.add_argument('--skill', choices=SUPPORTED_RETRIEVAL_SKILLS)
+    search.add_argument('--filters', help='JSON object of knowledge filters, for example {"language":"zh"}')
+    understand = commands.add_parser('understand', help='inspect query understanding without a model or index')
+    understand.add_argument('--query', required=True)
+    understand.add_argument('--skill', choices=SUPPORTED_RETRIEVAL_SKILLS)
+    understand.add_argument('--filters', help='JSON object of knowledge filters')
     knowledge = sub.add_parser('knowledge', help='manage separately distributed knowledge and index resources')
     commands = knowledge.add_subparsers(dest='knowledge_command', required=True)
     commands.add_parser('list'); commands.add_parser('rollback')
@@ -34,7 +42,7 @@ def add_commands(sub):
 
 def run_command(args):
     from . import resources
-    from .indexing import build_index, plan_index, verify_index, search_index
+    from .indexing import build_index, plan_index, retrieve_index, verify_index
     if args.command == 'index':
         action = args.index_command
         if action in {'plan', 'build'}:
@@ -49,7 +57,10 @@ def run_command(args):
             return build_index(source, output, resume=args.resume, **options)
         if action == 'verify':
             return verify_index(resources.index_path(args.index))
-        return {'hits': search_index(resources.index_path(args.index), args.query, limit=args.limit)}
+        filters = json.loads(args.filters) if args.filters else None
+        if action == 'understand':
+            return understand_query(args.query, skill=args.skill, filters=filters)
+        return retrieve_index(resources.index_path(args.index), args.query, limit=args.limit, skill=args.skill, filters=filters)
     action = args.knowledge_command
     if action == 'list':
         return resources.list_resources()

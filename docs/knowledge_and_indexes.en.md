@@ -1,0 +1,114 @@
+# Knowledge, indexes and retrieval
+
+[中文说明](knowledge_and_indexes.zh.md)
+
+## Build and activate
+
+Use Phase 6 release JSONL or the generic format in `schemas/knowledge.schema.json`.
+Generic records need a stable `id` and a title or text. Retrieval requires an
+approved/released record with explicit `retrieval_policy` eligibility. Building
+an index does not approve candidates. Custom field paths can be supplied through
+`--mapping mapping.json`; mappings do not execute code.
+
+```bash
+theraskill-agent index plan --knowledge examples/knowledge/demo.jsonl
+theraskill-agent index build --knowledge examples/knowledge/demo.jsonl --id demo-v2
+theraskill-agent index verify --index demo-v2
+theraskill-agent index search --index demo-v2 --query uncertainty
+theraskill-agent knowledge activate --index demo-v2
+```
+
+The included bilingual demo contains six self-authored synthetic records. Full
+knowledge and simulation resources are distributed separately; there is currently
+no public download URL. Default indexes live in `data/theraskill/indexes/<id>/`.
+Lexical builds require neither model requests nor NumPy/FAISS.
+
+For hybrid indexes, install `pip install -e '.[retrieval]'` and add `--mode hybrid`
+to plan/build. The embedding model, URL and key come from the independent
+`embedding` block in `configs/theraskill/providers.yaml`. Model weights are not
+bundled. Planning estimates requests without making them; building calls the
+embedding service. Model identity and dimensions must match at query time.
+
+## Query understanding and feature routes
+
+Retrieval starts with a shared local layer that normalizes Unicode and transcript
+punctuation, detects Chinese/English/mixed text, identifies task and risk cues,
+and creates bounded lexical variants. It expands only concepts actually present
+in the question, including bilingual equivalents for empathy, anxiety, cognitive
+reframing, REBT and risk-related language. This finite concept vocabulary is a
+deterministic baseline; the advanced LLM planner adds contextual rewrites.
+
+An explicitly selected skill owns the route. Without one, understanding returns
+a suggested skill for inspection. Keyword matches do not silently replace an
+explicit workflow. Risk cues are retrieval signals, not clinical risk decisions.
+Queries containing only punctuation return `needs_clarification` and no matches.
+
+| Workflow | Knowledge scope |
+| --- | --- |
+| Emotional support | Response style, therapy process, psychoeducation |
+| Risk triage | Clinical risk assessment and risk-related support knowledge |
+| Cognitive reframing | Method rubrics, psychoeducation, response style, risk boundaries |
+| REBT belief work | Method rubrics, therapy process, psychoeducation, response style |
+| Scenario generation | Synthetic construction methods, process, rubrics, response style |
+| Response review | Process, rubrics, construction review, style, psychoeducation |
+
+One policy registry drives local and advanced retrieval. Routes constrain allowed
+families and exclude accounting-only records; construction methods enter generation
+or review workflows. Explicit metadata filters apply before candidate recall and
+remain in force during LLM scope relaxation, family backfill and final fusion.
+Values in one field use OR; different fields use AND. Supported aliases are
+`family`, `language`, `dataset`, `evidence_tier`, `knowledge_type`, `route` and `risk`.
+Unknown filters or missing index columns produce an explicit error.
+
+```bash
+# Inspect understanding without an index or model service.
+theraskill-agent index understand \
+  --query 'Help with cognitive reframing' --skill cognitive-reframing-support
+
+theraskill-agent index search --index demo-v2 \
+  --query '核对原文证据' --skill therapy-response-reviewer \
+  --filters '{"language":"zh"}'
+```
+
+New builds add a Chinese 2/3-character token FTS index inside the main SQLite file.
+Historical indexes use a substring fallback that may be slower. Rebuild under a new
+ID to enable indexed Chinese recall and the language column. The new projection
+version prevents reuse of old build checkpoints. Detected language does not impose
+a hard filter, so cross-language recall remains possible.
+
+CLI and workbench index tests use local BM25 or BM25/vector fusion. The Agent tool
+and support assistant use the advanced planner, lexical/vector/label channels,
+RRF fusion, policy ranking and evidence-use annotations. Ordering may differ.
+Unavailable model services fall back to policy-aware lexical retrieval with a
+reported reason. Results expose understanding, mode, matches and diagnostics;
+the workbench displays the selected route, concepts, language and evidence tiers.
+
+## Resume, verify and distribute
+
+Interrupted builds accept `--resume` with the same input, mapping and embedding
+configuration. Committed embedding batches are reused; an interrupted lexical
+phase is rebuilt. Completed indexes are immutable. Input/configuration changes
+require a new ID. Manifests record checksums, sizes, model identity, dimensions and
+coverage counts; `total` must not be confused with embedded vector count.
+
+```bash
+theraskill-agent knowledge pack --source examples/knowledge/demo.jsonl \
+  --output /tmp/demo.tar.gz --id demo --kind knowledge --license CC0-1.0
+theraskill-agent knowledge pack --source data/theraskill/indexes/demo-v2 \
+  --output /tmp/demo-index.tar.gz --id demo-index --kind index
+theraskill-agent knowledge install --archive /path/to/demo-index.tar.gz
+theraskill-agent knowledge activate --index demo-index
+theraskill-agent knowledge rollback
+```
+
+Packages include inventories and download metadata. Local/HTTPS catalogs support
+checksums, multipart downloads and resumption. Installation rejects undeclared
+files, links and escaping paths, and does not automatically activate an index.
+Knowledge and prebuilt indexes may be distributed independently. Indexes can
+contain source text and require the same distribution permissions as knowledge.
+
+The workbench provides upload (up to 32 MiB), local source paths, plans, build jobs,
+cancel/resume, package installation, verification, query tests, activation and
+rollback through the existing `/api/resources` service. No additional port is
+needed. Large sources can be supplied by local path. The `theraskill_resources`
+tool and `knowledge-index-manager` skill use the same job implementation.

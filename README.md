@@ -121,7 +121,7 @@ theraskill-agent index build --knowledge examples/knowledge/demo.jsonl \
 
 Use `--resume` after an interrupted build with the same input and direct model
 configuration. Changing the embedding model or dimensions requires a new
-index. See [Knowledge, indexes, and resource packages](docs/knowledge_and_indexes.zh.md)
+index. See [Knowledge, indexes, and resource packages](docs/knowledge_and_indexes.en.md)
 for mappings, eligibility rules, manifests, installation, and rollback.
 
 ## Transcript and task examples
@@ -159,7 +159,7 @@ knowledge base.
 
 Useful references:
 
-- [Knowledge formats and index packages](docs/knowledge_and_indexes.zh.md)
+- [Knowledge formats and index packages](docs/knowledge_and_indexes.en.md)
 - [English deployment guide](docs/deployment.en.md)
 - [中文部署说明](docs/deployment.zh.md)
 - [Source/release boundaries](docs/source_release.zh.md)

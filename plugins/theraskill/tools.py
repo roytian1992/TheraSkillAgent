@@ -160,7 +160,12 @@ def _handle_knowledge_search(args: dict[str, Any], **runtime: Any) -> dict[str, 
     if request.release_id == "current":
         from .retrieval import search_managed_knowledge
         try:
-            managed = search_managed_knowledge(request.query, skill=str(request.parameters.get("skill") or "emotional-support"), limit=int(request.parameters.get("limit", 8)))
+            managed = search_managed_knowledge(
+                request.query,
+                skill=str(request.parameters.get("skill") or "emotional-support"),
+                limit=int(request.parameters.get("limit", 8)),
+                filters=request.parameters.get("filters"),
+            )
             if managed is not None:
                 record_audit(request, "completed")
                 return TheraSkillResult.success(request.action, managed, request_id=request.request_id,
@@ -178,6 +183,7 @@ def _handle_knowledge_search(args: dict[str, Any], **runtime: Any) -> dict[str, 
             skill=str(request.parameters.get("skill") or "emotional-support"),
             release_id=request.release_id,
             limit=int(request.parameters.get("limit", 8)),
+            filters=request.parameters.get("filters"),
         )
         retrieved_ids = [item.get("retrieval_id") for item in data["matches"] if item.get("retrieval_id")]
         result = TheraSkillResult.success(
@@ -196,6 +202,8 @@ def _handle_knowledge_search(args: dict[str, Any], **runtime: Any) -> dict[str, 
         ).to_dict()
         record_audit(request, "completed")
         return result
+    except ValueError as exc:
+        return _failure(request, "invalid_retrieval_request", str(exc))
     except RetrievalError:
         pass
     config = service_config("knowledge_search")
@@ -658,6 +666,11 @@ THERASKILL_KNOWLEDGE_SEARCH_SCHEMA = {
                     ],
                 },
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                "filters": {
+                    "type": "object",
+                    "description": "Optional hard knowledge filters. Use language, family, evidence_tier, dataset, route, risk or knowledge_type.",
+                    "additionalProperties": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+                },
             },
             "additionalProperties": False,
         },

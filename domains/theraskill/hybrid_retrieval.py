@@ -10,14 +10,9 @@ from pathlib import Path
 from typing import Any
 
 
-THERASKILL_RETRIEVAL_SKILLS = {
-    "emotional-support",
-    "risk-triage",
-    "cognitive-reframing-support",
-    "rebt-belief-work-support",
-    "synthetic-dialogue-builder",
-    "therapy-response-reviewer",
-}
+from theraskill_agent.query_understanding import SUPPORTED_RETRIEVAL_SKILLS, understand_query
+
+THERASKILL_RETRIEVAL_SKILLS = set(SUPPORTED_RETRIEVAL_SKILLS)
 
 _RETRIEVER_MODULE_CACHE: dict[Path, Any] = {}
 _RETRIEVER_MODULE_CACHE_LOCK = threading.Lock()
@@ -27,7 +22,7 @@ class HybridRetrievalError(RuntimeError):
     """Raised when the installed hybrid retrieval surface cannot be used."""
 
 
-def search_policy_lexical(project_root: Path, db: Path, query: str, *, skill: str, top_k: int = 8) -> dict[str, Any]:
+def search_policy_lexical(project_root: Path, db: Path, query: str, *, skill: str, top_k: int = 8, filters: dict[str, Any] | None = None) -> dict[str, Any]:
     """Use the existing skill policies and evidence roles with SQLite alone."""
     from types import SimpleNamespace
 
@@ -48,10 +43,12 @@ def search_policy_lexical(project_root: Path, db: Path, query: str, *, skill: st
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             _RETRIEVER_MODULE_CACHE[script] = module
+    understanding = understand_query(query, skill=skill, filters=filters)
     bundle = module.build_bundle(SimpleNamespace(
-        db=str(db), query=query, skill=skill, top_k=max(1, min(int(top_k), 50)), candidate_multiplier=30,
+        db=str(db), query=understanding["normalized_query"], filters=understanding["filters"], skill=skill, top_k=max(1, min(int(top_k), 50)), candidate_multiplier=30,
     ))
     bundle["retrieval_mode"] = "policy_lexical_fallback"
+    bundle["query_understanding"] = understanding
     return bundle
 
 
@@ -167,10 +164,15 @@ class TheraSkillHybridRetriever:
             _RETRIEVER_MODULE_CACHE[script] = module
         return module
 
-    def search(self, query: str, *, skill: str, top_k: int = 8) -> dict[str, Any]:
-        clean_query = str(query or "").strip()
+    def search(self, query: str, *, skill: str, top_k: int = 8, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+        understanding = understand_query(query, skill=skill, filters=filters)
+        clean_query = understanding["normalized_query"]
         if not clean_query:
             raise HybridRetrievalError("query is empty")
+        if understanding['needs_clarification']:
+            return {'query': clean_query, 'skill': skill, 'items': [],
+                    'query_understanding': understanding,
+                    'quality_checks': {'needs_clarification': True}}
         if skill not in THERASKILL_RETRIEVAL_SKILLS:
             raise HybridRetrievalError(f"unsupported retrieval skill: {skill}")
         top_k = max(1, min(int(top_k), 50))
@@ -199,8 +201,11 @@ class TheraSkillHybridRetriever:
         ]
         try:
             args = self._module.parse_args(argv)
+            args.query_understanding = understanding
             with self._locks[skill]:
-                return self._module.build_bundle(args)
+                bundle = self._module.build_bundle(args)
+            bundle["query_understanding"] = understanding
+            return bundle
         except HybridRetrievalError:
             raise
         except Exception as exc:

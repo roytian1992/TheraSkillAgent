@@ -13,6 +13,7 @@ import heapq
 import json
 import os
 import sqlite3
+from contextlib import closing
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,8 @@ for path in (SCRIPT_DIR.parents[1], SCRIPT_DIR, COMMON_DIR):
         sys.path.insert(0, str(path))
 
 from io_utils import ensure_output_path, read_json, write_json
+from theraskill_agent.query_understanding import understand_query
+from theraskill_agent.indexing.search import compile_scope, lexical_candidates, filter_candidates
 from domains.theraskill.runtime import runtime_root
 from retrieval_module_registry import PROJECT_ROOT, load_advanced_v2, load_hybrid_v2, load_planner
 from retrieval_surface_registry import (
@@ -253,6 +256,7 @@ def scope_filter_signature(db: Path, plan: dict[str, Any]) -> tuple[str, dict[st
         "index": metadata_index_fingerprint(db),
         "filters": normalized_filters,
         "retrieval_eligible": 1,
+        "query_scope": {key: (plan.get("_query_understanding") or {}).get(key) for key in ("filters", "automatic_filters", "route")},
     }
     return stable_json_sha256(payload), payload
 
@@ -280,6 +284,7 @@ def count_scope_uncached(db: Path, plan: dict[str, Any]) -> int:
     where, params, token_filters = compile_filter(plan, metadata_v2=is_metadata_v2(db))
     if is_metadata_v2(db):
         where.extend(token_exists_clauses(token_filters, params))
+    append_query_scope(db, plan, where, params, table_name(db))
     sql = f"select count(*) from {table_name(db)} m where {' and '.join(where)}"
     con = sqlite3.connect(str(db))
     try:
@@ -398,6 +403,15 @@ def compile_filter(plan: dict[str, Any], *, include_fts: bool = False, fts_alias
     # retrieval, but low-selectivity EXISTS clauses are too slow on the full
     # 2.2M-row index. The current v3 runtime path uses scalar metadata only.
     return where, params, token_filters
+
+
+def append_query_scope(db: Path, plan: dict[str, Any], where: list[str], params: list[Any], table: str = 'retrieval_meta') -> None:
+    understanding = plan.get('_query_understanding')
+    if understanding:
+        with closing(sqlite3.connect(f'{db.resolve().as_uri()}?mode=ro', uri=True)) as connection:
+            clauses, values = compile_scope(connection, understanding, table=table)
+        where.extend(clauses)
+        params.extend(values)
 
 
 def token_exists_clauses(token_filters: list[tuple[str, str]], params: list[Any]) -> list[str]:
@@ -638,6 +652,7 @@ def fetch_bm25_candidates(db: Path, plan: dict[str, Any], query: str, limit: int
     match = fts_match_query(search_queries.get("bm25_queries") or [], query)
     where, params, _ = compile_filter(plan, include_fts=True)
     params.insert(0, match)
+    append_query_scope(db, plan, where, params)
     allow_sql = allowed_clause_sql(allowed_ids, params, max_sql_allowed_ids)
     if allow_sql is None:
         return [], {"fts_query": match, "limit": limit, "allowed_ids": 0}
@@ -689,6 +704,7 @@ def fetch_label_candidates(db: Path, plan: dict[str, Any], limit: int, allowed_i
     if should_skip_wide_scan(allowed_ids, max_sql_allowed_ids):
         return []
     where, params, _ = compile_filter(plan)
+    append_query_scope(db, plan, where, params)
     allow_sql = allowed_clause_sql(allowed_ids, params, max_sql_allowed_ids)
     if allow_sql is None:
         return []
@@ -745,6 +761,7 @@ def fetch_required_family_candidates(db: Path, plan: dict[str, Any], query: str,
         if routes:
             where.append(f"m.default_route in ({placeholders(routes)})")
             params.extend(routes)
+        append_query_scope(db, plan, where, params)
         allow_sql = allowed_clause_sql(scoped_allowed_ids, params, max_sql_allowed_ids)
         if allow_sql is None:
             return []
@@ -791,6 +808,7 @@ def fetch_required_family_candidates(db: Path, plan: dict[str, Any], query: str,
         if use_routes and routes:
             where.append(f"m.default_route in ({placeholders(routes)})")
             params.extend(routes)
+        append_query_scope(db, plan, where, params)
         allow_sql = allowed_clause_sql(scoped_allowed_ids if use_allowed_ids else None, params, max_sql_allowed_ids)
         if allow_sql is None:
             return []
@@ -848,6 +866,7 @@ def fetch_policy_family_fallback(db: Path, skill: str, plan: dict[str, Any], lim
     if routes:
         where.append(f"m.default_route in ({placeholders(routes)})")
         params.extend(routes)
+    append_query_scope(db, plan, where, params)
     sql = f"""
         select
           m.retrieval_id,
@@ -908,6 +927,7 @@ def fetch_compact_label_candidates(compact_db: Path, plan: dict[str, Any], query
         if values:
             where.append(f"m.{column} in ({placeholders(values)})")
             params.extend(values)
+    append_query_scope(compact_db, plan, where, params, 'compact_label_meta')
     sql = f"""
         select
           m.retrieval_id,
@@ -949,6 +969,7 @@ def allowed_retrieval_ids(db: Path, plan: dict[str, Any], max_materialized_ids: 
     where, params, token_filters = compile_filter(plan, metadata_v2=is_metadata_v2(db))
     if is_metadata_v2(db):
         where.extend(token_exists_clauses(token_filters, params))
+    append_query_scope(db, plan, where, params, table_name(db))
     sql = f"select retrieval_id from {table_name(db)} m where {' and '.join(where)}"
     con = sqlite3.connect(str(db))
     try:
@@ -1394,7 +1415,9 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         metadata_db = db
     compact_label_db = Path(args.compact_label_db)
     plan_artifact = load_or_build_plan(args)
-    plan = plan_artifact["plan"]
+    understanding = getattr(args, "query_understanding", None) or understand_query(args.query, skill=args.skill, filters=getattr(args, "filters", None))
+    plan = json.loads(json.dumps(plan_artifact["plan"]))
+    plan["_query_understanding"] = understanding
     scoped_plan, filter_trace = resolve_plan_scope(
         metadata_db,
         plan,
@@ -1460,7 +1483,11 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         overlay_trace.update(
             {"query": overlay_query_trace, "embedding": overlay_embedding_trace}
         )
+    query_candidates = lexical_candidates(db, understanding, args.bm25_top_n)
+    for item in query_candidates:
+        item["text_preview"] = item.pop("retrieval_text", "")[:1200]
     channels = {
+        "query_lexical": query_candidates,
         "bm25": bm25_candidates,
         "dense": dense_candidates,
         "label": label_candidates,
@@ -1468,9 +1495,11 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         "policy_family_fallback": policy_family_candidates,
         **overlay_channels,
     }
+    channels = {name: filter_candidates(db, items, understanding) for name, items in channels.items()}
     fused = rrf_merge_channels(
         channels,
         {
+            "query_lexical": args.bm25_weight,
             "bm25": args.bm25_weight,
             "dense": args.dense_weight,
             "label": args.label_weight,
@@ -1497,13 +1526,14 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         "source_index": str(db),
         "metadata_v2_index": str(metadata_db),
         "llm_retrieval_plan": scoped_plan,
+        "query_understanding": understanding,
         "planner_trace": plan_artifact["planner_trace"],
         "structured_filter": filter_trace,
         "dense_index": dense_state,
         "faiss_index": faiss_state,
         "retrieval_config": {
             "version": "advanced_retrieval_v3_llm_structured_hybrid",
-            "channels": ["sqlite_fts_bm25", f"dense_bge_m3_{args.dense_backend}", "controlled_label", "required_family_backfill", "promoted_overlay_sparse", "promoted_overlay_dense", "promoted_overlay_controlled_label"],
+            "channels": ["query_understanding_lexical", "sqlite_fts_bm25", f"dense_bge_m3_{args.dense_backend}", "controlled_label", "required_family_backfill", "promoted_overlay_sparse", "promoted_overlay_dense", "promoted_overlay_controlled_label"],
             "fusion": "rrf_v1",
             "reranker": "policy_aware_v3_with_llm_plan_features",
             "dense_backend": args.dense_backend,
@@ -1522,14 +1552,15 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
             "candidate_scope": scope_count,
             "sql_allowed_ids_materialized": len(ids) if ids is not None else None,
             "dense_allowed_ids_materialized": len(dense_ids) if dense_ids is not None else None,
-            "bm25_candidates": len(bm25_candidates),
-            "dense_policy_filtered_candidates": len(dense_candidates),
-            "label_candidates": len(label_candidates),
-            "required_family_candidates": len(required_family_candidates),
-            "policy_family_fallback_candidates": len(policy_family_candidates),
-            "overlay_sparse_candidates": len(overlay_channels["overlay_sparse"]),
-            "overlay_dense_candidates": len(overlay_channels["overlay_dense"]),
-            "overlay_label_candidates": len(overlay_channels["overlay_label"]),
+            "query_lexical_candidates": len(channels["query_lexical"]),
+            "bm25_candidates": len(channels["bm25"]),
+            "dense_policy_filtered_candidates": len(channels["dense"]),
+            "label_candidates": len(channels["label"]),
+            "required_family_candidates": len(channels["required_family"]),
+            "policy_family_fallback_candidates": len(channels["policy_family_fallback"]),
+            "overlay_sparse_candidates": len(channels["overlay_sparse"]),
+            "overlay_dense_candidates": len(channels["overlay_dense"]),
+            "overlay_label_candidates": len(channels["overlay_label"]),
             "fused_candidates": len(fused),
         },
         "items": selected,

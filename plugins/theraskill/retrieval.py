@@ -14,6 +14,7 @@ from domains.theraskill.hybrid_retrieval import (
 )
 
 from .artifacts import ArtifactStore, ArtifactStoreError
+from theraskill_agent.query_understanding import understand_query
 
 
 class RetrievalError(RuntimeError):
@@ -31,28 +32,35 @@ HYBRID_ARTIFACTS = {
 }
 
 
-def search_managed_knowledge(query: str, *, skill: str, limit: int) -> dict[str, Any] | None:
+def search_managed_knowledge(query: str, *, skill: str, limit: int, filters: dict[str, Any] | None = None) -> dict[str, Any] | None:
     from theraskill_agent.resources import active_index
     from theraskill_agent.paths import data_root
     from domains.theraskill.hybrid_retrieval import selected_retrieval_paths, search_policy_lexical
     selected = active_index()
     if not selected:
         return None
-    directory, manifest = selected
+    _, manifest = selected
+    understanding = understand_query(query, skill=skill, filters=filters)
+    effective_query = understanding['normalized_query']
     paths = selected_retrieval_paths(resource_path("configs/theraskill/retrieval.yaml"), data_root() / "cache/retrieval")
-    warnings = []
+    warnings = list(understanding['warnings'])
+    filter_options = {'filters': understanding['filters']} if understanding['filters'] else {}
     try:
-        bundle = TheraSkillHybridRetriever(PROJECT_ROOT, paths).search(query, skill=skill, top_k=limit)
+        bundle = TheraSkillHybridRetriever(PROJECT_ROOT, paths).search(effective_query, skill=skill, top_k=limit, **filter_options)
         mode = "hybrid_v3"
     except HybridRetrievalError as exc:
-        bundle = search_policy_lexical(PROJECT_ROOT, paths.sqlite_fts, query, skill=skill, top_k=limit)
+        bundle = search_policy_lexical(PROJECT_ROOT, paths.sqlite_fts, effective_query, skill=skill, top_k=limit, **filter_options)
         mode = "policy_lexical_fallback"
         if manifest["input"]["mode"] != "lexical":
             warnings.append(str(exc))
     matches = list(bundle.get("items") or [])
-    return {"query": query, "release_id": manifest["index_id"], "knowledge_sha256": manifest["input"]["knowledge_sha256"],
+    return {"query": query, "release_id": manifest["index_id"], "index_id": manifest["index_id"], "knowledge_sha256": manifest["input"]["knowledge_sha256"],
             "retrieval_mode": mode, "skill": skill, "matches": matches, "count": len(matches),
-            "warnings": warnings, "diagnostics": {"policy_checks": bundle.get("policy_checks") or {}}}
+            "query_understanding": understanding, "filters": understanding['filters'],
+            "warnings": warnings, "diagnostics": {"planner_status": (bundle.get("planner_trace") or {}).get("planner_status"),
+                                                   "policy_checks": bundle.get("policy_checks") or {},
+                                                   "quality_checks": bundle.get("quality_checks") or {},
+                                                   "channel_counts": bundle.get("channel_counts") or {}}}
 
 
 def search_knowledge(
@@ -61,6 +69,7 @@ def search_knowledge(
     skill: str = "emotional-support",
     release_id: str = "current",
     limit: int = 8,
+    filters: dict[str, Any] | None = None,
     store: ArtifactStore | None = None,
 ) -> dict[str, Any]:
     """Prefer policy-aware hybrid retrieval and report lexical degradation."""
@@ -71,11 +80,12 @@ def search_knowledge(
     except Exception:
         pass
     if store is None and release_id == "current":
-        managed = search_managed_knowledge(query, skill=skill, limit=limit)
+        managed = search_managed_knowledge(query, skill=skill, limit=limit, filters=filters)
         if managed is not None:
             return managed
     artifact_store = store or ArtifactStore()
     manifest = artifact_store.load_manifest(release_id)
+    understanding = understand_query(query, skill=skill, filters=filters)
     if HYBRID_ARTIFACTS.issubset(manifest.artifacts):
         try:
             retriever = TheraSkillHybridRetriever(
@@ -93,7 +103,8 @@ def search_knowledge(
                     / manifest.release_id,
                 ),
             )
-            bundle = retriever.search(query, skill=skill, top_k=limit)
+            filter_options = {'filters': understanding['filters']} if understanding['filters'] else {}
+            bundle = retriever.search(understanding["normalized_query"], skill=skill, top_k=limit, **filter_options)
             matches = list(bundle.get("items") or [])
             return {
                 "query": str(query).strip(),
@@ -102,6 +113,9 @@ def search_knowledge(
                 "skill": skill,
                 "matches": matches,
                 "count": len(matches),
+                "query_understanding": understanding,
+                "filters": understanding['filters'],
+                "warnings": understanding['warnings'],
                 "diagnostics": {
                     "planner_status": (bundle.get("planner_trace") or {}).get(
                         "planner_status"
@@ -121,11 +135,14 @@ def search_knowledge(
         query,
         release_id=release_id,
         limit=limit,
+        skill=skill,
+        filters=filters,
         store=artifact_store,
     )
     result["retrieval_mode"] = "lexical_fallback"
     result["skill"] = skill
-    result["warnings"] = [degraded_reason]
+    result["query_understanding"] = understanding
+    result["warnings"] = [degraded_reason, *understanding['warnings']]
     return result
 
 
@@ -134,10 +151,13 @@ def search_local(
     *,
     release_id: str = "current",
     limit: int = 8,
+    skill: str | None = None,
+    filters: dict[str, Any] | None = None,
     store: ArtifactStore | None = None,
 ) -> dict[str, Any]:
     """Search the release-declared SQLite FTS artifact without external paths."""
-    clean_query = str(query or "").strip()
+    understanding = understand_query(query, skill=skill, filters=filters)
+    clean_query = understanding["normalized_query"]
     if not clean_query:
         raise RetrievalError("query is empty")
     limit = max(1, min(int(limit), 50))
@@ -150,54 +170,20 @@ def search_local(
             db_path = artifact_store.resolve("retrieval_sqlite", release_id)
         except ArtifactStoreError as exc:
             raise RetrievalError("release does not declare a sqlite_fts artifact") from exc
-    rows = _query_fts(db_path, clean_query, limit)
+    rows = _query_fts(db_path, understanding, limit)
     return {
-        "query": clean_query,
+        "query": str(query or ""),
         "release_id": manifest.release_id,
         "matches": rows,
         "count": len(rows),
+        "query_understanding": understanding,
     }
 
 
-def _query_fts(db_path: Path, query: str, limit: int) -> list[dict[str, Any]]:
-    uri = f"file:{db_path.as_posix()}?mode=ro"
+def _query_fts(db_path: Path, understanding: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    from theraskill_agent.indexing.search import lexical_candidates
+
     try:
-        with sqlite3.connect(uri, uri=True) as connection:
-            connection.row_factory = sqlite3.Row
-            try:
-                rows = connection.execute(
-                    """
-                    SELECT f.retrieval_id, f.retrieval_text,
-                           m.release_unit_id, m.release_unit_type,
-                           m.dedup_family, m.primary_knowledge_type,
-                           m.risk_scope, m.default_route,
-                           bm25(f) AS score
-                    FROM retrieval_fts AS f
-                    JOIN retrieval_meta AS m USING (retrieval_id)
-                    WHERE retrieval_fts MATCH ?
-                      AND COALESCE(m.retrieval_eligible, 1) = 1
-                    ORDER BY score ASC
-                    LIMIT ?
-                    """,
-                    (query, limit),
-                ).fetchall()
-            except sqlite3.OperationalError:
-                escaped = query.replace("%", "\\%").replace("_", "\\_")
-                rows = connection.execute(
-                    """
-                    SELECT f.retrieval_id, f.retrieval_text,
-                           m.release_unit_id, m.release_unit_type,
-                           m.dedup_family, m.primary_knowledge_type,
-                           m.risk_scope, m.default_route,
-                           0.0 AS score
-                    FROM retrieval_fts AS f
-                    JOIN retrieval_meta AS m USING (retrieval_id)
-                    WHERE f.retrieval_text LIKE ? ESCAPE '\\'
-                      AND COALESCE(m.retrieval_eligible, 1) = 1
-                    LIMIT ?
-                    """,
-                    (f"%{escaped}%", limit),
-                ).fetchall()
-    except sqlite3.Error as exc:
-        raise RetrievalError(f"cannot query retrieval index: {db_path}") from exc
-    return [dict(row) for row in rows]
+        return lexical_candidates(db_path, understanding, max(limit * 6, 80))[:limit]
+    except (sqlite3.Error, ValueError) as exc:
+        raise RetrievalError(f"cannot query retrieval index: {exc}") from exc

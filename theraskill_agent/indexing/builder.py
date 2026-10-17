@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import re
 import sqlite3
 from pathlib import Path
 from contextlib import closing
@@ -11,6 +10,8 @@ from . import labels, metadata
 from .common import digest, identity, read_json, write_json, safe_path, exclusive
 from .embedding import fingerprint, resolve, require_compatible
 from .knowledge import PROJECTION_VERSION, rows
+from ..query_understanding import understand_query, cjk_index_terms
+from .search import compile_scope, lexical_candidates, rank_candidates
 
 SCHEMA = 'theraskill_index_v1'
 DB = 'phase6_retrieval_fts.sqlite'
@@ -60,19 +61,21 @@ def _lexical(source, output, mapping, progress, cancel):
               retrieval_id TEXT PRIMARY KEY, release_unit_id TEXT NOT NULL UNIQUE,
               release_unit_type TEXT, dedup_family TEXT, canonical_knowledge_type TEXT,
               canonical_label TEXT, primary_dataset TEXT, primary_knowledge_type TEXT,
-              primary_evidence_tier TEXT, risk_scope TEXT, default_route TEXT,
+              primary_evidence_tier TEXT, primary_language TEXT, risk_scope TEXT, default_route TEXT,
               retrieval_eligible INTEGER, embedding_eligible INTEGER, member_count INTEGER,
               retrieval_text_chars INTEGER);
             CREATE VIRTUAL TABLE retrieval_fts USING fts5(retrieval_id UNINDEXED, retrieval_text);
+            CREATE VIRTUAL TABLE retrieval_cjk_fts USING fts5(retrieval_id UNINDEXED, retrieval_terms);
         ''')
-        fields = ['retrieval_id','release_unit_id','release_unit_type','dedup_family','canonical_knowledge_type','canonical_label','primary_dataset','primary_knowledge_type','primary_evidence_tier','risk_scope','default_route','retrieval_eligible','embedding_eligible','member_count','retrieval_text_chars']
+        fields = ['retrieval_id','release_unit_id','release_unit_type','dedup_family','canonical_knowledge_type','canonical_label','primary_dataset','primary_knowledge_type','primary_evidence_tier','primary_language','risk_scope','default_route','retrieval_eligible','embedding_eligible','member_count','retrieval_text_chars']
         for row in rows(source, mapping):
             _check(cancel)
             try:
-                db.execute('INSERT INTO retrieval_meta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', tuple(row.get(k) for k in fields))
+                db.execute('INSERT INTO retrieval_meta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', tuple(row.get(k) for k in fields))
             except sqlite3.IntegrityError as exc:
                 raise ValueError(f'duplicate knowledge ID: {row["release_unit_id"]}') from exc
             db.execute('INSERT INTO retrieval_fts VALUES (?,?)', (row['retrieval_id'], row['retrieval_text']))
+            db.execute('INSERT INTO retrieval_cjk_fts VALUES (?,?)', (row['retrieval_id'], ' '.join(cjk_index_terms(row['retrieval_text']))))
             meta.execute('INSERT INTO metadata_v2 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', metadata.metadata_row(row))
             meta.executemany('INSERT INTO metadata_v2_tokens VALUES (?,?,?)', metadata.token_rows(row))
             label.execute('INSERT INTO compact_label_meta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', labels.meta_row(row))
@@ -291,45 +294,81 @@ def verify_index(path):
     return manifest
 
 
-def search_index(path, query, *, limit=8, embedding_config=None):
+def search_index(path, query, *, limit=8, embedding_config=None, skill=None, filters=None):
     root = Path(path).expanduser().resolve()
     manifest = read_json(root / 'manifest.json')
     if manifest.get('status') != 'complete':
         raise ValueError('index is not complete')
     limit = max(1, min(int(limit), 50))
-    terms = re.findall(r'\w+', str(query), re.UNICODE)
-    if not terms:
+    understanding = understand_query(query, skill=skill, filters=filters)
+    if not understanding['normalized_query']:
+        raise ValueError('query is empty')
+    if understanding['needs_clarification']:
         return []
-    match = ' OR '.join('"' + word + '"' for word in terms[:30])
+    candidate_limit = max(limit * 6, 80)
+    hits = lexical_candidates(root / DB, understanding, candidate_limit)
     with closing(sqlite3.connect(f'{(root / DB).as_uri()}?mode=ro', uri=True)) as db:
         db.row_factory = sqlite3.Row
-        hits = [dict(row) for row in db.execute('''SELECT m.*, f.retrieval_text, bm25(retrieval_fts) AS score
-            FROM retrieval_fts f JOIN retrieval_meta m USING(retrieval_id)
-            WHERE retrieval_fts MATCH ? AND m.retrieval_eligible=1 ORDER BY score LIMIT ?''', (match, limit))]
+        clauses, filter_params = compile_scope(db, understanding)
+        where = ' AND '.join(clauses)
         if manifest.get('embedding'):
             from domains.theraskill.theraskill_llm import OpenAICompatibleEmbeddingClient
             import numpy as np
             import faiss
             config = resolve(embedding_config)
             require_compatible(manifest.get('embedding'), config)
-            vector = np.asarray(OpenAICompatibleEmbeddingClient(config).embed([query]), dtype=np.float32)
+            vector = np.asarray(OpenAICompatibleEmbeddingClient(config).embed([understanding['normalized_query']]), dtype=np.float32)
             if vector.shape != (1, manifest['embedding']['dimension']) or not np.isfinite(vector).all() or not np.linalg.norm(vector):
                 raise ValueError('query embedding has invalid dimension or values')
             vector /= np.linalg.norm(vector)
             scored = {}
-            for rank, hit in enumerate(hits, 1):
+            for rank, hit in enumerate(hits[:candidate_limit], 1):
                 scored[hit['retrieval_id']] = 1 / (60 + rank)
             dense_hits = []
+            allowed = {row[0] for row in db.execute(f'SELECT m.retrieval_id FROM retrieval_meta m WHERE {where}', filter_params)}
             for shard in read_json(root / 'faiss_shards/manifest.json')['shards']:
                 index = faiss.read_index(str(safe_path(root / 'faiss_shards', shard['artifacts']['index'])))
                 ids = [json.loads(s) for s in safe_path(root / 'faiss_shards', shard['artifacts']['ids']).read_text().splitlines()]
-                distances, positions = index.search(vector, min(limit, index.ntotal))
+                allowed_positions = np.asarray([i for i, item in enumerate(ids) if item['retrieval_id'] in allowed], dtype=np.int64)
+                if not len(allowed_positions):
+                    continue
+                selector = faiss.IDSelectorBatch(allowed_positions)
+                distances, positions = index.search(vector, min(candidate_limit, len(allowed_positions)), params=faiss.SearchParameters(sel=selector))
                 dense_hits.extend((float(score), ids[int(pos)]['retrieval_id']) for score, pos in zip(distances[0], positions[0]) if pos >= 0)
-            for rank, (_, rid) in enumerate(sorted(dense_hits, reverse=True)[:limit], 1):
+            for rank, (_, rid) in enumerate(sorted(dense_hits, reverse=True)[:candidate_limit], 1):
                 scored[rid] = scored.get(rid, 0) + 1 / (60 + rank)
             hits = []
-            for rid, score in sorted(scored.items(), key=lambda v: -v[1])[:limit]:
-                row = db.execute('SELECT m.*,f.retrieval_text FROM retrieval_meta m JOIN retrieval_fts f USING(retrieval_id) WHERE m.retrieval_id=? AND m.retrieval_eligible=1', (rid,)).fetchone()
+            for rid, score in sorted(scored.items(), key=lambda v: -v[1]):
+                row = db.execute(f'SELECT m.*,f.retrieval_text FROM retrieval_meta m JOIN retrieval_fts f USING(retrieval_id) WHERE m.retrieval_id=? AND {where}', (rid, *filter_params)).fetchone()
                 if row:
-                    hits.append({**dict(row), 'score': score})
-        return hits
+                    item = {**dict(row), 'score': score, 'relevance_score': score}
+                    hits.append(item)
+            hits = rank_candidates(hits, understanding)
+        return hits[:limit]
+
+
+def retrieve_index(path, query, *, limit=8, embedding_config=None, skill=None, filters=None):
+    """Return the common retrieval envelope used by CLI, UI and local jobs."""
+    root = Path(path).expanduser().resolve()
+    manifest = read_json(root / 'manifest.json')
+    understanding = understand_query(query, skill=skill, filters=filters)
+    hits = search_index(
+        root,
+        understanding['normalized_query'],
+        limit=limit,
+        embedding_config=embedding_config,
+        skill=skill,
+        filters=filters,
+    )
+    return {
+        'query': str(query or ''),
+        'index_id': manifest.get('index_id'),
+        'knowledge_sha256': (manifest.get('input') or {}).get('knowledge_sha256'),
+        'retrieval_mode': 'hybrid' if manifest.get('embedding') else 'lexical',
+        'skill': skill or 'general',
+        'query_understanding': understanding,
+        'filters': understanding['filters'],
+        'matches': hits,
+        'count': len(hits),
+        'warnings': understanding['warnings'],
+    }

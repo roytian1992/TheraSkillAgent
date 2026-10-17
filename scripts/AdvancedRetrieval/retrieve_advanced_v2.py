@@ -28,55 +28,14 @@ from io_utils import ensure_output_path, write_json
 from retrieval_surface_registry import ADVANCED_RETRIEVAL_V2_BUNDLE_PATH, PHASE6_SQLITE_DB_PATH
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 DEFAULT_DB = PHASE6_SQLITE_DB_PATH
 DEFAULT_OUTPUT = ADVANCED_RETRIEVAL_V2_BUNDLE_PATH
 
 
-SKILL_POLICIES: dict[str, dict[str, Any]] = {
-    "emotional-support": {
-        "families": ["style_response", "therapy_process", "qa_psychoeducation"],
-        "blocked_families": ["source_inventory", "synthetic_construction"],
-        "blocked_routes": ["accounting_only_requires_review", "synthetic_construction_method_retrieval"],
-        "family_priority": {"style_response": 0.18, "therapy_process": 0.18, "qa_psychoeducation": 0.10},
-        "quota": {"style_response": 3, "therapy_process": 2, "qa_psychoeducation": 2},
-    },
-    "risk-triage": {
-        "families": ["clinical_risk_assessment", "style_response", "qa_psychoeducation"],
-        "blocked_families": ["source_inventory", "synthetic_construction"],
-        "blocked_routes": ["accounting_only_requires_review", "synthetic_construction_method_retrieval"],
-        "risk_scopes": ["clinical_risk_or_assessment", "risk_related_text"],
-        "family_priority": {"clinical_risk_assessment": 0.55, "qa_psychoeducation": 0.12, "style_response": 0.06},
-        "quota": {"clinical_risk_assessment": 4, "style_response": 2, "qa_psychoeducation": 2},
-    },
-    "cognitive-reframing-support": {
-        "families": ["method_rubric", "qa_psychoeducation", "style_response", "clinical_risk_assessment"],
-        "blocked_families": ["source_inventory", "synthetic_construction"],
-        "blocked_routes": ["accounting_only_requires_review", "synthetic_construction_method_retrieval"],
-        "family_priority": {"method_rubric": 0.65, "qa_psychoeducation": 0.18, "style_response": 0.06, "clinical_risk_assessment": 0.02},
-        "quota": {"method_rubric": 3, "qa_psychoeducation": 2, "style_response": 2, "clinical_risk_assessment": 1},
-    },
-    "rebt-belief-work-support": {
-        "families": ["method_rubric", "qa_psychoeducation", "therapy_process", "style_response"],
-        "blocked_families": ["source_inventory", "synthetic_construction"],
-        "blocked_routes": ["accounting_only_requires_review", "synthetic_construction_method_retrieval"],
-        "family_priority": {"method_rubric": 0.95, "qa_psychoeducation": 0.20, "therapy_process": 0.12, "style_response": 0.02},
-        "quota": {"method_rubric": 4, "qa_psychoeducation": 1, "therapy_process": 2, "style_response": 1},
-    },
-    "synthetic-dialogue-builder": {
-        "families": ["synthetic_construction", "therapy_process", "method_rubric", "style_response"],
-        "blocked_families": ["source_inventory"],
-        "blocked_routes": ["accounting_only_requires_review"],
-        "family_priority": {"synthetic_construction": 0.85, "therapy_process": 0.15, "method_rubric": 0.08, "style_response": 0.03},
-        "quota": {"synthetic_construction": 4, "therapy_process": 2, "method_rubric": 1, "style_response": 1},
-    },
-    "therapy-response-reviewer": {
-        "families": ["therapy_process", "method_rubric", "synthetic_construction", "style_response", "qa_psychoeducation"],
-        "blocked_families": ["source_inventory"],
-        "blocked_routes": ["accounting_only_requires_review"],
-        "family_priority": {"therapy_process": 0.35, "method_rubric": 0.30, "synthetic_construction": 0.18, "style_response": 0.06, "qa_psychoeducation": 0.06},
-        "quota": {"therapy_process": 2, "method_rubric": 2, "synthetic_construction": 2, "style_response": 1, "qa_psychoeducation": 1},
-    },
-}
+from theraskill_agent.query_understanding import SKILL_KNOWLEDGE_ROUTES as SKILL_POLICIES, understand_query
+from theraskill_agent.indexing.search import lexical_candidates
 
 
 BASE_EXPANSIONS: dict[str, list[str]] = {
@@ -202,119 +161,27 @@ def placeholders(values: list[str]) -> str:
     return ",".join("?" for _ in values)
 
 
-def fetch_candidates(db: Path, skill: str, query: str, parsed: dict[str, Any], top_k: int, candidate_multiplier: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def fetch_candidates(db: Path, skill: str, query: str, parsed: dict[str, Any], top_k: int, candidate_multiplier: int, filters=None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    understanding = understand_query(query, skill=skill, filters=filters)
+    candidates = lexical_candidates(db, understanding, max(top_k * candidate_multiplier, top_k))
+    for item in candidates:
+        item['bm25_score'] = item.pop('score', 0.0)
+        item['text_preview'] = item.pop('retrieval_text', '')[:1200]
     policy = SKILL_POLICIES[skill]
-    families = list(policy["families"])
-    blocked_families = list(policy.get("blocked_families") or [])
-    blocked_routes = list(policy.get("blocked_routes") or [])
-    risk_scopes = list(policy.get("risk_scopes") or [])
-    match = fts_query(query, skill, parsed)
-    params: list[Any] = [match]
-    where = ["retrieval_fts match ?", "m.retrieval_eligible = 1"]
-    if families:
-        where.append(f"m.dedup_family in ({placeholders(families)})")
-        params.extend(families)
-    if blocked_families:
-        where.append(f"m.dedup_family not in ({placeholders(blocked_families)})")
-        params.extend(blocked_families)
-    if blocked_routes:
-        where.append(f"m.default_route not in ({placeholders(blocked_routes)})")
-        params.extend(blocked_routes)
-    if risk_scopes:
-        where.append(f"(m.risk_scope in ({placeholders(risk_scopes)}) or m.risk_scope is null)")
-        params.extend(risk_scopes)
-    limit = max(top_k * candidate_multiplier, top_k)
-    sql = f"""
-        select
-          m.retrieval_id,
-          m.release_unit_id,
-          m.release_unit_type,
-          m.dedup_family,
-          m.canonical_knowledge_type,
-          m.canonical_label,
-          m.primary_dataset,
-          m.primary_knowledge_type,
-          m.primary_evidence_tier,
-          m.risk_scope,
-          m.default_route,
-          m.member_count,
-          m.retrieval_text_chars,
-          bm25(retrieval_fts) as bm25_score,
-          substr(f.retrieval_text, 1, 1200) as text_preview
-        from retrieval_fts f
-        join retrieval_meta m on m.retrieval_id = f.retrieval_id
-        where {' and '.join(where)}
-        order by bm25_score asc
-        limit ?
-    """
-    params.append(limit)
-    con = sqlite3.connect(str(db))
-    con.row_factory = sqlite3.Row
-    try:
-        rows = con.execute(sql, params).fetchall()
-    except sqlite3.OperationalError:
-        params[0] = f'"{query.replace(chr(34), "")}"'
-        rows = con.execute(sql, params).fetchall()
-    finally:
-        con.close()
-    return [dict(row) for row in rows], {
-        "fts_query": match,
-        "families": families,
-        "blocked_families": blocked_families,
-        "blocked_routes": blocked_routes,
-        "risk_scopes": risk_scopes,
-        "candidate_limit": limit,
+    return candidates, {
+        'families': policy['families'], 'blocked_families': policy.get('blocked_families', []),
+        'blocked_routes': policy.get('blocked_routes', []), 'risk_scopes': policy.get('risk_scopes', []),
+        'query_understanding': understanding,
     }
 
 
-def fetch_family_backfill(db: Path, skill: str, family: str, query_terms: list[str], limit: int) -> list[dict[str, Any]]:
-    blocked_routes = list(SKILL_POLICIES[skill].get("blocked_routes") or [])
-    tokens = []
-    seen: set[str] = set()
-    for term in query_terms:
-        term = term.strip().replace('"', "")
-        if term and term not in seen:
-            seen.add(term)
-            tokens.append(term)
-    if not tokens:
+def fetch_family_backfill(db: Path, skill: str, family: str, query_terms: list[str], limit: int, filters=None) -> list[dict[str, Any]]:
+    normalized = understand_query(' '.join(query_terms), skill=skill, filters=filters)['filters']
+    if normalized.get('dedup_family') and family not in normalized['dedup_family']:
         return []
-    match = " OR ".join(f'"{token}"' for token in tokens[:24])
-    params: list[Any] = [match, family]
-    where = ["retrieval_fts match ?", "m.retrieval_eligible = 1", "m.dedup_family = ?"]
-    if blocked_routes:
-        where.append(f"m.default_route not in ({placeholders(blocked_routes)})")
-        params.extend(blocked_routes)
-    sql = f"""
-        select
-          m.retrieval_id,
-          m.release_unit_id,
-          m.release_unit_type,
-          m.dedup_family,
-          m.canonical_knowledge_type,
-          m.canonical_label,
-          m.primary_dataset,
-          m.primary_knowledge_type,
-          m.primary_evidence_tier,
-          m.risk_scope,
-          m.default_route,
-          m.member_count,
-          m.retrieval_text_chars,
-          bm25(retrieval_fts) as bm25_score,
-          substr(f.retrieval_text, 1, 1200) as text_preview
-        from retrieval_fts f
-        join retrieval_meta m on m.retrieval_id = f.retrieval_id
-        where {' and '.join(where)}
-        order by bm25_score asc
-        limit ?
-    """
-    params.append(limit)
-    con = sqlite3.connect(str(db))
-    con.row_factory = sqlite3.Row
-    try:
-        rows = con.execute(sql, params).fetchall()
-    finally:
-        con.close()
-    return [dict(row) for row in rows]
+    normalized['dedup_family'] = [family]
+    candidates, _ = fetch_candidates(db, skill, ' '.join(query_terms), {}, limit, 1, normalized)
+    return candidates
 
 
 def label_text(item: dict[str, Any]) -> str:
@@ -463,15 +330,17 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
     if not db.exists():
         raise FileNotFoundError(f"SQLite retrieval DB not found: {db}")
     parsed = parse_query(args.query, args.skill)
-    candidates, resolved_policy = fetch_candidates(db, args.skill, args.query, parsed, args.top_k, args.candidate_multiplier)
+    candidates, resolved_policy = fetch_candidates(db, args.skill, args.query, parsed, args.top_k, args.candidate_multiplier, getattr(args, "filters", None))
     seen_retrieval_ids = {str(item.get("retrieval_id")) for item in candidates}
     backfill_counts: dict[str, int] = {}
     for family, terms in FAMILY_BACKFILL_EXPANSIONS.get(args.skill, {}).items():
+        if resolved_policy['query_understanding']['needs_clarification']:
+            break
         existing = sum(1 for item in candidates if item.get("dedup_family") == family)
         target = int(SKILL_POLICIES[args.skill].get("quota", {}).get(family, 0))
         if existing >= target:
             continue
-        backfill = fetch_family_backfill(db, args.skill, family, terms, max(target * 4, 12))
+        backfill = fetch_family_backfill(db, args.skill, family, terms, max(target * 4, 12), getattr(args, "filters", None))
         added = 0
         for item in backfill:
             rid = str(item.get("retrieval_id"))
@@ -518,6 +387,7 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         "top_k": args.top_k,
         "source_index": str(db),
         "parsed_query": parsed,
+        "query_understanding": resolved_policy["query_understanding"],
         "retrieval_config": {
             "version": "advanced_retrieval_v2_p0",
             "channels": ["sqlite_fts_bm25"],

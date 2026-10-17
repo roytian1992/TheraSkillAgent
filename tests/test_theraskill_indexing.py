@@ -119,6 +119,8 @@ def test_hybrid_resume_and_model_compatibility(workspace, embedding_server):
     assert built['embedding']['dimension'] == 4
     assert built['counts']['vectors'] == 6
     assert search_index(output, 'evidence')
+    filtered = search_index(output, 'unseenquery', limit=1, skill='emotional-support', filters={'language': 'zh'})
+    assert len(filtered) == 1 and filtered[0]['primary_language'] == 'zh'
     before = len(embedding_server)
     (workspace / 'configs/theraskill/providers.yaml').write_text(
         (workspace / 'configs/theraskill/providers.yaml').read_text().replace('mock-A', 'mock-B').replace('dimensions: 4', 'dimensions: 6')
@@ -193,4 +195,10 @@ def test_managed_tools_do_not_require_a_legacy_release(workspace):
     response = _handle_knowledge_search({'query': 'uncertainty'})
     assert response['ok'], response
     assert response['data']['retrieval_mode'] == 'policy_lexical_fallback'
+    filtered = _handle_knowledge_search({'query': '核对原文证据', 'parameters': {
+        'skill': 'therapy-response-reviewer', 'filters': {'language': 'zh'}, 'limit': 3,
+    }})
+    assert filtered['ok'], filtered
+    assert filtered['data']['count'] == 3
+    assert all(hit['primary_language'] == 'zh' for hit in filtered['data']['matches'])
     assert _handle_resources({'parameters': {'operation': 'list'}})['ok']

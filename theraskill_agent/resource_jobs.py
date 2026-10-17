@@ -6,7 +6,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from .paths import data_root, state_root
 from .indexing.common import read_json, write_json, safe_id
-from .indexing import build_index, plan_index, verify_index, search_index
+from .indexing import build_index, plan_index, retrieve_index, verify_index
 from .indexing.builder import BuildCancelled
 from . import resources
 from .text import redact_secrets
@@ -65,7 +65,13 @@ def run_operation(operation, parameters, *, progress=None, cancel=None):
     if operation == 'verify':
         return verify_index(resources.index_path(p['index']))
     if operation == 'search':
-        return {'hits': search_index(resources.index_path(p['index']), p['query'], limit=p.get('limit', 8))}
+        return retrieve_index(
+            resources.index_path(p['index']),
+            p['query'],
+            limit=p.get('limit', 8),
+            skill=p.get('skill'),
+            filters=p.get('filters'),
+        )
     if operation == 'activate':
         return resources.activate_index(p['index'], knowledge=p.get('knowledge'))
     if operation == 'rollback':

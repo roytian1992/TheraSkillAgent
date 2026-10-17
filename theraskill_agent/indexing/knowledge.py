@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from .projection import retrieval_row
 
-PROJECTION_VERSION = 'theraskill_projection_v1'
+PROJECTION_VERSION = 'theraskill_projection_v2'
 
 
 def _field(row, path, default=None):
@@ -34,6 +34,7 @@ def project(row, line, mapping=None):
             'dedup_family': get('family', 'therapy_process'), 'canonical_knowledge_type': get('type', 'knowledge_claim'),
             'content': {'canonical_label': get('title', ''), 'summary': get('text', '')},
             'dataset_distribution': {str(get('source', 'custom')): 1},
+            'knowledge_type_distribution': {str(get('type', 'knowledge_claim')): 1},
             'language_distribution': {str(get('language', 'auto')): 1},
             'license_constraints_distribution': {str(get('license', 'unspecified')): 1},
             'evidence_tier_distribution': {str(get('evidence_tier', 'unspecified')): 1},
