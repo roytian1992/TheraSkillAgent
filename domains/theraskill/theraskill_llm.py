@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import base64
+import struct
 import math
 import signal
 import ssl
@@ -519,6 +521,9 @@ class OpenAICompatibleEmbeddingClient:
         self.timeout_seconds = int(config.get("timeout_seconds", 120))
         self.retry_attempts = int(config.get("retry_attempts", 2))
         self.batch_size = int(config.get("batch_size") or DEFAULT_EMBEDDING_BATCH_SIZE)
+        self.encoding_format = config.get('encoding_format')
+        if self.encoding_format not in (None, 'float', 'base64'):
+            raise ValueError('embedding encoding_format must be float or base64')
         self.ssl_context = None if config.get("ssl_verify", True) else ssl._create_unverified_context()
         self.opener = build_no_redirect_opener(self.ssl_context)
 
@@ -534,6 +539,8 @@ class OpenAICompatibleEmbeddingClient:
             }
             if self.dimensions is not None:
                 request_payload["dimensions"] = self.dimensions
+            if self.encoding_format is not None:
+                request_payload['encoding_format'] = self.encoding_format
             data = json.dumps(request_payload, ensure_ascii=False).encode("utf-8")
             headers = {"Content-Type": "application/json"}
             if self.api_key:
@@ -546,9 +553,18 @@ class OpenAICompatibleEmbeddingClient:
             items_sorted = sorted(items, key=lambda item: int(item.get("index", 0)) if isinstance(item, dict) else 0)
             batch_embeddings: List[List[float]] = []
             for item in items_sorted:
-                if not isinstance(item, dict) or not isinstance(item.get("embedding"), list):
+                if not isinstance(item, dict):
                     raise RuntimeError("embedding response item missing embedding")
-                vector = [float(value) for value in item["embedding"]]
+                value = item.get('embedding')
+                if isinstance(value, list):
+                    vector = [float(component) for component in value]
+                elif isinstance(value, str) and self.encoding_format == 'base64':
+                    raw = base64.b64decode(value, validate=True)
+                    if len(raw) % 4:
+                        raise RuntimeError('base64 embedding byte count is not a multiple of float32')
+                    vector = list(struct.unpack('<' + 'f' * (len(raw) // 4), raw))
+                else:
+                    raise RuntimeError('embedding response has an unsupported vector encoding')
                 if not vector:
                     raise RuntimeError("embedding response contains empty vector")
                 batch_embeddings.append(vector)

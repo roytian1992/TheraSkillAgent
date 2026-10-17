@@ -110,6 +110,10 @@ The direct `embedding` configuration also accepts `batch_size` and `workers`
 the resume cursor commit in source order. Changing these throughput controls
 does not change model identity. A cancelled build can have uncommitted in-flight
 requests; resuming may repeat those requests, but cannot skip or duplicate IDs.
+Providers supporting binary embedding responses can additionally set
+`embedding.encoding_format: base64` in the provider file to reduce transfer and
+JSON parsing overhead. Float responses remain supported. This changes transport
+only; it does not change the embedding model, dimensions or index identity.
 
 ```bash
 theraskill-agent index build --knowledge /path/to/knowledge.jsonl \

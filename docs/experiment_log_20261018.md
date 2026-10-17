@@ -82,3 +82,5 @@ python scripts/AdvancedRetrieval/evaluate_managed_retrieval.py \
 7. 真实 API 小规模预检：每类按来源顺序选前 128 条 eligible 知识，共 768 条，全部完成 3072 维 embedding。30 题无错误、无范围越界，预期家族前五命中 22/28，两个空结果检查通过；这是有意限定的 smoke，不能替代全量评估。见 `balanced-smoke-input.json` 与 `balanced-smoke-evaluation/summary.json`。
 8. 实际 LLM planner 预检发现未知枚举和一次不完整 JSON。补充真实索引枚举提示、紧凑 JSON 指令和最多两次模型校验尝试，保留初始失败结果，单独输出修正后的 `advanced-smoke-v2/`。另补充高级向量检索的提前元数据选择器，防止过滤后候选不足。
 9. 修正后的六个中文高级检索 smoke 全部生成有效模型计划，均只需一次规划请求、未降级，所有策略和质量检查通过；这是 768 条真实知识上的有限预检。见 `advanced-smoke-v2/advanced-smoke.json`。最新自动化检查为 143 项通过，4 条既有依赖警告，见 `tests-final.log`。
+10. 六个英文高级检索 smoke 同样全部生成有效计划且无降级、无策略/质量检查失败；结果在 `advanced-smoke-en/advanced-smoke.json`。当前服务实测支持 base64 embedding，两个中英文输入与浮点响应的 float32 值最大绝对差为 0；见 `embedding-encoding-check.json`。全量向量构建使用此传输格式，模型与维度保持不变。
+11. 通过 SQLite 原生 `rank` 排序减少候选排序开销。中文行号连接与提前元数据过滤保持有效；构建期间的诊断对比记录在 `fts-rank-speed-check.json`，不把这一动态语料测量当作最终全量延迟结果。

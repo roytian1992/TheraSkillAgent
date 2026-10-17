@@ -91,6 +91,8 @@ theraskill-agent index search --index demo-v1 \
 
 直接 `embedding` 配置可设置 `batch_size` 和 `workers`（默认 1，最高 16）。请求可并发执行，但向量批次与恢复游标按来源顺序提交，避免后完成的失败批次被跳过。这两个吞吐设置不影响模型身份。取消时可能已有未提交的请求在执行，恢复可能重复这部分请求，但不会漏掉或重复保存知识 ID。
 
+服务支持二进制 embedding 响应时，可在 provider 文件设置 `embedding.encoding_format: base64`，减少传输与 JSON 解析开销。仍支持浮点数组响应；传输编码不改变模型、维度或索引身份。
+
 ```bash
 theraskill-agent index build --knowledge /path/to/knowledge.jsonl \
   --id knowledge-hybrid-v2 --mode hybrid --reuse-lexical knowledge-lexical-v2

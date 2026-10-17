@@ -69,7 +69,7 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
         if terms:
             rows = db.execute(f'''SELECT m.*,f.retrieval_text,bm25(retrieval_fts) AS score
                 FROM retrieval_fts f JOIN retrieval_meta m USING(retrieval_id)
-                WHERE retrieval_fts MATCH ? AND {where} ORDER BY score, m.retrieval_id LIMIT ?''',
+                WHERE retrieval_fts MATCH ? AND {where} ORDER BY f.rank LIMIT ?''',
                 (_match(terms[:80]), *params, limit)).fetchall()
             channels.append(('bm25', rows))
         cjk = understanding.get('cjk_terms') or []
@@ -81,7 +81,7 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
             rows = db.execute(f'''SELECT m.*,f.retrieval_text,bm25(retrieval_cjk_fts) AS score
                 FROM retrieval_cjk_fts c JOIN retrieval_meta m USING(retrieval_id)
                 JOIN retrieval_fts f ON f.rowid=c.rowid AND f.retrieval_id=c.retrieval_id
-                WHERE retrieval_cjk_fts MATCH ? AND {where} ORDER BY score, m.retrieval_id LIMIT ?''',
+                WHERE retrieval_cjk_fts MATCH ? AND {where} ORDER BY c.rank LIMIT ?''',
                 (_match(indexed_cjk), *params, limit)).fetchall()
             channels.append(('cjk_bm25', rows))
         elif cjk:

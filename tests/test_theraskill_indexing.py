@@ -1,6 +1,8 @@
 from __future__ import annotations
 import io
 import json
+import base64
+import struct
 import shutil
 import tarfile
 import threading
@@ -33,6 +35,8 @@ def embedding_server(workspace):
             calls.append(request)
             dim = request.get('dimensions', 4)
             vectors = [[float(len(text) % 5 + 1), 1., 2., 3., 4., 5.][:dim] for text in request['input']]
+            if request.get('encoding_format') == 'base64':
+                vectors = [base64.b64encode(struct.pack('<' + 'f' * len(vector), *vector)).decode() for vector in vectors]
             body = json.dumps({'data': [{'index': i, 'embedding': v} for i, v in enumerate(vectors)]}).encode()
             self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(body)
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
@@ -136,6 +140,21 @@ def test_manifest_corruption_detected(workspace):
     output = workspace / 'index'; build_index(DEMO, output)
     with (output / 'metadata_v2.sqlite').open('ab') as f: f.write(b'corrupt')
     with pytest.raises(ValueError, match='integrity'): verify_index(output)
+
+
+def test_base64_embedding_transport_preserves_model_identity(workspace, embedding_server):
+    pytest.importorskip('faiss')
+    from domains.theraskill.theraskill_llm import OpenAICompatibleEmbeddingClient
+    from domains.theraskill.provider_config import resolve_embedding_config
+    floating = OpenAICompatibleEmbeddingClient(resolve_embedding_config()).embed(['same input'])
+    binary = OpenAICompatibleEmbeddingClient(resolve_embedding_config({'encoding_format': 'base64'})).embed(['same input'])
+    assert binary == floating
+    output = workspace / 'binary-index'
+    built = build_index(DEMO, output, mode='hybrid', embedding_config={'encoding_format': 'base64'})
+    assert built['counts']['vectors'] == 6
+    assert search_index(output, 'uncertainty')
+    with pytest.raises(ValueError, match='encoding_format'):
+        OpenAICompatibleEmbeddingClient(resolve_embedding_config({'encoding_format': 'invalid'}))
 
 
 def test_reuse_verified_lexical_and_concurrent_resume(workspace, embedding_server, monkeypatch):
