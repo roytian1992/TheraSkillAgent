@@ -149,7 +149,9 @@ def _dense(output, config, counts, progress, cancel):
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix='index-embedding') as pool:
             pending = deque()
             iterator = iter(batches())
-            for _ in range(workers):
+            # A bounded queue keeps the HTTP workers busy when one earlier
+            # batch is slower, while checkpoints still commit in source order.
+            for _ in range(workers * 4 if workers > 1 else 1):
                 batch = next(iterator, None)
                 if batch is not None:
                     pending.append((batch, pool.submit(embed, batch)))
@@ -345,7 +347,7 @@ def verify_index(path):
     return manifest
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=16)
 def _load_dense_shard(index_path, ids_path):
     """Completed index files are immutable; avoid rereading vectors per query."""
     import faiss

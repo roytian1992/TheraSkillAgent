@@ -86,6 +86,13 @@ language:
 
 ## Output Schema
 
+The current index has the following metadata values. For `primary_knowledge_type`
+and `primary_evidence_tier`, choose only values from this inventory, or use `[]`
+when no precise filter is justified. Do not invent a category or evidence tier.
+For family, scope and route filters, use values available in this index as well.
+
+{{index_inventory}}
+
 {
   "schema_version": "theraskill_llm_retrieval_plan_v1",
   "raw_query": string,
@@ -150,6 +157,7 @@ language:
 - For response review, prefer `therapy_process`, `method_rubric`, and allowed `synthetic_construction`.
 - Generate multilingual search variants when useful. A Chinese query may have English dense queries; an English query may have Chinese label/BM25 terms.
 - Search query variants are retrieval hints only. They are not evidence.
+- Keep the JSON compact. Use at most two short search queries per channel and at most four short safety constraints. Keep each explanatory string to one short sentence. Do not include counseling responses or extra fields. Finish the entire JSON object within the output budget.
 - If uncertain, keep `ambiguous_intent=true` and choose a fallback policy that broadens filters after candidate-count checks.
 
 ## Input

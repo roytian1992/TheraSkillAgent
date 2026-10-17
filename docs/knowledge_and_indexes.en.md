@@ -37,6 +37,12 @@ and creates bounded lexical variants. It expands only concepts actually present
 in the question, including bilingual equivalents for empathy, anxiety, cognitive
 reframing, REBT and risk-related language. This finite concept vocabulary is a
 deterministic baseline; the advanced LLM planner adds contextual rewrites.
+The planner receives the actual index metadata inventory, so a provider can
+select valid knowledge types and evidence tiers. Invalid JSON or metadata gets
+up to two real-model validation attempts by default (CLI
+`--validation-attempts`, bounded to 1–3). Attempt status and inventory/prompt
+hashes are recorded. If planning still fails, the runtime reports its existing
+policy-aware lexical fallback. Invalid plans are not treated as successful plans.
 
 An explicitly selected skill owns the route. Without one, understanding returns
 a suggested skill for inspection. Keyword matches do not silently replace an
@@ -56,6 +62,8 @@ One policy registry drives local and advanced retrieval. Routes constrain allowe
 families and exclude accounting-only records; construction methods enter generation
 or review workflows. Explicit metadata filters apply before candidate recall and
 remain in force during LLM scope relaxation, family backfill and final fusion.
+FAISS selectors apply metadata constraints before selecting nearest neighbors,
+so an unrelated global top-N pool cannot crowd out matching filtered knowledge.
 Values in one field use OR; different fields use AND. Supported aliases are
 `family`, `language`, `dataset`, `evidence_tier`, `knowledge_type`, `route` and `risk`.
 Unknown filters or missing index columns produce an explicit error.

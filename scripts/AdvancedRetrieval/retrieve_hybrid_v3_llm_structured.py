@@ -1163,7 +1163,7 @@ def selected_faiss_shards(shards_dir: Path, plan: dict[str, Any]) -> tuple[list[
     }
 
 
-def faiss_shard_search(shards_dir: Path, plan: dict[str, Any], query_embedding: list[float], pool_n: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def faiss_shard_search(shards_dir: Path, plan: dict[str, Any], query_embedding: list[float], pool_n: int, allowed_ids: set[str] | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     try:
         import faiss
     except ImportError as exc:
@@ -1193,8 +1193,15 @@ def faiss_shard_search(shards_dir: Path, plan: dict[str, Any], query_embedding: 
         k = min(per_shard_k, int(index.ntotal))
         if k <= 0:
             continue
-        distances, indices = index.search(query, k)
         id_rows = load_shard_ids(ids_path)
+        if allowed_ids is None:
+            distances, indices = index.search(query, k)
+        else:
+            positions = np.asarray([i for i, item in enumerate(id_rows) if item.get('retrieval_id') in allowed_ids], dtype=np.int64)
+            if not len(positions):
+                continue
+            selector = faiss.IDSelectorBatch(positions)
+            distances, indices = index.search(query, min(k, len(positions)), params=faiss.SearchParameters(sel=selector))
         added = 0
         for rank, (local_idx, score) in enumerate(zip(indices[0].tolist(), distances[0].tolist()), start=1):
             local_idx = int(local_idx)
@@ -1233,6 +1240,7 @@ def faiss_shard_search(shards_dir: Path, plan: dict[str, Any], query_embedding: 
             break
     trace.update({
         "mode": "faiss_shards",
+        "metadata_prefilter": allowed_ids is not None,
         "raw_hits": len(merged),
         "deduped_hits": len(hits),
         "shards": shard_traces,
@@ -1289,7 +1297,17 @@ def fetch_dense_candidates(args: argparse.Namespace, db: Path, plan: dict[str, A
         raw_hits, faiss_trace = cached_faiss_search(faiss_state or {}, dense_state, Path(args.dense_row_map_db), query_embedding, pool_n)
         dense_trace.update(faiss_trace)
     elif args.dense_backend == "faiss_shards":
-        raw_hits, shard_trace = faiss_shard_search(Path(args.faiss_shards_dir), plan, query_embedding, pool_n)
+        # A restrictive language/evidence filter must not discard a global
+        # top-N pool before matching vectors have a chance to enter it. For a
+        # wide scope, materialize the hard constraints even if the optional
+        # LLM scope exceeded its normal materialization limit.
+        if allowed_ids is None:
+            understanding = plan.get('_query_understanding') or {}
+            if understanding.get('filters') or understanding.get('automatic_filters'):
+                with closing(sqlite3.connect(str(db))) as con:
+                    clauses, parameters = compile_scope(con, understanding)
+                    allowed_ids = {row[0] for row in con.execute(f"SELECT m.retrieval_id FROM retrieval_meta m WHERE {' AND '.join(clauses)}", parameters)}
+        raw_hits, shard_trace = faiss_shard_search(Path(args.faiss_shards_dir), plan, query_embedding, pool_n, allowed_ids)
         dense_trace.update(shard_trace)
     else:
         dense_trace.update({"mode": "memmap_global_then_filter"})

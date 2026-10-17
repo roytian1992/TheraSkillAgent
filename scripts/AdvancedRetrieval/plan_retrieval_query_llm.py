@@ -107,6 +107,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--allow-degraded-fallback", action="store_true")
+    parser.add_argument("--validation-attempts", type=int, default=2, help="bounded real-model attempts for malformed JSON or invalid metadata")
     return parser.parse_args()
 
 
@@ -119,9 +120,10 @@ def read_yaml(path: Path) -> dict[str, Any]:
         return yaml.safe_load(handle)
 
 
-def read_prompt(path: Path, skill: str, query: str) -> tuple[str, str]:
+def read_prompt(path: Path, skill: str, query: str, inventory=None) -> tuple[str, str]:
     template = path.read_text(encoding="utf-8")
-    prompt = template.replace("{{skill}}", skill).replace("{{query}}", query)
+    available = json.dumps({key: sorted(values) for key, values in (inventory or {}).items()}, ensure_ascii=False, sort_keys=True)
+    prompt = template.replace("{{index_inventory}}", available).replace("{{skill}}", skill).replace("{{query}}", query)
     prompt_hash = hashlib.sha256(template.encode("utf-8")).hexdigest()
     return prompt, prompt_hash
 
@@ -455,7 +457,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     prompt_path = Path(args.prompt)
     config_path = Path(args.model_config)
     inventory = load_index_value_inventory(db)
-    prompt, prompt_hash = read_prompt(prompt_path, args.skill, args.query)
+    prompt, prompt_hash = read_prompt(prompt_path, args.skill, args.query, inventory)
     trace: dict[str, Any] = {
         "schema_version": "theraskill_retrieval_planner_trace_v1",
         "created_at": utc_now(),
@@ -468,26 +470,37 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "fallback_used": False,
         "issues": [],
         "warnings": [],
+        "attempts": [],
+        "inventory_sha256": hashlib.sha256(json.dumps({key: sorted(values) for key, values in inventory.items()}, sort_keys=True).encode()).hexdigest(),
+        "request_prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
     }
     try:
-        response = chat_completion(config_path, prompt)
-        raw_plan = extract_json_object(response)
-        trace["json_valid"] = True
-        plan, issues, warnings = validate_plan(raw_plan, args.skill, args.query, inventory)
-        trace["issues"] = issues
-        trace["warnings"] = warnings
-        trace["enum_valid"] = not issues
-        trace["planner_status"] = "complete" if not issues else "invalid_enum"
-        if issues and args.allow_degraded_fallback:
-            fallback = fallback_plan(args.skill, args.query)
-            plan, fallback_issues, fallback_warnings = validate_plan(fallback, args.skill, args.query, inventory)
-            trace["planner_status"] = "degraded_fallback"
-            trace["fallback_used"] = True
-            trace["fallback_issues"] = fallback_issues
-            trace["enum_valid"] = not fallback_issues
-            trace["warnings"].extend(fallback_warnings)
+        attempts = max(1, min(int(getattr(args, 'validation_attempts', 2)), 3))
+        feedback = ''
+        for attempt in range(1, attempts + 1):
+            attempt_trace = {'attempt': attempt, 'json_valid': False, 'enum_valid': False}
+            try:
+                response = chat_completion(config_path, prompt + feedback)
+                raw_plan = extract_json_object(response)
+                attempt_trace['json_valid'] = True
+                plan, issues, warnings = validate_plan(raw_plan, args.skill, args.query, inventory)
+                attempt_trace.update(enum_valid=not issues, issues=issues)
+                if issues:
+                    raise ValueError('; '.join(issues))
+                trace.update(json_valid=True, enum_valid=True, planner_status='complete', issues=[], warnings=warnings)
+                trace['attempts'].append(attempt_trace)
+                break
+            except Exception as exc:
+                from theraskill_agent.text import redact_secrets
+                error = redact_secrets(str(exc))
+                attempt_trace['error'] = error
+                trace['attempts'].append(attempt_trace)
+                if attempt == attempts or not isinstance(exc, (ValueError, TypeError, KeyError)):
+                    raise
+                feedback = '\n\nThe previous planning attempt failed validation: ' + error + '\nReturn a fresh, complete, compact JSON object. Choose metadata values only from the current index inventory; use [] when uncertain. Do not repeat a previous answer.'
     except Exception as exc:
-        trace["issues"].append(str(exc))
+        from theraskill_agent.text import redact_secrets
+        trace["issues"].append(redact_secrets(str(exc)))
         if not args.allow_degraded_fallback:
             raise
         fallback = fallback_plan(args.skill, args.query)

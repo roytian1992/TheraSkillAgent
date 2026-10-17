@@ -79,3 +79,6 @@ python scripts/AdvancedRetrieval/evaluate_managed_retrieval.py \
 4. 修正中文 FTS 按未索引 ID 连接造成的全表扫描，改用构建时对齐的行号。
 5. 备份业务数据库，统一服务进程，启动工作台；修正测试对本机凭据和运行中服务的意外依赖。
 6. 根据真实存储测量把构建移到 tmpfs，持久化校验后再切换。全量结果与最终切换状态将在完成后追加。
+7. 真实 API 小规模预检：每类按来源顺序选前 128 条 eligible 知识，共 768 条，全部完成 3072 维 embedding。30 题无错误、无范围越界，预期家族前五命中 22/28，两个空结果检查通过；这是有意限定的 smoke，不能替代全量评估。见 `balanced-smoke-input.json` 与 `balanced-smoke-evaluation/summary.json`。
+8. 实际 LLM planner 预检发现未知枚举和一次不完整 JSON。补充真实索引枚举提示、紧凑 JSON 指令和最多两次模型校验尝试，保留初始失败结果，单独输出修正后的 `advanced-smoke-v2/`。另补充高级向量检索的提前元数据选择器，防止过滤后候选不足。
+9. 修正后的六个中文高级检索 smoke 全部生成有效模型计划，均只需一次规划请求、未降级，所有策略和质量检查通过；这是 768 条真实知识上的有限预检。见 `advanced-smoke-v2/advanced-smoke.json`。最新自动化检查为 143 项通过，4 条既有依赖警告，见 `tests-final.log`。

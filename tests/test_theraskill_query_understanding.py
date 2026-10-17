@@ -182,3 +182,60 @@ def test_cli_understanding_does_not_need_an_index():
     from theraskill_agent.resource_cli import run_command
     args = build_parser().parse_args(['index', 'understand', '--query', 'CBT 认知重构', '--skill', 'cognitive-reframing-support'])
     assert run_command(args)['task_type'] == 'framework_guided_intervention'
+
+
+def test_advanced_dense_filters_before_truncating_global_neighbors(tmp_path):
+    faiss = pytest.importorskip('faiss')
+    import numpy as np
+    from domains.theraskill.hybrid_retrieval import TheraSkillHybridRetriever
+    adapter = object.__new__(TheraSkillHybridRetriever)
+    adapter.project_root = Path(__file__).parents[1]
+    module = adapter._load_retriever()
+    index = faiss.IndexFlatIP(2)
+    index.add(np.asarray([[1., 0.], [0., 1.]], dtype=np.float32))
+    faiss.write_index(index, str(tmp_path / 'index.faiss'))
+    (tmp_path / 'ids.jsonl').write_text('{"retrieval_id":"globally_closest"}\n{"retrieval_id":"matches_filter"}\n')
+    (tmp_path / 'manifest.json').write_text(json.dumps({'shards': [{
+        'shard_name': 'test', 'dedup_family': 'therapy_process', 'default_route': 'reviewed_cluster_retrieval',
+        'artifacts': {'index': 'index.faiss', 'ids': 'ids.jsonl'},
+    }]}))
+    hits, trace = module.faiss_shard_search(tmp_path, {}, [1., 0.], 1, {'matches_filter'})
+    assert [item['retrieval_id'] for item in hits] == ['matches_filter']
+    assert trace['metadata_prefilter'] is True
+
+
+@pytest.mark.parametrize('failure', ['json', 'enum'])
+def test_planner_gets_real_index_inventory_and_retries_validation(tmp_path, monkeypatch, failure):
+    from types import SimpleNamespace
+    from domains.theraskill.hybrid_retrieval import TheraSkillHybridRetriever
+    root = Path(__file__).parents[1]
+    output = tmp_path / 'index'
+    build_index(DEMO, output)
+    adapter = object.__new__(TheraSkillHybridRetriever)
+    adapter.project_root = root
+    planner = adapter._load_retriever().PLANNER
+    plan = planner.fallback_plan('emotional-support', 'empathy')
+    plan['metadata_filters']['default_route'] = []
+    plan['metadata_filters']['dedup_family'] = ['style_response', 'therapy_process']
+    prompts = []
+    def chat(config, prompt):
+        prompts.append(prompt)
+        value = json.loads(json.dumps(plan))
+        if len(prompts) == 1:
+            if failure == 'json':
+                return {'choices': [{'message': {'content': '{"unfinished":'}}]}
+            value['metadata_filters']['primary_knowledge_type'] = ['invented_type']
+        return {'choices': [{'message': {'content': json.dumps(value)}}]}
+    monkeypatch.setattr(planner, 'chat_completion', chat)
+    args = SimpleNamespace(db=str(output / 'phase6_retrieval_fts.sqlite'), model_config='unused.yaml',
+                           prompt=str(root / 'prompts/AdvancedRetrieval/retrieval_query_planner_zh_en.md'),
+                           skill='emotional-support', query='empathy', allow_degraded_fallback=False, validation_attempts=2)
+    result = planner.build_plan(args)
+    assert 'demonstration' in prompts[0] and '{{index_inventory}}' not in prompts[0]
+    assert 'failed validation' in prompts[1]
+    assert result['planner_trace']['planner_status'] == 'complete'
+    assert result['planner_trace']['fallback_used'] is False
+    assert len(result['planner_trace']['attempts']) == 2
+    monkeypatch.setattr(planner, 'chat_completion', lambda *args: {'choices': [{'message': {'content': '{'}}]})
+    with pytest.raises(ValueError):
+        planner.build_plan(args)
