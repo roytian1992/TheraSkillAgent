@@ -1,0 +1,25 @@
+# OpenAI-compatible local model configuration.
+# Copy and edit this file for your model endpoint; no model is bundled.
+model:
+  provider: openai-compatible
+  name: Qwen3.8-27B
+  base_url: http://127.0.0.1:8002/v1
+  api_key_env: THERASKILL_LOCAL_API_KEY
+  temperature: 0.0
+  max_output_tokens: 4096
+  timeout_seconds: 600
+  retry_attempts: 1
+  parse_retry_attempts: 2
+  quality_retry_attempts: 2
+  response_format_json: true
+  thinking:
+    type: disabled
+embedding:
+  enabled: true
+  provider: openai-compatible
+  name: bge-m3
+  base_url: http://127.0.0.1:8081
+  api_key_env: THERASKILL_EMBEDDING_API_KEY
+  endpoint: http://127.0.0.1:8081/v1/embeddings
+  timeout_seconds: 120
+  batch_size: 32

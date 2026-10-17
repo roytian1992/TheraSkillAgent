@@ -1,0 +1,14 @@
+# TheraSkillAgent local development defaults. No credentials belong here.
+project:
+  name: TheraSkillAgent
+  version: "0.1"
+skills:
+  user_root: ~/.theraskill-agent/skills
+  roots:
+    - plugins/theraskill/skills
+    - skills
+providers:
+  registry: configs/theraskill/providers.yaml
+text:
+  default_chunk_chars: 4000
+  default_overlap_chars: 200

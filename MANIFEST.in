@@ -1,0 +1,32 @@
+# The installable distribution contains the TheraSkill surface only. The
+# historical Hermes source tree and general-purpose skill catalog remain in
+# this checkout for compatibility, but are not copied into a TheraSkillAgent
+# sdist/wheel.
+include README.md LICENSE
+recursive-include plugins/theraskill plugin.yaml plugin.yml
+recursive-include plugins/theraskill/skills *.md *.yaml *.json
+# Runtime scripts and templates are copied under theraskill_agent/_resources
+# by the build hook. Knowledge, credentials and legacy host code stay outside.
+recursive-include configs *.yaml
+recursive-include prompts *.md
+recursive-include scripts/Simulation *.py
+recursive-include scripts/AdvancedRetrieval *.py
+recursive-include scripts/AgentSkill *.py
+recursive-include scripts/_common *.py
+recursive-include extraction/scripts *.py
+recursive-include extraction/prompts *.md
+recursive-include extraction/configs *.yaml
+recursive-include extraction/examples *.jsonl
+recursive-include views/theraskill/workbench/dist *
+recursive-include views/theraskill/support_assistant/dist *
+recursive-include views/theraskill/simulation_console/dist *
+recursive-include views/theraskill/expert_studio/dist *
+# Tests stay in the source checkout; the dev extra only installs test tools.
+prune tests
+global-exclude __pycache__
+global-exclude *.py[cod]
+
+include THIRD_PARTY_NOTICES.md
+recursive-include examples/knowledge *.jsonl *.md
+recursive-include schemas *.json
+include releases/catalog.json

@@ -1,0 +1,7 @@
+{
+  "schema_version": "theraskill_resource_catalog_v1",
+  "packages": [
+    {"id": "knowledge.phase6_v1", "kind": "knowledge", "available": false, "reason": "Full knowledge is distributed separately; public assets and source permissions are not yet finalized."},
+    {"id": "simulation.phase6_v1", "kind": "simulation", "available": false, "reason": "Simulation assets are not yet published."}
+  ]
+}

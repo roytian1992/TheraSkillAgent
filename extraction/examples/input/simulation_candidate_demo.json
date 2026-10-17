@@ -1,0 +1,25 @@
+{
+  "candidate_id": "demo_transition_001",
+  "starting_state": {
+    "emotion_signals": [
+      "持续紧张"
+    ],
+    "risk_signals": []
+  },
+  "applicable_context": "来访者愿意继续讨论近期压力",
+  "move_sequence": [
+    {
+      "order": 1,
+      "move_types": [
+        "情绪反映"
+      ],
+      "surface_summary": "先确认并反映紧张感"
+    }
+  ],
+  "observed_client_changes": [
+    {
+      "transition_type": "disclosure_increase",
+      "summary": "来访者补充了考试压力"
+    }
+  ]
+}

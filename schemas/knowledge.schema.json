@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TheraSkill generic knowledge record",
+  "type": "object",
+  "required": [
+    "id",
+    "text",
+    "review_status",
+    "retrieval_policy"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    },
+    "family": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "license": {
+      "type": "string"
+    },
+    "language": {
+      "type": "string"
+    },
+    "review_status": {
+      "enum": [
+        "candidate",
+        "approved",
+        "released",
+        "rejected"
+      ]
+    },
+    "retrieval_policy": {
+      "type": "object",
+      "properties": {
+        "retrieval_eligible": {
+          "type": "boolean"
+        },
+        "embedding_eligible": {
+          "type": "boolean"
+        },
+        "default_route": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

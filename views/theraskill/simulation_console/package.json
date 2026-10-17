@@ -1,0 +1,26 @@
+{
+  "name": "theraskill-simulation-console",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build --base=/theraskill/simulation/",
+    "preview": "vite preview --host 127.0.0.1",
+    "qa:ui": "node scripts/run-ui-qa.mjs",
+    "qa:persona-role-card": "node scripts/run-persona-role-card-ui-qa.mjs",
+    "qa:p2": "node scripts/run-p2-mode-qa.mjs"
+  },
+  "dependencies": {
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "lucide-react": "1.24.0"
+  },
+  "devDependencies": {
+    "vite": "8.1.4",
+    "@vitejs/plugin-react": "6.0.3",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "typescript": "7.0.2"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "index_id",
+    "input",
+    "counts",
+    "files",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "theraskill_index_v1"
+    }
+  }
+}

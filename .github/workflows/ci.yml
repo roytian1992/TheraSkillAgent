@@ -1,0 +1,33 @@
+name: standalone-build
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: python -m pip install -e '.[dev,retrieval]'
+      - run: npm ci && npm run build
+      - run: python scripts/release_source.py --check-git
+      - run: python -m pytest tests/test_standalone_kernel.py tests/test_theraskill*.py --ignore=tests/test_theraskill_agent_regression.py -q
+      - run: python -m build
+      - name: Verify wheel without optional model or retrieval dependencies
+        run: |
+          python -m venv /tmp/theraskill-wheel-check
+          /tmp/theraskill-wheel-check/bin/pip install dist/*.whl
+          /tmp/theraskill-wheel-check/bin/python -I tests/smoke_theraskill_install.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: theraskill-agent-python-${{ matrix.python }}
+          path: dist/*

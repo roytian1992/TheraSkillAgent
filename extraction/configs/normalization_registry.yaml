@@ -1,0 +1,340 @@
+schema_version: theraskill_normalization_registry_v2
+updated: "2026-07-01"
+
+strongly_controlled:
+  skill_layer:
+    - micro_move
+    - scenario_skill
+    - protocol_skill
+
+  source_role:
+    - client
+    - counselor
+    - third_party
+    - system_noise
+    - unknown
+
+  language:
+    - zh
+    - en
+    - mixed
+    - unknown
+
+  suitability_type:
+    - therapeutic_interaction_present
+    - support_only_but_usable
+    - safety_only
+    - administrative_only
+    - non_therapeutic_chat
+    - unsafe_counselor_behavior
+    - insufficient_context
+    - duplicate_or_low_information
+
+  state_dimension:
+    - presenting_problem
+    - emotion
+    - cognition
+    - behavior
+    - somatic
+    - interpersonal_context
+    - life_context
+    - motivation_readiness
+    - risk_signal
+
+  risk_domain:
+    - self_harm
+    - suicide
+    - harm_to_others
+    - abuse_or_ipv
+    - sexual_violence
+    - psychosis_like
+    - substance_or_medical
+    - severe_self_neglect
+    - none_observed
+
+  risk_level:
+    - none_observed
+    - low
+    - moderate
+    - high
+    - imminent
+    - unknown
+
+  required_action:
+    - ordinary_support_allowed
+    - clarify_before_ordinary_support
+    - safety_first_response
+    - emergency_or_local_protocol
+    - practitioner_review_required
+
+  move_type:
+    - validation
+    - reflection
+    - open_question
+    - summarization
+    - normalization
+    - psychoeducation
+    - cognitive_reframe
+    - socratic_question
+    - emotion_regulation_instruction
+    - behavioral_activation
+    - problem_solving
+    - communication_planning
+    - resource_activation
+    - risk_screening
+    - safety_planning
+    - boundary_setting
+    - referral_or_escalation
+    - rupture_repair
+    - other
+
+  move_function:
+    - build_alliance
+    - clarify_problem
+    - elicit_context
+    - reduce_shame
+    - stabilize_emotion
+    - shift_perspective
+    - identify_pattern
+    - generate_options
+    - plan_action
+    - assess_risk
+    - increase_support
+    - set_boundary
+    - repair_misalignment
+    - teach_skill
+
+  process_goal:
+    - alliance_engagement
+    - problem_clarification
+    - emotional_validation
+    - emotion_regulation
+    - cognitive_flexibility
+    - behavioral_activation
+    - problem_solving
+    - interpersonal_communication
+    - resource_activation
+    - risk_assessment
+    - safety_planning
+    - psychoeducation
+    - meaning_making
+
+  evidence_source:
+    - observed_from_dialogue
+    - inferred_from_dialogue
+    - completed_by_safety_policy
+    - aligned_from_guideline
+    - expert_authored
+
+  review_status:
+    - draft
+    - machine_reviewed
+    - needs_revision
+    - rejected
+    - human_reviewed
+    - promoted
+
+  promotion_decision:
+    - promote
+    - repair
+    - merge
+    - reject
+    - hold_for_human_review
+
+  target_population:
+    - adults
+    - adolescents
+    - children
+    - caregivers
+    - couples
+    - families
+    - students
+    - unknown_or_not_specified
+
+  certainty:
+    - observed
+    - inferred
+    - uncertain
+
+  disclosure_depth:
+    - low
+    - medium
+    - high
+    - uncertain
+
+  clinical_quality:
+    - appropriate
+    - questionable
+    - unsafe
+    - uncertain
+
+  extraction_status:
+    - success
+    - needs_human_review
+    - not_extractable
+
+  review_dimension_decision:
+    - pass
+    - issue
+    - uncertain
+
+  confidence:
+    - low
+    - medium
+    - high
+
+  promotable_signal:
+    - "yes"
+    - "no"
+    - uncertain
+
+  think_handling:
+    - none
+    - visible_in_metadata
+    - generated_rationale_hint_only
+
+  source_construction_type:
+    - raw_or_near_raw_counseling
+    - report_reconstructed_dialogue
+    - single_turn_expanded_dialogue
+    - empathy_rewrite_synthetic
+    - counselor_style_synthetic
+    - therapy_protocol_synthetic_with_planning
+    - social_media_label_dataset
+    - auxiliary_risk_label
+    - unknown
+
+  evidence_tier:
+    - real_clinical_interaction
+    - report_reconstructed_therapeutic_process
+    - protocol_synthetic_high_structure
+    - style_and_technique_synthetic
+    - support_expansion_synthetic
+    - label_or_analysis_auxiliary
+    - unknown
+
+semi_controlled:
+  sequence_type:
+    - validate_then_explore
+    - reflect_then_reframe
+    - assess_then_plan
+    - normalize_then_skill_teach
+    - clarify_then_problem_solve
+    - stabilize_then_continue
+    - screen_risk_then_escalate
+    - summarize_then_next_step
+    - other
+
+  therapeutic_stance:
+    - supportive
+    - collaborative
+    - trauma_informed
+    - directive_safety_first
+    - exploratory
+    - skills_coaching
+    - psychoeducational
+
+  client_readiness:
+    - ready_to_reflect
+    - emotionally_overwhelmed
+    - ambivalent
+    - resistant_or_guarded
+    - seeking_information
+    - seeking_action
+    - safety_unclear
+    - unknown
+
+  intervention_intensity:
+    - low
+    - moderate
+    - high
+    - safety_first
+
+  delivery_mode:
+    - client_support
+    - practitioner_copilot
+    - training_or_supervision
+
+  alliance_state:
+    - initiating
+    - building
+    - established
+    - strained
+    - rupture
+    - repairing
+    - not_observable
+    - unknown
+
+  client_response_type:
+    - disclosure_deepening
+    - concrete_detail
+    - emotional_release
+    - resistance
+    - avoidance
+    - intellectualization
+    - agreement_without_commitment
+    - ambivalence
+    - correction_of_therapist
+    - risk_disclosure
+    - risk_denial
+    - rupture
+    - repair
+    - stabilization
+    - compliant_information_provision
+    - problem_specification
+    - no_observable_response
+    - other
+
+  state_delta:
+    - increased
+    - decreased
+    - no_change
+    - stable
+    - unclear
+    - not_observable
+
+  transition_type:
+    - opens_up
+    - becomes_more_specific
+    - accepts_reframe
+    - agrees_without_commitment
+    - resists_or_avoids
+    - corrects_therapist
+    - risk_disclosed
+    - risk_denied_or_minimized
+    - stabilizes
+    - rupture
+    - repair
+    - assessment_initiation
+    - barrier_identification
+    - engagement_to_problem_identification
+    - exploratory_progression
+    - no_clear_change
+    - other
+
+free_text_with_evidence:
+  - name
+  - definition
+  - surface_action
+  - applicable_when
+  - interaction_step
+  - adaptation_rule
+  - do_not
+  - rationale
+  - evidence_summary
+
+registry_expansion:
+  proposal_status_values:
+    - proposed
+    - accepted
+    - rejected
+    - superseded
+  required_fields:
+    - proposal_id
+    - field
+    - proposed_value
+    - definition
+    - why_existing_options_are_insufficient
+    - examples
+    - source_ids
+    - status

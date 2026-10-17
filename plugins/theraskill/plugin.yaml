@@ -1,0 +1,16 @@
+name: theraskill
+version: 0.3.0
+description: "Built-in TheraSkillAgent domain surface."
+author: TheraSkill
+kind: platform
+first_party: true
+kernel_entry: theraskill_agent.platform
+provides_tools:
+  - theraskill_context
+  - theraskill_knowledge_search
+  - theraskill_support
+  - theraskill_simulation
+  - theraskill_response_review
+  - theraskill_contribution
+  - theraskill_extraction
+  - theraskill_transcript

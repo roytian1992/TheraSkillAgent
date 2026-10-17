@@ -1,0 +1,11 @@
+project:
+  name: TheraSkillAgent
+  version: 0.4.0
+skills:
+  user_root: skills/local
+platforms:
+  theraskill:
+    providers:
+      config_path: configs/theraskill/providers.yaml
+extraction:
+  source_policy: inspect_then_extract

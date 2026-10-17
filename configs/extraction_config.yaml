@@ -1,0 +1,47 @@
+extraction:
+  version: "theraskill_extraction_v0.1"
+  schema_version: "therapeutic_process_rule_v0.2_no_aspect"
+  model:
+    # Provider and model are resolved from configs/theraskill/providers.yaml.
+    temperature: 0.0
+    max_output_tokens: 4096
+    retry_attempts: 1
+    parse_retry_attempts: 2
+    quality_retry_attempts: 3
+    batch_size: 1
+  context_policy:
+    default: "full_episode"
+    allowed: ["full_episode", "explicit_chunking", "explicit_skip_too_long"]
+    no_hidden_truncation: true
+    max_prompt_tokens: 24000
+    token_estimator: "qwen_conservative_v0"
+    too_long_behavior: "skip_with_recorded_reason_until_chunking_is_implemented"
+  input:
+    pilot_cases: "data_work/unified/pilot_cases.jsonl"
+  output:
+    state_rules: "data_work/outputs/pilot_state_rules.jsonl"
+    therapist_moves: "data_work/outputs/pilot_therapist_moves.jsonl"
+    process_rules: "data_work/outputs/pilot_process_rules.jsonl"
+    validation_report: "data_work/outputs/validation_report.json"
+  prompts:
+    state_extraction_zh:
+      path: "prompts/state_extraction_zh.md"
+      version: "state_extraction_zh_v0.2"
+    therapist_move_extraction_zh:
+      path: "prompts/therapist_move_extraction_zh.md"
+      version: "therapist_move_extraction_zh_v0.4"
+    process_rule_synthesis_zh:
+      path: "prompts/process_rule_synthesis_zh.md"
+      version: "process_rule_synthesis_zh_v0.16"
+    process_rule_plan_zh:
+      path: "prompts/process_rule_plan_zh.md"
+      version: "process_rule_plan_zh_v0.4"
+    safety_completion_zh:
+      path: "prompts/safety_completion_zh.md"
+      version: "safety_completion_zh_v0.2"
+    safety_adjudication_zh:
+      path: "prompts/safety_adjudication_zh.md"
+      version: "safety_adjudication_zh_v0.1"
+    process_rule_safety_repair_zh:
+      path: "prompts/process_rule_safety_repair_zh.md"
+      version: "process_rule_safety_repair_zh_v0.1"

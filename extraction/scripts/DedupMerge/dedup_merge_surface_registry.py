@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Shared surface registry for DedupMerge full-coverage, pilot, and tombstone scripts."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+DEDUP_MERGE_SURFACE_REGISTRY_RELPATH = Path("scripts/DedupMerge/dedup_merge_surface_registry.py")
+
+BUILD_DATASET_RAW_INVENTORY_RELPATH = Path("scripts/DedupMerge/build_dataset_raw_inventory.py")
+BUILD_UNIT_TEXT_VIEWS_RELPATH = Path("scripts/DedupMerge/build_unit_text_views.py")
+BUILD_EXACT_DUPLICATE_INDEX_RELPATH = Path("scripts/DedupMerge/build_exact_duplicate_index.py")
+BUILD_FULL_EXACT_DUPLICATE_CLUSTERS_RELPATH = Path("scripts/DedupMerge/build_full_exact_duplicate_clusters.py")
+BUILD_FULL_CANDIDATE_COMPONENTS_RELPATH = Path("scripts/DedupMerge/build_full_candidate_components.py")
+REFINE_OVERSIZED_CANDIDATE_COMPONENTS_RELPATH = Path("scripts/DedupMerge/refine_oversized_candidate_components.py")
+BUILD_STYLE_RESPONSE_BUCKET_INDEX_RELPATH = Path("scripts/DedupMerge/build_style_response_bucket_index.py")
+RUN_STYLE_BUCKET_CANDIDATE_GENERATION_RELPATH = Path("scripts/DedupMerge/run_style_bucket_candidate_generation.py")
+REFINE_STYLE_RESPONSE_V2_RELPATH = Path("scripts/DedupMerge/refine_style_response_v2.py")
+BUILD_STYLE_RESPONSE_ADJUDICATION_QUEUE_RELPATH = Path("scripts/DedupMerge/build_style_response_adjudication_queue.py")
+RUN_STYLE_RESPONSE_QUEUE_ADJUDICATION_RELPATH = Path("scripts/DedupMerge/run_style_response_queue_adjudication.py")
+BUILD_STYLE_RESPONSE_REVIEW_CLUSTERS_RELPATH = Path("scripts/DedupMerge/build_style_response_review_clusters_from_queue_adjudication.py")
+RUN_STYLE_RESPONSE_SPLIT_SUBGROUPING_RELPATH = Path("scripts/DedupMerge/run_style_response_split_subgrouping.py")
+BUILD_STYLE_RESPONSE_SUBREVIEW_CLUSTERS_RELPATH = Path("scripts/DedupMerge/build_style_response_subreview_clusters_from_split_subgrouping.py")
+BUILD_STYLE_RESPONSE_REVIEWED_CLUSTER_REGISTRY_RELPATH = Path("scripts/DedupMerge/build_style_response_reviewed_cluster_registry.py")
+BUILD_QA_PSYCHOEDUCATION_ADJUDICATION_QUEUE_RELPATH = Path("scripts/DedupMerge/build_qa_psychoeducation_adjudication_queue.py")
+RUN_QA_PSYCHOEDUCATION_QUEUE_ADJUDICATION_RELPATH = Path("scripts/DedupMerge/run_qa_psychoeducation_queue_adjudication.py")
+BUILD_QA_PSYCHOEDUCATION_REVIEW_CLUSTERS_RELPATH = Path("scripts/DedupMerge/build_qa_psychoeducation_review_clusters_from_queue_adjudication.py")
+RUN_QA_PSYCHOEDUCATION_SPLIT_SUBGROUPING_RELPATH = Path("scripts/DedupMerge/run_qa_psychoeducation_split_subgrouping.py")
+BUILD_QA_PSYCHOEDUCATION_SUBREVIEW_CLUSTERS_RELPATH = Path("scripts/DedupMerge/build_qa_psychoeducation_subreview_clusters_from_split_subgrouping.py")
+BUILD_QA_PSYCHOEDUCATION_REVIEWED_CLUSTER_REGISTRY_RELPATH = Path("scripts/DedupMerge/build_qa_psychoeducation_reviewed_cluster_registry.py")
+BUILD_PHASE5_ADJUDICATION_QUEUE_RELPATH = Path("scripts/DedupMerge/build_phase5_adjudication_queue.py")
+RUN_PHASE5_QUEUE_ADJUDICATION_RELPATH = Path("scripts/DedupMerge/run_phase5_queue_adjudication.py")
+BUILD_PHASE5_REVIEW_CLUSTERS_RELPATH = Path("scripts/DedupMerge/build_phase5_review_clusters_from_queue_adjudication.py")
+RUN_PHASE5_SPLIT_SUBGROUPING_RELPATH = Path("scripts/DedupMerge/run_phase5_split_subgrouping.py")
+BUILD_PHASE5_SUBREVIEW_CLUSTERS_RELPATH = Path("scripts/DedupMerge/build_phase5_subreview_clusters_from_split_subgrouping.py")
+BUILD_PHASE5_REVIEWED_CLUSTER_REGISTRY_RELPATH = Path("scripts/DedupMerge/build_phase5_reviewed_cluster_registry.py")
+BUILD_SOURCE_PROVENANCE_REGISTRY_RELPATH = Path("scripts/DedupMerge/build_source_provenance_registry.py")
+BUILD_METHOD_RUBRIC_REGISTRY_RELPATH = Path("scripts/DedupMerge/build_method_rubric_registry.py")
+BUILD_SYNTHETIC_CONSTRUCTION_REGISTRY_RELPATH = Path("scripts/DedupMerge/build_synthetic_construction_registry.py")
+BUILD_PHASE6_REVIEWED_KNOWLEDGE_RELEASE_RELPATH = Path("scripts/DedupMerge/build_phase6_reviewed_knowledge_release.py")
+
+RUN_EMBEDDING_CANDIDATE_PILOT_RELPATH = Path("scripts/DedupMerge/run_embedding_candidate_pilot.py")
+RUN_LLM_ADJUDICATION_PILOT_RELPATH = Path("scripts/DedupMerge/run_llm_adjudication_pilot.py")
+BUILD_REVIEW_CLUSTERS_FROM_ADJUDICATION_RELPATH = Path("scripts/DedupMerge/build_review_clusters_from_adjudication.py")
+
+RETRACTED_BUILD_MERGE_CANDIDATES_RELPATH = Path("scripts/DedupMerge/build_merge_candidates_from_review_clusters.py")
+RETRACTED_BUILD_RELEASE_GATING_RELPATH = Path("scripts/DedupMerge/build_release_gating_from_merge_candidates.py")
+RETRACTED_BUILD_FINAL_MERGED_UNITS_RELPATH = Path("scripts/DedupMerge/build_final_merged_units_from_gating.py")
+
+DEDUP_OUTPUT_ROOT = PROJECT_ROOT / "outputs" / "knowledge" / "dedup"
+DEDUP_INDEXES_DIR = DEDUP_OUTPUT_ROOT / "indexes"
+DEDUP_GRAPHS_DIR = DEDUP_OUTPUT_ROOT / "graphs"
+DEDUP_ADJUDICATION_QUEUES_DIR = DEDUP_OUTPUT_ROOT / "adjudication_queues"
+DEDUP_ADJUDICATIONS_DIR = DEDUP_OUTPUT_ROOT / "adjudications"
+DEDUP_CLUSTERS_DIR = DEDUP_OUTPUT_ROOT / "clusters"
+DEDUP_REGISTRIES_DIR = DEDUP_OUTPUT_ROOT / "registries"
+DEDUP_REPORTS_DIR = DEDUP_OUTPUT_ROOT / "reports"
+DEDUP_MANIFESTS_DIR = DEDUP_OUTPUT_ROOT / "manifests"
+DEDUP_PILOT_DIR = DEDUP_OUTPUT_ROOT / "pilot_20260705"
+PHASE6_RELEASE_DIR = PROJECT_ROOT / "outputs" / "knowledge" / "phase6_release"
+
+AUTHORITATIVE_DETERMINISTIC_BUILD_RELPATHS = (
+    BUILD_DATASET_RAW_INVENTORY_RELPATH,
+    BUILD_UNIT_TEXT_VIEWS_RELPATH,
+    BUILD_EXACT_DUPLICATE_INDEX_RELPATH,
+    BUILD_FULL_EXACT_DUPLICATE_CLUSTERS_RELPATH,
+    BUILD_FULL_CANDIDATE_COMPONENTS_RELPATH,
+    REFINE_OVERSIZED_CANDIDATE_COMPONENTS_RELPATH,
+    BUILD_STYLE_RESPONSE_BUCKET_INDEX_RELPATH,
+    REFINE_STYLE_RESPONSE_V2_RELPATH,
+    BUILD_SOURCE_PROVENANCE_REGISTRY_RELPATH,
+    BUILD_METHOD_RUBRIC_REGISTRY_RELPATH,
+    BUILD_SYNTHETIC_CONSTRUCTION_REGISTRY_RELPATH,
+    BUILD_PHASE6_REVIEWED_KNOWLEDGE_RELEASE_RELPATH,
+)
+
+AUTHORITATIVE_FULL_COVERAGE_LLM_RELPATHS = (
+    RUN_STYLE_BUCKET_CANDIDATE_GENERATION_RELPATH,
+    BUILD_STYLE_RESPONSE_ADJUDICATION_QUEUE_RELPATH,
+    RUN_STYLE_RESPONSE_QUEUE_ADJUDICATION_RELPATH,
+    BUILD_STYLE_RESPONSE_REVIEW_CLUSTERS_RELPATH,
+    RUN_STYLE_RESPONSE_SPLIT_SUBGROUPING_RELPATH,
+    BUILD_STYLE_RESPONSE_SUBREVIEW_CLUSTERS_RELPATH,
+    BUILD_STYLE_RESPONSE_REVIEWED_CLUSTER_REGISTRY_RELPATH,
+    BUILD_QA_PSYCHOEDUCATION_ADJUDICATION_QUEUE_RELPATH,
+    RUN_QA_PSYCHOEDUCATION_QUEUE_ADJUDICATION_RELPATH,
+    BUILD_QA_PSYCHOEDUCATION_REVIEW_CLUSTERS_RELPATH,
+    RUN_QA_PSYCHOEDUCATION_SPLIT_SUBGROUPING_RELPATH,
+    BUILD_QA_PSYCHOEDUCATION_SUBREVIEW_CLUSTERS_RELPATH,
+    BUILD_QA_PSYCHOEDUCATION_REVIEWED_CLUSTER_REGISTRY_RELPATH,
+    BUILD_PHASE5_ADJUDICATION_QUEUE_RELPATH,
+    RUN_PHASE5_QUEUE_ADJUDICATION_RELPATH,
+    BUILD_PHASE5_REVIEW_CLUSTERS_RELPATH,
+    RUN_PHASE5_SPLIT_SUBGROUPING_RELPATH,
+    BUILD_PHASE5_SUBREVIEW_CLUSTERS_RELPATH,
+    BUILD_PHASE5_REVIEWED_CLUSTER_REGISTRY_RELPATH,
+)
+
+DEDUP_MERGE_SHARED_SUPPORT_RELPATHS = (
+    DEDUP_MERGE_SURFACE_REGISTRY_RELPATH,
+)
+
+HISTORICAL_PILOT_RELPATHS = (
+    RUN_EMBEDDING_CANDIDATE_PILOT_RELPATH,
+    RUN_LLM_ADJUDICATION_PILOT_RELPATH,
+    BUILD_REVIEW_CLUSTERS_FROM_ADJUDICATION_RELPATH,
+)
+
+RETRACTED_TOMBSTONE_RELPATHS = (
+    RETRACTED_BUILD_MERGE_CANDIDATES_RELPATH,
+    RETRACTED_BUILD_RELEASE_GATING_RELPATH,
+    RETRACTED_BUILD_FINAL_MERGED_UNITS_RELPATH,
+)
+
+CURRENT_AUTHORITATIVE_CODE_SURFACE_RELPATHS = (
+    *AUTHORITATIVE_DETERMINISTIC_BUILD_RELPATHS,
+    *AUTHORITATIVE_FULL_COVERAGE_LLM_RELPATHS,
+    *DEDUP_MERGE_SHARED_SUPPORT_RELPATHS,
+)
+
+NON_AUTHORITATIVE_STRUCTURED_SURFACE_RELPATHS = (
+    *HISTORICAL_PILOT_RELPATHS,
+    *RETRACTED_TOMBSTONE_RELPATHS,
+)
+
+AUTHORITATIVE_DETERMINISTIC_BUILD = tuple(path.name for path in AUTHORITATIVE_DETERMINISTIC_BUILD_RELPATHS)
+AUTHORITATIVE_FULL_COVERAGE_LLM = tuple(path.name for path in AUTHORITATIVE_FULL_COVERAGE_LLM_RELPATHS)
+DEDUP_MERGE_SHARED_SUPPORT = tuple(path.name for path in DEDUP_MERGE_SHARED_SUPPORT_RELPATHS)
+HISTORICAL_PILOTS = tuple(path.name for path in HISTORICAL_PILOT_RELPATHS)
+RETRACTED_TOMBSTONES = tuple(path.name for path in RETRACTED_TOMBSTONE_RELPATHS)
+CURRENT_AUTHORITATIVE_CODE_SURFACE = tuple(path.name for path in CURRENT_AUTHORITATIVE_CODE_SURFACE_RELPATHS)
+NON_AUTHORITATIVE_STRUCTURED_SURFACE = tuple(path.name for path in NON_AUTHORITATIVE_STRUCTURED_SURFACE_RELPATHS)

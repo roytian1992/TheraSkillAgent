@@ -1,0 +1,13 @@
+{
+  "dialogue_id": "demo_esconv_001",
+  "dialogue": [
+    {
+      "speaker": "seeker",
+      "text": "I feel overwhelmed by my exams."
+    },
+    {
+      "speaker": "supporter",
+      "text": "That sounds exhausting. Which part feels hardest right now?"
+    }
+  ]
+}

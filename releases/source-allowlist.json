@@ -1,0 +1,16 @@
+{
+  "include": [
+    "README.md", "README.zh.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "MANIFEST.in", ".gitignore", ".env.example", "pyproject.toml", "setup.py", "theraskill-agent", "package.json", "package-lock.json", "tsconfig.node.json",
+    "theraskill_agent/**/*.py", "domains/theraskill/**/*.py", "plugins/theraskill/**/*.py", "plugins/theraskill/plugin.yaml", "plugins/theraskill/skills/**/*", "installers/theraskill/*.py",
+    "configs/**/*.yaml", "prompts/**/*.md", "extraction/**/*.py", "extraction/**/*.md", "extraction/configs/*.yaml", "extraction/examples/**/*", "extraction/pyproject.toml", "extraction/requirements.txt",
+    "scripts/Simulation/*.py", "scripts/AdvancedRetrieval/*.py", "scripts/AgentSkill/*.py", "scripts/_common/*.py", "scripts/TheraSkill/*", "scripts/release_source.py",
+    "views/theraskill/*/src/*", "views/theraskill/*/package.json", "views/theraskill/*/tsconfig*.json", "views/theraskill/*/vite*.ts", "views/theraskill/*/index.html",
+    "tests/test_standalone_kernel.py", "tests/test_theraskill*.py", "tests/smoke_theraskill_install.py", "tests/conftest.py",
+    "examples/**/*", "schemas/*.json", "releases/*.json", ".github/workflows/*.yml",
+    "docs/knowledge_and_indexes.zh.md", "docs/deployment.zh.md", "docs/source_release.zh.md"
+  ],
+  "exclude": [
+    "**/__pycache__/**", "**/*.pyc", "**/*.tsbuildinfo", "**/run_hermes_*", "**/run_h6_runtime_pilot.py",
+    "tests/test_theraskill_agent_regression.py", "scripts/TheraSkill/run_agent_regression.py", "scripts/TheraSkill/agent_regression_cases.json"
+  ]
+}
