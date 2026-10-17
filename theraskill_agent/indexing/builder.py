@@ -137,7 +137,7 @@ def _dense(output, config, counts, progress, cancel):
         raise ValueError("hybrid build requires pip install 'theraskill-agent[retrieval]'") from exc
     from domains.theraskill.theraskill_llm import OpenAICompatibleEmbeddingClient
     batch_size = max(1, min(int(config.get('batch_size', 32)), 512))
-    workers = max(1, min(int(config.get('workers', 1)), 16))
+    workers = max(1, min(int(config.get('workers', 1)), 32))
     max_batch_chars = config.get('max_batch_chars')
     if max_batch_chars is not None and int(max_batch_chars) <= 0:
         raise ValueError('max_batch_chars must be positive')

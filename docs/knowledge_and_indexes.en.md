@@ -118,7 +118,7 @@ field mapping, then copies its lexical files. It never reuses another model's
 vectors. The workbench offers the same choice for hybrid builds.
 
 The direct `embedding` configuration also accepts `batch_size` and `workers`
-(default 1, maximum 16). Requests can run concurrently, while vector batches and
+(default 1, maximum 32). Requests can run concurrently, while vector batches and
 the resume cursor commit in source order. Changing these throughput controls
 does not change model identity. A cancelled build can have uncommitted in-flight
 requests; resuming may repeat those requests, but cannot skip or duplicate IDs.
