@@ -8,7 +8,7 @@ from .text import redact_secrets
 
 
 def list_profiles() -> dict[str, list[dict[str, Any]]]:
-    from domains.theraskill.provider_config import load_provider_registry, public_provider_info
+    from domains.theraskill.provider_config import load_provider_registry, public_provider_info, resolve_profile
 
     registry = load_provider_registry()
     result: dict[str, list[dict[str, Any]]] = {"llm": [], "embedding": []}
@@ -17,7 +17,11 @@ def list_profiles() -> dict[str, list[dict[str, Any]]]:
         if kind not in result:
             continue
         info = public_provider_info(kind, name)
-        info["active"] = str((registry.get("active") or {}).get(kind) or "") == name
+        try:
+            active_name = str(resolve_profile(kind).get("profile") or "")
+        except Exception:
+            active_name = str((registry.get("active") or {}).get(kind) or "")
+        info["active"] = active_name == name
         # An ``api_key_env`` entry only names where a credential should come
         # from.  It must not be reported as configured until resolution found
         # a non-empty value in the process/runtime environment.

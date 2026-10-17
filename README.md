@@ -27,8 +27,9 @@ Open <http://127.0.0.1:5176/>. A built wheel includes the interfaces, so an
 installation from a wheel does not require Node. Configure shared model
 profiles in `configs/theraskill/providers.yaml`; copy
 `configs/theraskill/providers.local.example.yaml` to
-`configs/theraskill/providers.local.yaml` for local URLs and separate LLM and
-embedding credentials. The local file is ignored by Git and is loaded
+`configs/theraskill/providers.local.yaml` and fill the separate `llm` and
+`embedding` blocks with arbitrary model names, URLs and credentials. Enable
+the local blocks in `active`; the file is ignored by Git and loaded
 automatically.
 The local default endpoints are examples, not bundled model servers.
 

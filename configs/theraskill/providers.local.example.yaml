@@ -1,34 +1,31 @@
-# Copy this file to providers.local.yaml and fill the two credentials.
+# Copy this file to providers.local.yaml and fill the values below.
 # providers.local.yaml is ignored by Git and is loaded automatically.
-# Keep the LLM and embedding credentials independent.
-#
-# Uncomment active when you want these remote profiles to become defaults.
+# The model names, URLs and credentials are intentionally local settings.
+
+# Uncomment this block to select the two local blocks as active providers.
 # active:
-#   llm: deepseek_v4_pro
-#   embedding: text_embedding_3_large
+#   llm: local_llm
+#   embedding: local_embedding
 
-profiles:
-  deepseek_v4_pro:
-    kind: llm
-    provider: openai-compatible
-    name: deepseek-v4-pro
-    base_url: https://zgc.apihy.com/v1
-    api_key: ""
-    temperature: 0.0
-    max_output_tokens: 4096
-    timeout_seconds: 600
-    retry_attempts: 2
-    response_format_json: true
-    ssl_verify: true
+llm:
+  # Replace this with any model id served by your LLM endpoint.
+  model: deepseek-v4-pro
+  base_url: https://zgc.apihy.com/v1
+  api_key: ""
+  temperature: 0.0
+  max_output_tokens: 4096
+  timeout_seconds: 600
+  retry_attempts: 2
+  response_format_json: true
+  ssl_verify: true
 
-  text_embedding_3_large:
-    kind: embedding
-    provider: openai-compatible
-    name: text-embedding-3-large
-    base_url: https://zgc.apihy.com/v1
-    endpoint: https://zgc.apihy.com/v1/embeddings
-    api_key: ""
-    timeout_seconds: 120
-    retry_attempts: 2
-    batch_size: 32
-    ssl_verify: true
+embedding:
+  # Replace this with any embedding model id served by your embedding endpoint.
+  model: text-embedding-3-large
+  base_url: https://zgc.apihy.com/v1
+  endpoint: https://zgc.apihy.com/v1/embeddings
+  api_key: ""
+  timeout_seconds: 120
+  retry_attempts: 2
+  batch_size: 32
+  ssl_verify: true

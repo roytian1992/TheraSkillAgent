@@ -27,20 +27,21 @@ cp configs/theraskill/providers.local.example.yaml configs/theraskill/providers.
 chmod 600 configs/theraskill/providers.local.yaml
 ```
 
-编辑本地文件中的两个 `api_key`，并按需要取消 `active` 注释：
+编辑本地文件中的两个 `api_key`、模型名和 URL，并取消 `active` 注释让这两个本地块成为当前 provider：
 
 ```yaml
 active:
-  llm: deepseek_v4_pro
-  embedding: text_embedding_3_large
-profiles:
-  deepseek_v4_pro:
-    base_url: https://zgc.apihy.com/v1
-    api_key: "LLM 的密钥"
-  text_embedding_3_large:
-    base_url: https://zgc.apihy.com/v1
-    endpoint: https://zgc.apihy.com/v1/embeddings
-    api_key: "Embedding 的密钥"
+  llm: local_llm
+  embedding: local_embedding
+llm:
+  model: 你的LLM模型名
+  base_url: https://你的LLM服务/v1
+  api_key: "LLM 的密钥"
+embedding:
+  model: 你的Embedding模型名
+  base_url: https://你的Embedding服务/v1
+  endpoint: https://你的Embedding服务/v1/embeddings
+  api_key: "Embedding 的密钥"
 ```
 
 `api_key` 可以不同；如果两个服务共用一个密钥，也分别填写同一值。环境变量仍可作为旧部署的回退方式，但不再是必需项。

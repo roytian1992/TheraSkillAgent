@@ -77,7 +77,10 @@ def load_provider_registry(path: str | Path | None = None) -> dict[str, Any]:
             raise ProviderConfigError(f"local provider config must be a mapping: {local_path}")
         if "profiles" in local and not isinstance(local["profiles"], dict):
             raise ProviderConfigError(f"local provider profiles must be a mapping: {local_path}")
-        raw = _merge_mappings(raw, local)
+        local_active, local_override = _normalize_local_override(local)
+        raw = _merge_mappings(raw, local_override)
+        if local_active:
+            raw["_local_active_profiles"] = local_active
     raw["_path"] = str(registry_path)
     if local_path and local_path.is_file():
         raw["_local_path"] = str(local_path)
@@ -97,11 +100,88 @@ def _merge_mappings(base: Mapping[str, Any], override: Mapping[str, Any]) -> dic
     return merged
 
 
+def _normalize_inline_profile(kind: str, profile: Mapping[str, Any], profile_name: str) -> dict[str, Any]:
+    """Convert the convenient local ``model``/``url`` keys to profile fields."""
+    normalized = copy.deepcopy(dict(profile))
+    normalized.pop("profile", None)
+    normalized.setdefault("kind", kind)
+    if not normalized.get("name") and normalized.get("model"):
+        normalized["name"] = normalized.pop("model")
+    if not normalized.get("base_url") and normalized.get("url"):
+        normalized["base_url"] = normalized.pop("url")
+    normalized["profile"] = profile_name
+    return normalized
+
+
+def _normalize_local_override(local: Mapping[str, Any]) -> tuple[dict[str, str], dict[str, Any]]:
+    """Normalize direct local blocks while retaining legacy profile syntax."""
+    override = copy.deepcopy(dict(local))
+    active_values = override.get("active")
+    if active_values is not None and not isinstance(active_values, Mapping):
+        raise ProviderConfigError("local provider active must be a mapping")
+    local_active: dict[str, str] = {}
+    profiles = override.setdefault("profiles", {})
+
+    # The user-facing form is intentionally model-centric:
+    #
+    #   llm:
+    #     model: vendor-model-id
+    #     base_url: https://vendor.example/v1
+    #     api_key: ...
+    #   embedding: ...
+    #
+    # Turn these blocks into ordinary profiles so all existing callers keep
+    # the same resolution and redaction behavior.
+    for kind in ("llm", "embedding"):
+        inline = local.get(kind)
+        if isinstance(inline, Mapping):
+            profile_name = str(inline.get("profile") or f"local_{kind}").strip()
+            if not profile_name:
+                raise ProviderConfigError(f"local {kind} profile name is empty")
+            profiles[profile_name] = _merge_mappings(
+                profiles.get(profile_name) if isinstance(profiles.get(profile_name), Mapping) else {},
+                _normalize_inline_profile(kind, inline, profile_name),
+            )
+
+    if isinstance(active_values, Mapping):
+        for kind in ("llm", "embedding"):
+            value = active_values.get(kind)
+            if isinstance(value, Mapping):
+                profile_name = str(value.get("profile") or f"local_{kind}").strip()
+                profiles[profile_name] = _merge_mappings(
+                    profiles.get(profile_name) if isinstance(profiles.get(profile_name), Mapping) else {},
+                    _normalize_inline_profile(kind, value, profile_name),
+                )
+                local_active[kind] = profile_name
+            elif value is not None:
+                profile_name = str(value).strip()
+                if not profile_name:
+                    raise ProviderConfigError(f"local active {kind} profile is empty")
+                local_active[kind] = profile_name
+
+    # Do not leave direct blocks containing credentials in the merged registry;
+    # the normalized profiles above are the only source of truth.
+    override.pop("llm", None)
+    override.pop("embedding", None)
+    if local_active:
+        override["active"] = {
+            **(dict(active_values) if isinstance(active_values, Mapping) else {}),
+            **local_active,
+        }
+        for kind, value in list(override["active"].items()):
+            if isinstance(value, Mapping):
+                override["active"][kind] = local_active.get(kind, f"local_{kind}")
+    return local_active, override
+
+
 def _active_profile(kind: str, registry: Mapping[str, Any]) -> str:
     env_name = "THERASKILL_LLM_PROFILE" if kind == "llm" else "THERASKILL_EMBEDDING_PROFILE"
     env_value = os.environ.get(env_name, "").strip()
     if env_value:
         return env_value
+    local_active = registry.get("_local_active_profiles") or {}
+    if local_active.get(kind):
+        return str(local_active[kind]).strip()
     try:
         config_value = cfg_get(
             load_config_readonly(), "platforms", "theraskill", "providers",
@@ -121,6 +201,12 @@ def configured_profile(kind: str) -> str | None:
     env_value = os.environ.get(env_name, "").strip()
     if env_value:
         return env_value
+    try:
+        local_active = load_provider_registry().get("_local_active_profiles") or {}
+    except ProviderConfigError:
+        local_active = {}
+    if local_active.get(kind):
+        return str(local_active[kind]).strip()
     try:
         value = cfg_get(
             load_config_readonly(), "platforms", "theraskill", "providers",
