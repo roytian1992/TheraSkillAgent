@@ -1,9 +1,9 @@
 """TheraSkillAgent provider profiles for all domain model calls.
 
 The platform has two model classes (generation and embeddings), but both use
-the same provider profile contract.  A profile contains only non-secret
-connection metadata; credentials are resolved from the process environment or
-the active runtime environment file at call time.
+the same provider profile contract. A profile contains shareable connection
+metadata; project-local credentials are loaded from ``providers.local.yaml``
+first, with process environment values kept as a compatibility fallback.
 """
 
 from __future__ import annotations
@@ -40,7 +40,12 @@ def _active_env() -> dict[str, str]:
 
 
 def load_provider_registry(path: str | Path | None = None) -> dict[str, Any]:
-    """Load the profile registry and validate its top-level shape."""
+    """Load the profile registry and its optional local override.
+
+    A sibling ``providers.local.yaml`` is merged over the shareable registry
+    whenever the selected file is named ``providers.yaml``. This gives each
+    LLM and embedding profile its own URL, model and ``api_key``.
+    """
     configured = path
     if configured is None:
         try:
@@ -56,11 +61,40 @@ def load_provider_registry(path: str | Path | None = None) -> dict[str, Any]:
         registry_path = resource_path(registry_path)
     if not registry_path.exists():
         raise ProviderConfigError(f"provider registry does not exist: {registry_path}")
-    raw = yaml.safe_load(registry_path.read_text(encoding="utf-8")) or {}
+    try:
+        raw = yaml.safe_load(registry_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise ProviderConfigError(f"invalid provider registry YAML: {registry_path}: {exc}") from exc
     if not isinstance(raw, dict) or not isinstance(raw.get("profiles"), dict):
         raise ProviderConfigError(f"provider registry has no profiles mapping: {registry_path}")
+    local_path = registry_path.with_name("providers.local.yaml") if registry_path.name == "providers.yaml" else None
+    if local_path and local_path.is_file():
+        try:
+            local = yaml.safe_load(local_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as exc:
+            raise ProviderConfigError(f"invalid local provider YAML: {local_path}: {exc}") from exc
+        if not isinstance(local, dict):
+            raise ProviderConfigError(f"local provider config must be a mapping: {local_path}")
+        if "profiles" in local and not isinstance(local["profiles"], dict):
+            raise ProviderConfigError(f"local provider profiles must be a mapping: {local_path}")
+        raw = _merge_mappings(raw, local)
     raw["_path"] = str(registry_path)
+    if local_path and local_path.is_file():
+        raw["_local_path"] = str(local_path)
     return raw
+
+
+def _merge_mappings(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    """Recursively merge local settings while preserving profile defaults."""
+    merged = copy.deepcopy(dict(base))
+    for key, value in override.items():
+        if key == "_path":
+            continue
+        if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
+            merged[key] = _merge_mappings(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
 
 
 def _active_profile(kind: str, registry: Mapping[str, Any]) -> str:
@@ -98,6 +132,10 @@ def configured_profile(kind: str) -> str | None:
 
 
 def _resolve_secret(config: dict[str, Any]) -> None:
+    # A project-local api_key is preferred. Environment values remain a
+    # backwards-compatible fallback and fill only an empty local placeholder.
+    if str(config.get("api_key") or "").strip():
+        return
     env_name = str(config.get("api_key_env") or "").strip()
     if env_name:
         value = _active_env().get(env_name)

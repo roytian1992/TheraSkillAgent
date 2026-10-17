@@ -36,6 +36,48 @@ def test_provider_check_does_not_treat_secret_name_as_credential(monkeypatch) ->
     assert result["credential_configured"] is False
 
 
+def test_local_provider_file_overrides_llm_and_embedding_independently(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("THERASKILL_AGENT_ROOT", str(tmp_path))
+    registry_dir = tmp_path / "configs" / "theraskill"
+    registry_dir.mkdir(parents=True)
+    (registry_dir / "providers.yaml").write_text(
+        """
+active:
+  llm: llm
+  embedding: embedding
+profiles:
+  llm:
+    kind: llm
+    name: base-llm
+    base_url: http://base-llm/v1
+  embedding:
+    kind: embedding
+    name: base-embedding
+    base_url: http://base-embedding/v1
+""",
+        encoding="utf-8",
+    )
+    (registry_dir / "providers.local.yaml").write_text(
+        """
+profiles:
+  llm:
+    base_url: https://llm.example/v1
+    api_key: llm-secret
+  embedding:
+    base_url: https://embedding.example/v1
+    endpoint: https://embedding.example/v1/embeddings
+    api_key: embedding-secret
+""",
+        encoding="utf-8",
+    )
+    registry = load_provider_registry()
+    assert registry["_local_path"].endswith("providers.local.yaml")
+    llm = resolve_model_config({"profile": "llm"})
+    embedding = resolve_embedding_config({"profile": "embedding"})
+    assert (llm["base_url"], llm["api_key"]) == ("https://llm.example/v1", "llm-secret")
+    assert (embedding["endpoint"], embedding["api_key"]) == ("https://embedding.example/v1/embeddings", "embedding-secret")
+
+
 def test_active_profiles_override_legacy_domain_yaml(monkeypatch) -> None:
     monkeypatch.setenv("THERASKILL_LLM_PROFILE", "deepseek_v4_pro")
     monkeypatch.setenv("THERASKILL_EMBEDDING_PROFILE", "text_embedding_3_large")

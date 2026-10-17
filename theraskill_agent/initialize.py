@@ -13,6 +13,7 @@ def initialize_project(destination: str | Path) -> dict:
         "examples/knowledge/demo.jsonl": "examples/knowledge/demo.jsonl",
         "config.yaml": "configs/project.example.yaml",
         "configs/theraskill/providers.yaml": "configs/theraskill/providers.yaml",
+        "configs/theraskill/providers.local.yaml": "configs/theraskill/providers.local.example.yaml",
         "configs/theraskill/retrieval.yaml": "configs/theraskill/retrieval.yaml",
     }
     for target, source in templates.items():
@@ -26,7 +27,8 @@ def initialize_project(destination: str | Path) -> dict:
     example = root / ".env.example"
     if not example.exists():
         example.write_text(
-            "# Optional credentials for the profiles in configs/theraskill/providers.yaml\n"
+            "# Optional environment fallback; local provider credentials belong in\n"
+            "# configs/theraskill/providers.local.yaml\n"
             "THERASKILL_LOCAL_API_KEY=\nTHERASKILL_EMBEDDING_API_KEY=\nTHERASKILL_REMOTE_API_KEY=\n",
             encoding="utf-8",
         )

@@ -1,4 +1,5 @@
-# TheraSkillAgent model profiles; credentials belong in project .env or process environment.
+# TheraSkillAgent shareable model profiles. Put machine-specific URLs and
+# credentials in the ignored providers.local.yaml sibling when needed.
 active:
   llm: active_llm
   embedding: local_bge

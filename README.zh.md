@@ -18,7 +18,7 @@ theraskill-agent project init .
 theraskill-agent ui --start-services
 ```
 
-浏览器打开 `http://127.0.0.1:5176/`。模型名、地址和配置名在 `configs/theraskill/providers.yaml`；凭据只写入 `.env` 或环境变量。默认的本地地址需要你自行启动模型服务。
+浏览器打开 `http://127.0.0.1:5176/`。共享模型模板在 `configs/theraskill/providers.yaml`，本机可以复制 `configs/theraskill/providers.local.example.yaml` 为 `configs/theraskill/providers.local.yaml`，分别填写 LLM 和 embedding 的 URL、模型名与 `api_key`。本地文件会自动加载且被 Git 忽略；默认的本地地址需要你自行启动模型服务。
 
 ## 先用小样例构建索引
 

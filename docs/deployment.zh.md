@@ -18,7 +18,32 @@ theraskill-agent run extraction.plan --goal 'Extract response strategies grounde
 
 ## 模型配置
 
-修改工作目录 `configs/theraskill/providers.yaml`。每个 profile 指定 kind、provider、name、base_url、api_key_env；embedding 可以指定 endpoint、dimensions、revision 和 batch_size。LLM 和 embedding 分别选择，互不绑定。凭据写进工作目录 `.env`（参考 `.env.example`），或环境变量。
+共享的 provider 模板在 `configs/theraskill/providers.yaml`，本机凭据和覆盖项放在自动读取的 `configs/theraskill/providers.local.yaml`。这个本地文件被 Git 忽略，也不会进入 wheel 或源码发布物。LLM 和 embedding 使用独立 profile，因此可以分别填写 URL、模型名和 API key。
+
+首次配置可复制模板：
+
+```bash
+cp configs/theraskill/providers.local.example.yaml configs/theraskill/providers.local.yaml
+chmod 600 configs/theraskill/providers.local.yaml
+```
+
+编辑本地文件中的两个 `api_key`，并按需要取消 `active` 注释：
+
+```yaml
+active:
+  llm: deepseek_v4_pro
+  embedding: text_embedding_3_large
+profiles:
+  deepseek_v4_pro:
+    base_url: https://zgc.apihy.com/v1
+    api_key: "LLM 的密钥"
+  text_embedding_3_large:
+    base_url: https://zgc.apihy.com/v1
+    endpoint: https://zgc.apihy.com/v1/embeddings
+    api_key: "Embedding 的密钥"
+```
+
+`api_key` 可以不同；如果两个服务共用一个密钥，也分别填写同一值。环境变量仍可作为旧部署的回退方式，但不再是必需项。
 
 ```bash
 export THERASKILL_LLM_PROFILE=local_qwen

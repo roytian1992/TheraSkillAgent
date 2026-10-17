@@ -20,6 +20,7 @@ logs/**
 # Local state and credentials never belong in source control.
 .env.*
 !.env.example
+configs/theraskill/providers.local.yaml
 state/
 sessions/
 memories/

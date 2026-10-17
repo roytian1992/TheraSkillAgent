@@ -28,6 +28,8 @@ class BuildBusinessAssets(build_py):
             for path in sorted(source.glob(pattern)):
                 if path.is_symlink() or not path.is_file():
                     continue
+                if path.relative_to(source).as_posix() == "configs/theraskill/providers.local.yaml":
+                    continue
                 if path.name.startswith("run_hermes_") or path.name == "run_h6_runtime_pilot.py":
                     continue
                 target = destination / path.relative_to(source)

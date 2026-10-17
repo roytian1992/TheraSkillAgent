@@ -23,7 +23,7 @@ def inventory(root=ROOT):
     results = []
     for path in sorted(selected):
         relative = path.relative_to(root).as_posix()
-        if any(part in EXCLUDED_PARTS for part in path.relative_to(root).parts) or any(fnmatch.fnmatch(relative, pat) for pat in config['exclude']):
+        if any(part in EXCLUDED_PARTS for part in path.relative_to(root).parts) or relative == 'configs/theraskill/providers.local.yaml' or any(fnmatch.fnmatch(relative, pat) for pat in config['exclude']):
             continue
         if path.is_symlink():
             raise ValueError(f'symlink not permitted in source inventory: {relative}')
