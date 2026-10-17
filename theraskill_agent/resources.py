@@ -48,12 +48,12 @@ def list_resources():
     return result
 
 
-def activate_index(index, *, knowledge=None):
+def activate_index(index, *, knowledge=None, scratch_root=None):
     root = data_root().resolve()
     path = index_path(index).resolve()
     if not path.is_relative_to(root / 'indexes'):
         raise ValueError('install or build the index under the project indexes directory before activation')
-    manifest = verify_index(path)
+    manifest = verify_index(path, scratch_root=scratch_root)
     if knowledge:
         source = knowledge_path(knowledge)
         if digest(source) != manifest['input']['knowledge_sha256']:

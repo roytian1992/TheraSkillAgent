@@ -20,6 +20,7 @@ def add_commands(sub):
             command.add_argument('--resume', action='store_true')
             command.add_argument('--reuse-lexical', help='reuse verified lexical artifacts from a completed index with identical knowledge and projection')
     verify = commands.add_parser('verify'); verify.add_argument('--index', required=True)
+    verify.add_argument('--scratch-directory', dest='scratch_root', help='optional fast temporary storage for full SQLite verification')
     search = commands.add_parser('search'); search.add_argument('--index', required=True); search.add_argument('--query', required=True)
     search.add_argument('--limit', type=int, default=8)
     search.add_argument('--skill', choices=SUPPORTED_RETRIEVAL_SKILLS)
@@ -36,6 +37,7 @@ def add_commands(sub):
     sources.add_argument('--archive'); sources.add_argument('--catalog')
     install.add_argument('--package'); install.add_argument('--sha256')
     activate = commands.add_parser('activate'); activate.add_argument('--index', required=True); activate.add_argument('--knowledge')
+    activate.add_argument('--scratch-directory', dest='scratch_root', help='optional fast temporary storage for full SQLite verification')
     pack = commands.add_parser('pack'); pack.add_argument('--source', required=True); pack.add_argument('--output', required=True)
     pack.add_argument('--id', required=True); pack.add_argument('--kind', choices=['knowledge', 'index'], required=True)
     pack.add_argument('--license'); pack.add_argument('--part-bytes', type=int)
@@ -58,7 +60,7 @@ def run_command(args):
             lexical = resources.index_path(args.reuse_lexical) if args.reuse_lexical else None
             return build_index(source, output, resume=args.resume, lexical_index=lexical, **options)
         if action == 'verify':
-            return verify_index(resources.index_path(args.index))
+            return verify_index(resources.index_path(args.index), scratch_root=args.scratch_root)
         filters = json.loads(args.filters) if args.filters else None
         if action == 'understand':
             return understand_query(args.query, skill=args.skill, filters=filters)
@@ -67,7 +69,7 @@ def run_command(args):
     if action == 'list':
         return resources.list_resources()
     if action == 'activate':
-        return resources.activate_index(args.index, knowledge=args.knowledge)
+        return resources.activate_index(args.index, knowledge=args.knowledge, scratch_root=args.scratch_root)
     if action == 'rollback':
         return resources.rollback_index()
     if action == 'pack':

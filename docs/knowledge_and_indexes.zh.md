@@ -95,6 +95,10 @@ theraskill-agent index search --index demo-v1 \
 
 服务支持二进制 embedding 响应时，可在 provider 文件设置 `embedding.encoding_format: base64`，减少传输与 JSON 解析开销。仍支持浮点数组响应；传输编码不改变模型、维度或索引身份。
 
+可选 `embedding.max_batch_chars` 限制每个请求的文本总字符数，配合最高 512 条的 `batch_size`，避免一次聚合过多长记录。每条知识保持完整；单条超过预算时仍完整发送。该预算只控制分组，不是精确 token 计数，也不会截断知识。
+
+网络盘上的完整校验可使用快速临时存储：`index verify` 和 `knowledge activate` 均支持 `--scratch-directory /path/to/fast-storage`。每个 SQLite 副本先核对清单 SHA-256，再执行完整性和数量检查，随后移除临时副本；空间至少容纳最大的 SQLite 文件。正式索引仍保存在安装目录中。
+
 ```bash
 theraskill-agent index build --knowledge /path/to/knowledge.jsonl \
   --id knowledge-hybrid-v2 --mode hybrid --reuse-lexical knowledge-lexical-v2

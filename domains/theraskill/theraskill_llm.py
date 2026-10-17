@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import yaml
 from json_repair import repair_json
@@ -37,6 +37,10 @@ DEFAULT_JSON_REPAIR_MAX_CHARS = 100000
 
 class JsonRepairTimeoutError(TimeoutError):
     """Raised when local json_repair gets stuck on pathological model output."""
+
+
+class ModelOutputError(RuntimeError):
+    """The provider returned no complete user-visible model output."""
 
 
 @contextmanager
@@ -497,7 +501,22 @@ class OpenAICompatibleClient:
             try:
                 with self.opener.open(request, timeout=self.timeout_seconds) as response:
                     response_data = json.loads(response.read().decode("utf-8"))
-                return response_data["choices"][0]["message"]["content"]
+                choice = response_data["choices"][0]
+                if choice.get('finish_reason') == 'length':
+                    raise ModelOutputError(
+                        'model output reached its token limit; increase max_output_tokens '
+                        'or adjust the provider thinking/reasoning settings'
+                    )
+                content = choice['message'].get('content')
+                if not isinstance(content, str) or not content.strip():
+                    raise ModelOutputError(
+                        f"model returned no visible text (finish_reason={choice.get('finish_reason')!r})"
+                    )
+                return content
+            except ModelOutputError:
+                # A completed HTTP request with truncated output is not a
+                # transport failure. Repeating it unchanged wastes the budget.
+                raise
             except urllib.error.HTTPError as exc:
                 body = exc.read().decode("utf-8", errors="replace")
                 last_error = f"HTTP {exc.code}: {body[:1000]}"
@@ -616,6 +635,7 @@ def chat_json_with_repair(
     max_prompt_tokens: Optional[int] = None,
     extra_user_instruction: Optional[str] = None,
     force_json_first: bool = False,
+    validate: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Dict[str, Any]:
     last_error: Optional[str] = None
     for attempt in range(parse_retries + 1):
@@ -641,7 +661,10 @@ def chat_json_with_repair(
             extra_user_instruction=combined_instruction,
         )
         try:
-            return parse_json_object(text, allow_repair=True)
+            result = parse_json_object(text, allow_repair=True)
+            if validate is not None:
+                validate(result)
+            return result
         except Exception as exc:  # noqa: BLE001
             last_error = f"{type(exc).__name__}: {exc}"
             if attempt < parse_retries:

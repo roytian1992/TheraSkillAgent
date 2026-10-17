@@ -374,6 +374,11 @@ class LLMSupportEngine:
                 f"support response prompt exceeds runtime budget: {audit['estimated_prompt_tokens']}"
             )
         started = time.monotonic()
+        def validate_response(value: dict[str, Any]) -> None:
+            text = value.get('response_text')
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError('support response requires nonempty response_text')
+
         result = chat_json_with_repair(
             self.client,
             self.response_prompt,
@@ -381,6 +386,7 @@ class LLMSupportEngine:
             parse_retries=1,
             max_prompt_tokens=self.max_runtime_prompt_tokens,
             force_json_first=True,
+            validate=validate_response,
         )
         response_ms = int((time.monotonic() - started) * 1000)
         text = str(result.get("response_text") or "").strip()
@@ -471,7 +477,7 @@ class LLMSupportEngine:
                 "channel_counts": bundle.get("channel_counts") or {},
             },
             model_config_id=self.model_name,
-            prompt_release_id="support_routing_response_v1",
+            prompt_release_id="support_routing_response_v2",
             conversation_summary=summary,
             latency_ms={
                 "routing": route_ms,

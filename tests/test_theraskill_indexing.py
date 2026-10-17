@@ -142,6 +142,27 @@ def test_manifest_corruption_detected(workspace):
     with pytest.raises(ValueError, match='integrity'): verify_index(output)
 
 
+@pytest.mark.parametrize('corrupt_copy', [False, True])
+def test_fast_scratch_verification_checks_copy_and_cleans_it(workspace, monkeypatch, corrupt_copy):
+    output = workspace / 'index'
+    built = build_index(DEMO, output)
+    scratch = workspace / 'fast-storage'
+    if corrupt_copy:
+        original_copy = shutil.copyfile
+        def damaged_copy(source, destination, *args, **kwargs):
+            result = original_copy(source, destination, *args, **kwargs)
+            with Path(destination).open('ab') as handle:
+                handle.write(b'corrupt')
+            return result
+        monkeypatch.setattr(shutil, 'copyfile', damaged_copy)
+        with pytest.raises(ValueError, match='copy integrity'):
+            verify_index(output, scratch_root=scratch)
+    else:
+        assert verify_index(output, scratch_root=scratch) == built
+    assert list(scratch.iterdir()) == []
+    assert verify_index(output) == built
+
+
 def test_base64_embedding_transport_preserves_model_identity(workspace, embedding_server):
     pytest.importorskip('faiss')
     from domains.theraskill.theraskill_llm import OpenAICompatibleEmbeddingClient
@@ -155,6 +176,28 @@ def test_base64_embedding_transport_preserves_model_identity(workspace, embeddin
     assert search_index(output, 'uncertainty')
     with pytest.raises(ValueError, match='encoding_format'):
         OpenAICompatibleEmbeddingClient(resolve_embedding_config({'encoding_format': 'invalid'}))
+
+
+def test_embedding_character_budget_groups_whole_records_and_resumes(workspace, embedding_server):
+    pytest.importorskip('faiss')
+    from theraskill_agent.indexing.knowledge import rows
+    expected = [row['retrieval_text'] for row in rows(DEMO)
+                if row['retrieval_eligible'] and row['embedding_eligible']]
+    stopped = threading.Event()
+    output = workspace / 'bounded-batches'
+    def progress(event):
+        if event['stage'] == 'embedding':
+            stopped.set()
+    with pytest.raises(BuildCancelled):
+        build_index(DEMO, output, mode='hybrid', embedding_config={'batch_size': 512, 'max_batch_chars': 200},
+                    progress=progress, cancel=stopped.is_set)
+    built = build_index(DEMO, output, mode='hybrid', resume=True,
+                        embedding_config={'batch_size': 512, 'max_batch_chars': 200})
+    batches = [call['input'] for call in embedding_server]
+    assert [text for batch in batches for text in batch] == expected
+    assert len(batches) > 1
+    assert all(sum(map(len, batch)) <= 200 or len(batch) == 1 for batch in batches)
+    assert built['counts']['vectors'] == len(expected)
 
 
 def test_reuse_verified_lexical_and_concurrent_resume(workspace, embedding_server, monkeypatch):

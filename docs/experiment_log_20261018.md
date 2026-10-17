@@ -89,3 +89,8 @@ python scripts/AdvancedRetrieval/evaluate_managed_retrieval.py \
 14. 持久化校验的 SQLite 默认 2 MiB 缓存造成大量随机页读取。改为每次校验连接最多使用 256 MiB，保留 SHA-256、SQLite quick_check 和计数检查；安全停止只读校验后，由 `publish_lexical.py` 对原持久化副本重新完整校验再发布。保留重启前状态 `lexical-before-cache-restart.json`，未重建或丢弃已写入的数据。
 15. 主知识家族召回后的 tmpfs 全量词法检查为 26/28，空检查 2/2，无错误、无范围越界；中位耗时 1.0926 秒、最大 8.1694 秒，见 `lexical-tmpfs-evaluation-v2/summary.json`。两条未命中保留为失败案例。继续修正跨语言概念扩展：英文概念短语同时分解为词元，避免要求方法记录必须逐字包含翻译短语。相应检查仍为 39 项通过。
 16. 为减少网络盘的重复等待，混合构建从已经完整验证的不可变 tmpfs 词法副本复用文件；构建器再次验证后复制至独立持久化输出，再生成真实向量。最终运行不依赖 tmpfs，向量模型与知识内容不变。
+17. 持久化词法副本完整校验通过并发布，计数与输入资格一致，见 `lexical-fast-run.json`。持久化初轮评估在稀少方法家族召回时过慢，保留 8 条已完成结果并标记中断。直接按行号逐条执行 FTS/BM25 仍可能反复计算全局词频，改为在相同硬过滤下读出小家族，在临时内存 FTS 中计算该家族的词频和排序；不截断记录，不任意填充不匹配知识。新版本另存评估目录。
+18. 实际支持 API 初测失败，后台记录为 `support response model returned empty response_text`，见 `support-before-activation/job-error.json`。同一输入的完整引擎复查成功，真实路由、检索、回复耗时分别 24.707、153.490、10.894 秒；见 `support-response-diagnostic/result.json`。原失败未在复查中复现，不能推断一定由输出预算导致。增加非空回复 schema 校验与一次有限重生成，并明确拒绝截断/空内容响应；不使用模板或规则代替模型回复。
+19. 当前服务确实接受 `thinking: {type: disabled}`，有限兼容探针耗时 2.362 秒、reasoning_tokens 为 0，见 `thinking-option-check/result.json`；这不是业务端到端评估，也没有据此更改本地 LLM 默认推理设置。
+20. 真实 embedding 批量探针（与 16 并发全量构建同时运行）：32/128/512 条各完成一次，耗时 2.986/4.361/7.241 秒，均返回 base64、3072 维，见 `embedding-batch-throughput/`。仅为诊断样本。全量构建调整为最多 512 条、最多 200,000 字符组合、16 并发，完整保留每条文本和已提交检查点；吞吐参数不改变模型指纹。发布 FAISS 时按来源顺序读向量，并为附加 checkpoint 数据库设置独立缓存，减少随机读取。
+21. 新增可选快速 scratch 校验，持久化文件和临时 SQLite 副本均核对 SHA-256，再执行完整性与计数检查，未省略检查。新增副本损坏、临时清理、可变批量恢复、空/截断模型输出和 schema 重生成的检查。当前聚焦回归 58 项通过、3 条既有依赖警告，见 `rollout-hardening-tests-v2.log`。

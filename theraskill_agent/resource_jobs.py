@@ -64,7 +64,7 @@ def run_operation(operation, parameters, *, progress=None, cancel=None):
         lexical = resources.index_path(p['reuse_lexical']) if p.get('reuse_lexical') else None
         return build_index(source, output, resume=bool(p.get('resume')), lexical_index=lexical, progress=progress, cancel=cancel, **options)
     if operation == 'verify':
-        return verify_index(resources.index_path(p['index']))
+        return verify_index(resources.index_path(p['index']), scratch_root=p.get('scratch_root'))
     if operation == 'search':
         return retrieve_index(
             resources.index_path(p['index']),
@@ -74,7 +74,7 @@ def run_operation(operation, parameters, *, progress=None, cancel=None):
             filters=p.get('filters'),
         )
     if operation == 'activate':
-        return resources.activate_index(p['index'], knowledge=p.get('knowledge'))
+        return resources.activate_index(p['index'], knowledge=p.get('knowledge'), scratch_root=p.get('scratch_root'))
     if operation == 'rollback':
         return resources.rollback_index()
     if operation == 'install':

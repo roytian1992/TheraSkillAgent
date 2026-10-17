@@ -213,8 +213,20 @@ theraskill-agent knowledge activate --index demo-v1 --knowledge demo
 theraskill-agent knowledge rollback
 ```
 
-See [knowledge and indexes](knowledge_and_indexes.zh.md) for the JSONL contract,
+See [knowledge and indexes](knowledge_and_indexes.en.md) for the JSONL contract,
 field mappings, eligibility rules, manifests, and package checks.
+
+## Model output troubleshooting
+
+A token limit may include reasoning as well as visible output. A response with
+`finish_reason: length` now fails explicitly instead of accepting a partial
+reply. Increase `llm.max_output_tokens`, or configure the provider's supported
+`llm.reasoning_effort` / `llm.thinking` options in the same direct provider block.
+For example, DeepSeek documents `thinking: {type: disabled}` and reasoning effort
+levels; these are optional settings, and defaults are not changed by the app.
+See [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/).
+Support generation also validates a nonempty `response_text` and retries an
+invalid JSON schema once. Neither recovery path substitutes a canned response.
 
 ## Data and upgrade policy
 

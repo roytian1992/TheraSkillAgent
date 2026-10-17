@@ -18,7 +18,12 @@ Universal boundaries:
 - For review tasks, distinguish observed dialogue, generated rationale, and construction notes.
 - For synthetic dialogue, clearly label generated content as synthetic and separate rationale from dialogue.
 
-Return one JSON object:
+Retrieval and skill selection have already been performed upstream. Skill guidance
+and retrieved examples do not change this response stage's output schema. Do not
+return tool requests or another JSON envelope in place of the reply.
+
+Return one JSON object with all three fields below. `response_text` must be a
+nonempty string containing the complete user-visible reply:
 {
   "response_text": "complete user-visible response",
   "presentation_mode": "conversation|cognitive_reframe|rebt_abc|risk_support|response_review|synthetic_dialogue",

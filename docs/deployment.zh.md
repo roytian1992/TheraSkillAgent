@@ -54,6 +54,8 @@ theraskill-agent provider check --kind embedding
 
 加 `--live` 会发起一次真实请求。默认配置只提供本地服务地址示例，端点本身需另外准备。更换生成 LLM 不需重建已有索引；更换 embedding 应使用对应索引或重建。
 
+输出预算可能同时包含推理和可见回复。收到 `finish_reason: length` 会明确失败，避免接受不完整回复；可增大 `llm.max_output_tokens`，或在原来的 `llm` 配置块设置服务支持的 `reasoning_effort` / `thinking`。例如 DeepSeek 支持 `thinking: {type: disabled}` 和推理强度设置，参见[官方说明](https://api-docs.deepseek.com/guides/thinking_mode/)。这些选项均可选，应用不会自动改变模型默认值。支持助手会额外验证非空 `response_text`，格式有效但字段缺失时最多重新生成一次。
+
 ## 启动
 
 ```bash

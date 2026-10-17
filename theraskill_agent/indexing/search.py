@@ -70,6 +70,7 @@ def rank_candidates(hits, understanding):
 def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit=80):
     """Filter before recall; use a token index for Chinese when available."""
     with closing(sqlite3.connect(f'{Path(db_path).resolve().as_uri()}?mode=ro', uri=True)) as db:
+        db.execute('PRAGMA cache_size=-65536')
         db.row_factory = sqlite3.Row
         clauses, params = compile_scope(db, understanding)
         where = ' AND '.join(clauses)
@@ -78,6 +79,43 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
         channels = []
         preferred = (understanding.get('route') or {}).get('preferred_families') or []
         primary = preferred[0] if preferred else None
+        primary_pool = None
+        def recall_primary(match, *, cjk=False):
+            nonlocal primary_pool
+            if not primary:
+                return []
+            family_count = db.execute('SELECT count(*) FROM retrieval_meta WHERE dedup_family=?', (primary,)).fetchone()[0]
+            table = 'retrieval_cjk_fts' if cjk else 'retrieval_fts'
+            alias = 'c' if cjk else 'f'
+            # Small families need family-local term statistics. Repeated MATCH
+            # probes for individual rowids can recompute global BM25 statistics
+            # for every row. Materialize the filtered family in a temporary
+            # in-memory FTS index instead, retaining complete text and metadata.
+            if family_count <= 50000 and 'retrieval_cjk_fts' in tables:
+                if primary_pool is None:
+                    from ..query_understanding import cjk_index_terms
+                    primary_rows = db.execute(f'''SELECT m.*,f.retrieval_text FROM retrieval_meta m
+                        CROSS JOIN retrieval_fts f ON f.rowid=m.rowid AND f.retrieval_id=m.retrieval_id
+                        WHERE {where} AND m.dedup_family=?''', (*params, primary)).fetchall()
+                    primary_pool = {row['retrieval_id']: dict(row) for row in primary_rows}
+                    db.execute('PRAGMA temp_store=MEMORY')
+                    db.execute('CREATE VIRTUAL TABLE temp.primary_evidence_fts USING fts5(retrieval_id UNINDEXED,retrieval_text,retrieval_terms)')
+                    db.executemany('INSERT INTO primary_evidence_fts VALUES (?,?,?)', [
+                        (row['retrieval_id'], row['retrieval_text'], ' '.join(cjk_index_terms(row['retrieval_text'])))
+                        for row in primary_rows
+                    ])
+                column = 'retrieval_terms' if cjk else 'retrieval_text'
+                matches = db.execute('''SELECT retrieval_id,bm25(primary_evidence_fts) AS score
+                    FROM primary_evidence_fts WHERE primary_evidence_fts MATCH ? ORDER BY rank LIMIT ?''',
+                    (f'{column} : ({match})', min(limit, 8))).fetchall()
+                return [{**primary_pool[row['retrieval_id']], 'score': row['score']} for row in matches]
+            joins = f'{table} {alias} JOIN retrieval_meta m USING(retrieval_id)'
+            order = f'{alias}.rank'
+            if cjk:
+                joins += ' CROSS JOIN retrieval_fts f ON f.rowid=c.rowid AND f.retrieval_id=c.retrieval_id'
+            return db.execute(f'''SELECT m.*,f.retrieval_text,bm25({table}) AS score
+                FROM {joins} WHERE {table} MATCH ? AND {where} AND m.dedup_family=?
+                ORDER BY {order} LIMIT ?''', (match, *params, primary, min(limit, 8))).fetchall()
         if terms:
             rows = db.execute(f'''SELECT m.*,f.retrieval_text,bm25(retrieval_fts) AS score
                 FROM retrieval_fts f JOIN retrieval_meta m USING(retrieval_id)
@@ -87,11 +125,7 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
             if primary and not any(row['dedup_family'] == primary for row in rows):
                 # Scope inside recall: otherwise a large style corpus can fill
                 # every candidate slot before the much smaller rubric is seen.
-                primary_rows = db.execute(f'''SELECT m.*,f.retrieval_text,bm25(retrieval_fts) AS score
-                    FROM retrieval_fts f JOIN retrieval_meta m USING(retrieval_id)
-                    WHERE retrieval_fts MATCH ? AND {where} AND m.dedup_family=?
-                    ORDER BY f.rank LIMIT ?''',
-                    (_match(terms[:80]), *params, primary, min(limit, 8))).fetchall()
+                primary_rows = recall_primary(_match(terms[:80]))
                 channels.append(('primary_bm25', primary_rows))
         cjk = understanding.get('cjk_terms') or []
         indexed_cjk = [term for term in cjk if len(term) in (2, 3)]
@@ -106,12 +140,7 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
                 (_match(indexed_cjk), *params, limit)).fetchall()
             channels.append(('cjk_bm25', rows))
             if primary and not any(row['dedup_family'] == primary for row in rows):
-                primary_rows = db.execute(f'''SELECT m.*,f.retrieval_text,bm25(retrieval_cjk_fts) AS score
-                    FROM retrieval_cjk_fts c JOIN retrieval_meta m USING(retrieval_id)
-                    JOIN retrieval_fts f ON f.rowid=c.rowid AND f.retrieval_id=c.retrieval_id
-                    WHERE retrieval_cjk_fts MATCH ? AND {where} AND m.dedup_family=?
-                    ORDER BY c.rank LIMIT ?''',
-                    (_match(indexed_cjk), *params, primary, min(limit, 8))).fetchall()
+                primary_rows = recall_primary(_match(indexed_cjk), cjk=True)
                 channels.append(('primary_cjk_bm25', primary_rows))
         elif cjk:
             # Historical artifacts lack the segmented token index. This path

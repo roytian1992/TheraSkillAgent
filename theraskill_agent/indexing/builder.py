@@ -5,11 +5,12 @@ import math
 import os
 import sqlite3
 import shutil
+import tempfile
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
-from contextlib import closing
+from contextlib import closing, nullcontext
 from . import labels, metadata
 from .common import digest, identity, read_json, write_json, safe_path, exclusive
 from .embedding import fingerprint, resolve, require_compatible
@@ -114,6 +115,9 @@ def _dense(output, config, counts, progress, cancel):
     from domains.theraskill.theraskill_llm import OpenAICompatibleEmbeddingClient
     batch_size = max(1, min(int(config.get('batch_size', 32)), 512))
     workers = max(1, min(int(config.get('workers', 1)), 16))
+    max_batch_chars = config.get('max_batch_chars')
+    if max_batch_chars is not None and int(max_batch_chars) <= 0:
+        raise ValueError('max_batch_chars must be positive')
     cache = output / 'embedding-checkpoint.sqlite'
     with closing(sqlite3.connect(cache)) as vectors, closing(sqlite3.connect(output / DB)) as source:
         vectors.execute('PRAGMA cache_size=-65536')
@@ -124,6 +128,9 @@ def _dense(output, config, counts, progress, cancel):
         cursor_value = vectors.execute("SELECT value FROM checkpoint WHERE key='rowid'").fetchone()
         last_rowid = cursor_value[0] if cursor_value else 0
         source.execute('ATTACH DATABASE ? AS progress', (str(cache),))
+        # Attached databases have their own page caches. Keep the vector ID
+        # index hot while publishing, rather than using SQLite's 2 MiB default.
+        source.execute('PRAGMA progress.cache_size=-262144')
         dimension = vectors.execute('SELECT dimension FROM vectors LIMIT 1').fetchone()
         dimension = dimension[0] if dimension else None
         completed = vectors.execute('SELECT count(*) FROM vectors').fetchone()[0]
@@ -143,7 +150,21 @@ def _dense(output, config, counts, progress, cancel):
                 if not batch:
                     return
                 cursor = batch[-1][0]
-                yield batch
+                if max_batch_chars is None:
+                    yield batch
+                    continue
+                part, chars = [], 0
+                for row in batch:
+                    size = len(row[2])
+                    if part and chars + size > int(max_batch_chars):
+                        yield part
+                        part, chars = [], 0
+                    part.append(row)
+                    chars += size
+                if part:
+                    # A single long record is sent intact. The character budget
+                    # limits request grouping; it never truncates knowledge.
+                    yield part
 
         def embed(batch):
             # Each request owns its transport; urllib openers are not shared
@@ -198,9 +219,11 @@ def _dense(output, config, counts, progress, cancel):
             shard_dir = shards_dir / name
             shard_dir.mkdir(exist_ok=True)
             index = faiss.IndexFlatIP(int(dimension))
+            # Vectors were inserted in source order. Preserve that order when
+            # reading large blobs; sorting string IDs causes random disk reads.
             cursor = source.execute('''SELECT m.retrieval_id,m.release_unit_id,v.vector FROM retrieval_meta m
                 JOIN progress.vectors v ON v.id=m.retrieval_id WHERE m.dedup_family IS ? AND m.default_route IS ?
-                AND m.retrieval_eligible=1 AND m.embedding_eligible=1 ORDER BY m.retrieval_id''', (family, route))
+                AND m.retrieval_eligible=1 AND m.embedding_eligible=1 ORDER BY m.rowid''', (family, route))
             with (shard_dir / 'ids.jsonl').open('w', encoding='utf-8') as ids:
                 while batch := cursor.fetchmany(1000):
                     _check(cancel)
@@ -299,7 +322,7 @@ def build_index(knowledge, output, *, mode='lexical', embedding_config=None,
             raise
 
 
-def _verify_files(root, manifest):
+def _verify_files(root, manifest, *, scratch_root=None):
     if manifest.get('schema_version') != SCHEMA or manifest.get('status') != 'complete':
         raise ValueError('not a completed supported index')
     if not manifest.get('files'):
@@ -311,20 +334,32 @@ def _verify_files(root, manifest):
     for reference in manifest.get('artifacts', {}).values():
         if reference not in manifest['files']:
             raise ValueError('artifact is not declared in file inventory')
-    for name in (DB, 'metadata_v2.sqlite', 'compact_label_v1.sqlite'):
-        if name not in manifest['files']:
-            raise ValueError(f'required index artifact missing: {name}')
-        with closing(sqlite3.connect(f'{(Path(root) / name).as_uri()}?mode=ro', uri=True)) as db:
-            # Full releases contain millions of records. SQLite's default
-            # 2 MiB page cache makes quick_check repeatedly fetch index pages
-            # from network storage; bound one verification connection at 256 MiB.
-            db.execute('PRAGMA cache_size=-262144')
-            if db.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
-                raise ValueError(f'SQLite integrity check failed: {name}')
-    with closing(sqlite3.connect(f'{(Path(root) / DB).as_uri()}?mode=ro', uri=True)) as db:
-        total, eligible = db.execute('SELECT count(*),coalesce(sum(retrieval_eligible),0) FROM retrieval_meta').fetchone()
-        if total != manifest['counts']['total'] or eligible != manifest['counts']['indexed']:
-            raise ValueError('index row counts differ from manifest')
+    if scratch_root is not None:
+        scratch_root = Path(scratch_root).expanduser().resolve()
+        scratch_root.mkdir(parents=True, exist_ok=True)
+    scratch = tempfile.TemporaryDirectory(prefix='theraskill-verify-', dir=scratch_root) if scratch_root is not None else nullcontext(None)
+    with scratch as temporary:
+        for name in (DB, 'metadata_v2.sqlite', 'compact_label_v1.sqlite'):
+            if name not in manifest['files']:
+                raise ValueError(f'required index artifact missing: {name}')
+            sqlite_path = Path(root) / name
+            if temporary:
+                # Optional fast storage avoids random reads on network mounts.
+                # Recheck the copy's digest before checking its SQLite contents.
+                sqlite_path = Path(temporary) / name
+                shutil.copyfile(Path(root) / name, sqlite_path)
+                if digest(sqlite_path) != manifest['files'][name]['sha256']:
+                    raise ValueError(f'index verification copy integrity check failed: {name}')
+            with closing(sqlite3.connect(f'{sqlite_path.as_uri()}?mode=ro', uri=True)) as db:
+                db.execute('PRAGMA cache_size=-262144')
+                if db.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
+                    raise ValueError(f'SQLite integrity check failed: {name}')
+                if name == DB:
+                    total, eligible = db.execute('SELECT count(*),coalesce(sum(retrieval_eligible),0) FROM retrieval_meta').fetchone()
+                    if total != manifest['counts']['total'] or eligible != manifest['counts']['indexed']:
+                        raise ValueError('index row counts differ from manifest')
+            if temporary:
+                sqlite_path.unlink()
     if manifest.get('embedding'):
         import faiss
         shard_manifest = read_json(safe_path(root, manifest['artifacts']['faiss_shards']))
@@ -348,10 +383,10 @@ def _verify_files(root, manifest):
             raise ValueError('vector coverage differs from manifest')
 
 
-def verify_index(path):
+def verify_index(path, *, scratch_root=None):
     root = Path(path).expanduser().resolve()
     manifest = read_json(root / 'manifest.json')
-    _verify_files(root, manifest)
+    _verify_files(root, manifest, scratch_root=scratch_root)
     return manifest
 
 

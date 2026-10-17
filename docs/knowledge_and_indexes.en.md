@@ -122,6 +122,19 @@ Providers supporting binary embedding responses can additionally set
 JSON parsing overhead. Float responses remain supported. This changes transport
 only; it does not change the embedding model, dimensions or index identity.
 
+`embedding.max_batch_chars` optionally limits the combined text length per
+request, allowing larger `batch_size` values (up to 512) without grouping too
+many long records. Records remain complete; a single record longer than the
+budget is sent intact. This is a grouping limit, not a token counter or text
+truncation policy.
+
+On network storage, verification can use fast local scratch space while keeping
+all checks. Both `index verify` and `knowledge activate` accept
+`--scratch-directory /path/to/fast-storage`. Each SQLite copy is checked against
+the manifest SHA-256 before integrity and row-count checks. Copies are removed
+afterwards; allow space for the largest SQLite file. Runtime indexes remain in
+their installed directory.
+
 ```bash
 theraskill-agent index build --knowledge /path/to/knowledge.jsonl \
   --id knowledge-hybrid-v2 --mode hybrid --reuse-lexical knowledge-lexical-v2
