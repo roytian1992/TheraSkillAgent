@@ -1,38 +1,106 @@
 # TheraSkillAgent
 
-[中文说明](README.zh.md)
+TheraSkillAgent is a local, skill-based workspace for therapeutic text and
+knowledge workflows. It combines deterministic text processing with optional
+OpenAI-compatible LLM and embedding services, so the same project can ingest
+messy dialogue transcripts, run structured extraction and review, build
+traceable knowledge indexes, and support scenario practice.
 
-TheraSkillAgent brings therapeutic knowledge extraction, dialogue analysis,
-scenario practice, support conversations, review and skill management into one
-Python project with a browser workbench. Generation and embedding providers are
-configurable independently; model weights are not included.
+The project is designed for human-controlled workflows. Model outputs remain
+reviewable artifacts or governed candidates until an explicit approval step
+publishes them. Model weights, private conversations, credentials, and full
+knowledge releases are kept outside the source repository.
 
-## Install from source
+[中文说明](README.zh.md) · [English deployment guide](docs/deployment.en.md) ·
+[中文部署说明](docs/deployment.zh.md)
 
-Use Python 3.11+ and Node 22.12+ to build the interfaces:
+## What it provides
+
+| Workflow | Main capabilities |
+| --- | --- |
+| Transcript workbench | Ingest TXT/JSON/CSV/Markdown or pasted text, normalize turns, inspect speaker roles, analyze risk signals, run skill reviews, and package evidence-preserving artifacts. |
+| Knowledge extraction | Inspect a source, propose a task-specific schema, extract grounded records with provenance, validate candidates, and hand them to the governance queue. |
+| Knowledge and retrieval | Accept compatible JSONL, build portable lexical or hybrid indexes, verify checksums, search, activate, roll back, and package resources. |
+| Skills and agent tasks | Install local skills, scan them, optimize metadata, roll back changes, and run deterministic text, source, extraction, and transcript tasks through one task contract. |
+| Practice and review | Run support, simulation, expert review, contribution, and extraction services from the same workbench and skill/tool surface. |
+
+The browser workbench is served by the project itself. It exposes the main
+workbench plus support, simulation, and expert views under one UI process; the
+domain services are started locally when requested.
+
+## Quick start from source
+
+Use Python 3.11 or newer. Node 22.12 or newer is needed only when building the
+browser interfaces from a source checkout.
 
 ```bash
 git clone https://github.com/roytian1992/TheraSkillAgent.git
 cd TheraSkillAgent
+
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+python -m pip install -e .
+
+# Build the browser workspaces in a source checkout.
 npm ci
 npm run build
+
+# Create a writable project layout, then start the local workbench.
 theraskill-agent project init .
+cp configs/theraskill/providers.local.example.yaml \
+  configs/theraskill/providers.local.yaml
+chmod 600 configs/theraskill/providers.local.yaml
+theraskill-agent provider check --kind llm
+theraskill-agent provider check --kind embedding
 theraskill-agent ui --start-services
 ```
 
-Open <http://127.0.0.1:5176/>. A built wheel includes the interfaces, so an
-installation from a wheel does not require Node. Configure the direct `llm`
-and `embedding` blocks in `configs/theraskill/providers.yaml`; copy
-`configs/theraskill/providers.local.example.yaml` to
-`configs/theraskill/providers.local.yaml` and fill the separate blocks with
-arbitrary model names, URLs and credentials. The `active` mapping names the
-two direct blocks; the local file is ignored by Git and loaded automatically.
-The local default endpoints are examples, not bundled model servers.
+Open <http://127.0.0.1:5176/>. A wheel installation already contains built
+interfaces and does not require Node. See [Deployment](docs/deployment.en.md)
+for wheel installation, service management, ports, checks, and upgrades.
 
-## Rebuild an index without a model
+## Configure models directly
+
+The only supported provider file shape is `active` plus one direct `llm` block
+and one direct `embedding` block. The model names, URLs, and credentials are
+independent:
+
+```yaml
+active:
+  llm: local_llm
+  embedding: local_embedding
+
+llm:
+  model: your-llm-model
+  base_url: https://your-llm-service/v1
+  api_key: "LLM_API_KEY"
+
+embedding:
+  model: your-embedding-model
+  base_url: https://your-embedding-service/v1
+  endpoint: https://your-embedding-service/v1/embeddings
+  api_key: "EMBEDDING_API_KEY"
+```
+
+Put machine-specific values in the ignored
+`configs/theraskill/providers.local.yaml`. The shared
+`configs/theraskill/providers.yaml` contains safe local defaults. There is no
+provider catalog to edit and no environment-variable model switch. A legacy
+`profiles` registry is rejected with an actionable configuration error.
+
+Use the provider commands to inspect redacted metadata or make a bounded live
+request:
+
+```bash
+theraskill-agent provider list
+theraskill-agent provider check --kind llm --live
+theraskill-agent provider check --kind embedding --live
+```
+
+## Try a model-free knowledge workflow
+
+The included six-record bilingual JSONL file is synthetic and only demonstrates
+the schema. Lexical indexing does not call a model and does not require FAISS:
 
 ```bash
 theraskill-agent index plan --knowledge examples/knowledge/demo.jsonl
@@ -42,55 +110,74 @@ theraskill-agent index search --index demo-v1 --query uncertainty
 theraskill-agent knowledge activate --index demo-v1
 ```
 
-The six synthetic bilingual demo records illustrate the format; they are not a
-validated clinical knowledge base. Import, build, verify, search, activate and
-rollback are also available in **Knowledge & indexes** on the workbench.
-
-For vectors, install `pip install -e '.[retrieval]'`; the active `embedding`
-block in `configs/theraskill/providers.yaml` supplies the service:
+For hybrid retrieval, install the optional extra and use the active embedding
+block from `providers.yaml`:
 
 ```bash
+python -m pip install -e '.[retrieval]'
 theraskill-agent index build --knowledge examples/knowledge/demo.jsonl \
   --id demo-hybrid --mode hybrid
 ```
 
-Use `--resume` with the same input and configuration after an interruption.
-Changing the embedding model requires a matching index or a rebuild. Lexical
-retrieval needs neither FAISS nor an embedding service.
+Use `--resume` after an interrupted build with the same input and direct model
+configuration. Changing the embedding model or dimensions requires a new
+index. See [Knowledge, indexes, and resource packages](docs/knowledge_and_indexes.zh.md)
+for mappings, eligibility rules, manifests, installation, and rollback.
 
-## Software and data are separate
-
-| In this repository | Separate resources |
-| --- | --- |
-| Agent/task code, 12 skills, interfaces, extraction and complete index builders | Full extracted knowledge |
-| Prompts, configuration templates, schemas and synthetic examples | Optional prebuilt lexical/vector indexes |
-| Resource download, verification, installation and version switching | Full persona/scenario collections |
-
-`releases/catalog.json` records publication availability. Full knowledge and
-simulation downloads are **not yet published**. The code can already build
-indexes from the included demo or compatible user-supplied knowledge.
-
-- [Knowledge formats, indexing and packages](docs/knowledge_and_indexes.zh.md)
-- [Deployment](docs/deployment.zh.md)
-- [Source/release boundaries and validation](docs/source_release.zh.md)
-- [Dataset extraction recipes and outputs](extraction/docs/datasets_and_outputs.zh.md)
-
-## Development
+## Transcript and task examples
 
 ```bash
-pip install -e '.[dev,retrieval]'
-python -m pytest tests/test_standalone_kernel.py tests/test_theraskill*.py --ignore=tests/test_theraskill_agent_regression.py -q
-python scripts/release_source.py
+# Deterministic operations are local and do not call a model.
+theraskill-agent text normalize dialogue.txt
+theraskill-agent text sections dialogue.txt
+theraskill-agent transcript inspect dialogue.txt
+theraskill-agent transcript analyze dialogue.txt
+
+# Review first creates a plan. Model review is a separate, explicit step.
+theraskill-agent transcript review dialogue.txt --mode plan \
+  --skill transcript-quality-reviewer
+theraskill-agent transcript review dialogue.txt --mode model \
+  --skill transcript-quality-reviewer --max-turns 200
+```
+
+The browser workbench exposes the same operations and provides approval points
+for model-backed review and resource activation. Skills use the same tool and
+task contracts whether they are invoked by the CLI, UI, or a local agent task.
+
+## Repository and data boundaries
+
+The repository contains the agent kernel, domain services, built-in skills,
+prompts, schemas, indexing code, UI source, configuration templates, and small
+synthetic examples. Full extracted knowledge, prebuilt indexes, persona and
+scenario collections, model weights, raw research data, credentials, sessions,
+logs, and runtime state are separate resources.
+
+`releases/catalog.json` records whether optional packages are available. The
+current source distribution does not publish the full knowledge or simulation
+collections. Do not treat the demo records as clinical guidance or a validated
+knowledge base.
+
+Useful references:
+
+- [Knowledge formats and index packages](docs/knowledge_and_indexes.zh.md)
+- [English deployment guide](docs/deployment.en.md)
+- [中文部署说明](docs/deployment.zh.md)
+- [Source/release boundaries](docs/source_release.zh.md)
+- [Extraction datasets and outputs](extraction/docs/datasets_and_outputs.zh.md)
+
+## Development and validation
+
+```bash
+python -m pip install -e '.[dev,retrieval]'
+python -m pytest -q -o addopts='' \
+  tests/test_standalone_kernel.py tests/test_theraskill*.py \
+  tests/smoke_theraskill_install.py tests/test_theraskill_indexing.py \
+  --ignore=tests/test_theraskill_agent_regression.py
 npm run build
 python -m build
 ```
 
-The base install has seven direct Python dependencies. The CLI provides task,
-text, transcript, skill and resource commands; domain services provide model
-workflows and review interfaces. Historical general-purpose host integrations
-are outside this distribution. No original research directory is required to
-build indexes.
-
-Software: MIT, retaining upstream notices in [LICENSE](LICENSE) and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Dataset and model terms are
-separate. Do not publish local conversations, credentials or runtime state.
+The base installation intentionally avoids heavyweight model and retrieval
+frameworks. Install the `retrieval` extra only when FAISS-backed hybrid indexes
+are needed. Software is MIT licensed; dataset, model, and source-conversation
+terms remain separate.
