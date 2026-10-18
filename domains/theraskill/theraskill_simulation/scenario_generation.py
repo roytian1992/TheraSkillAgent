@@ -184,7 +184,6 @@ class LLMScenarioGenerator:
         from domains.theraskill.theraskill_llm import OpenAICompatibleClient, load_prompt, load_yaml, merged_model_config
 
         config = merged_model_config(load_yaml(extraction_config), load_yaml(model_config))
-        config["max_output_tokens"] = min(int(config.get("max_output_tokens") or 1800), 1800)
         self.client = OpenAICompatibleClient(config)
         self.prompts = {
             "zh": load_prompt(root / "prompts/Simulation/scenario_generation_zh.md"),

@@ -6,9 +6,9 @@ from fastapi import FastAPI
 import importlib.util
 
 
-def _router():
+def _router(services):
     from theraskill_agent.overview import create_router
-    return create_router()
+    return create_router(services=services)
 
 
 def test_hub_overview_contract(tmp_path: Path, monkeypatch) -> None:
@@ -17,8 +17,12 @@ def test_hub_overview_contract(tmp_path: Path, monkeypatch) -> None:
     (home / "platform-data/theraskill/evaluations").mkdir(parents=True)
     (home / "platform-data/theraskill/evaluations/manifest.json").write_text("{}", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
+    import httpx
+    class Host:
+        async def arequest(self, name, method, path):
+            return httpx.Response(200, json={'status':'ok'})
     app = FastAPI()
-    app.include_router(_router())
+    app.include_router(_router(Host()))
     response = TestClient(app).get("/overview")
     assert response.status_code == 200
     payload = response.json()

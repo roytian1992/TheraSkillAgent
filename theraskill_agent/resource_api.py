@@ -18,6 +18,17 @@ def list_resources():
     return {**resources.list_resources(), 'jobs': resource_jobs.list_jobs()}
 
 
+@router.get('/providers')
+def providers():
+    from domains.theraskill.provider_config import load_provider_registry, public_provider_info
+    registry = load_provider_registry()
+    result = {kind: {key: value for key, value in public_provider_info(kind).items()
+                     if key in {'model', 'base_url', 'endpoint', 'max_output_tokens', 'thinking', 'reasoning_effort'}}
+              for kind in ('llm', 'embedding')}
+    result['files'] = [registry[key] for key in ('_path', '_local_path') if registry.get(key)]
+    return result
+
+
 @router.post('/jobs')
 def submit(body: Operation):
     try:

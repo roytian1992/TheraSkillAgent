@@ -158,6 +158,8 @@ class SupportSessionRecord(ContractModel):
     schema_version: str = "theraskill_support_session_record_v1"
     public: SupportPublicSession
     owner_id: str = "local-user"
+    workflow: str = "support"
+    output_language: str = "auto"
     revision: int = Field(default=0, ge=0)
     knowledge_release_id: str
     model_config_id: str | None = None

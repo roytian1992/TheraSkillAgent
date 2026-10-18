@@ -1,6 +1,8 @@
 const API=(import.meta.env.VITE_EXPERT_API_URL||'/api/plugins/theraskill-expert').replace(/\/$/,'')
 const LOCAL_ROLE=import.meta.env.VITE_EXPERT_ROLE||'expert'
-async function call<T>(path:string,options:RequestInit={}):Promise<T>{const r=await fetch(API+path,{...options,headers:{'Content-Type':'application/json','X-Expert-Role':LOCAL_ROLE,'X-Expert-User':'expert-local',...(options.headers||{})}});if(!r.ok){const p=await r.json().catch(()=>({detail:r.statusText}));throw new Error(p.detail||String(r.status))}return r.json()}
+export const getExpertRole = () => sessionStorage.getItem('theraskill_expert_role') || LOCAL_ROLE
+export const setExpertRole = (role: string) => sessionStorage.setItem('theraskill_expert_role', role)
+async function call<T>(path:string,options:RequestInit={}):Promise<T>{const r=await fetch(API+path,{...options,headers:{'Content-Type':'application/json','X-Expert-Role':getExpertRole(),'X-Expert-User':'expert-local',...(options.headers||{})}});if(!r.ok){const p=await r.json().catch(()=>({detail:r.statusText}));throw new Error(typeof p.detail === 'string' ? p.detail : JSON.stringify(p.detail || p))}return r.json()}
 export const health=()=>call<{status:string,support:string,simulation:string}>('/health')
 export const createJob=(workflow:string,payload:Record<string,unknown>)=>call<{job_id:string,status:string}>('/jobs',{method:'POST',body:JSON.stringify({workflow,payload})})
 export const getJob=(id:string)=>call<any>(`/jobs/${id}`)
@@ -19,6 +21,11 @@ export const candidateAction=(id:string,action:'structure'|'dedup-check'|'valida
 export const adjudicateCandidate=(id:string,payload:Record<string,unknown>)=>call<any>(`/governance/candidates/${id}/adjudicate`,{method:'POST',body:JSON.stringify(payload)})
 export const listKnowledgeReleases=()=>call<any[]>('/governance/releases')
 export const previewKnowledgeRelease=(candidate_ids:string[],release_notes:string)=>call<any>('/governance/releases/preview',{method:'POST',body:JSON.stringify({candidate_ids,release_notes})})
-export const promoteKnowledgeRelease=(release_id:string,expected_manifest_sha256:string)=>call<any>('/governance/releases/promote',{method:'POST',body:JSON.stringify({release_id,expected_manifest_sha256})})
+export const promoteKnowledgeRelease=(release_id:string,expected_manifest_sha256:string,behavior_report_id:string)=>call<any>('/governance/releases/promote',{method:'POST',body:JSON.stringify({release_id,expected_manifest_sha256,behavior_report_id})})
 export const rollbackKnowledgeRelease=(release_id:string,reason:string)=>call<any>(`/governance/releases/${release_id}/rollback`,{method:'POST',body:JSON.stringify({reason})})
-export async function downloadExport(id:string,format:'json'|'markdown') { const r=await fetch(`${API}/jobs/${id}/export?format=${format}`,{headers:{'X-Expert-Role':'expert'}});if(!r.ok)throw new Error(`Export failed: ${r.status}`);const blob=await r.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`${id}.${format==='json'?'json':'md'}`;a.click();URL.revokeObjectURL(url) }
+export async function downloadExport(id:string,format:'json'|'markdown') { const r=await fetch(`${API}/jobs/${id}/export?format=${format}`,{headers:{'X-Expert-Role':getExpertRole()}});if(!r.ok)throw new Error(`Export failed: ${r.status}`);const blob=await r.blob();const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`${id}.${format==='json'?'json':'md'}`;a.click();URL.revokeObjectURL(url) }
+
+export const listJobs=()=>call<{jobs:any[]}>('/jobs')
+export const retryJob=(id:string)=>call<any>(`/jobs/${id}/retry`,{method:'POST',body:'{}'})
+export const createExpertProfile=(payload:Record<string,unknown>)=>call<any>('/reviews/profiles',{method:'POST',body:JSON.stringify(payload)})
+export const verifyExpertProfile=(id:string)=>call<any>(`/reviews/profiles/${id}/verify`,{method:'POST',body:JSON.stringify({status:'verified'})})

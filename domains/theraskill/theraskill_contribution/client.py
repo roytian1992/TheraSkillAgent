@@ -83,6 +83,18 @@ class HTTPContributionClient:
             headers["Idempotency-Key"] = idempotency_key
         if expert_profile_id:
             headers["X-Expert-Profile"] = expert_profile_id
+        if self.base_url.startswith('inprocess://'):
+            from theraskill_agent.local_services import service_client
+            try:
+                with service_client(self.base_url, timeout=self.timeout_seconds) as client:
+                    response = client.request(method, path, headers=headers, json=payload)
+                if not response.is_success:
+                    raise ContributionClientError(str(response.json().get('detail', response.text)), status_code=response.status_code)
+                return response.json() if response.content else {}
+            except ContributionClientError:
+                raise
+            except Exception as exc:
+                raise ContributionClientError(str(exc)) from exc
         request = urllib.request.Request(
             self.base_url + path,
             data=(json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None),

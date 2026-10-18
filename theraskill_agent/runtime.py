@@ -154,9 +154,10 @@ class AgentRuntime:
                                 analysis,
                                 skills=skills,
                                 max_turns=max_turns,
+                                output_language=params.get("output_language"),
                             )
                         elif mode == "plan":
-                            output["review_plan"] = build_review_plan(document, analysis, skills=skills, max_turns=max_turns)
+                            output["review_plan"] = build_review_plan(document, analysis, skills=skills, max_turns=max_turns, output_language=params.get("output_language"))
                         else:
                             raise ValueError("transcript.review mode must be plan or model")
                     if task.kind == "transcript.package":

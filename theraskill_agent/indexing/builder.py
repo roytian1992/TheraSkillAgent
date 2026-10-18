@@ -54,6 +54,8 @@ def plan_index(knowledge, *, mode='lexical', mapping=None, embedding_config=None
 
 
 def _lexical(source, output, mapping, progress, cancel):
+    from .inventory import COLUMNS, save_inventory
+    inventory = {key: set() for key in COLUMNS}
     # An interrupted lexical phase is safely rebuilt. Completed embedding batches
     # are retained separately; no half-committed sidecars are ever activated.
     for name in (DB, 'retrieval_en.sqlite', 'metadata_v2.sqlite', 'compact_label_v1.sqlite'):
@@ -93,6 +95,9 @@ def _lexical(source, output, mapping, progress, cancel):
         fields = ['retrieval_id','release_unit_id','release_unit_type','dedup_family','canonical_knowledge_type','canonical_label','primary_dataset','primary_knowledge_type','primary_evidence_tier','primary_language','risk_scope','default_route','retrieval_eligible','embedding_eligible','member_count','retrieval_text_chars']
         for row in rows(source, mapping):
             _check(cancel)
+            for key in COLUMNS:
+                if row.get(key) is not None:
+                    inventory[key].add(str(row[key]))
             try:
                 db.execute('INSERT INTO retrieval_meta VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', tuple(row.get(k) for k in fields))
             except sqlite3.IntegrityError as exc:
@@ -126,6 +131,7 @@ def _lexical(source, output, mapping, progress, cancel):
             connection.execute('PRAGMA journal_mode=DELETE')
         counts['indexed'] = counts['eligible']
         counts['excluded'] = counts['total'] - counts['eligible']
+    save_inventory(output / DB, inventory, output / 'metadata_inventory.json')
     return counts
 
 
@@ -304,6 +310,8 @@ def build_index(knowledge, output, *, mode='lexical', embedding_config=None,
                     names = [DB, 'metadata_v2.sqlite', 'compact_label_v1.sqlite']
                     if (parent / 'retrieval_en.sqlite').is_file():
                         names.insert(1, 'retrieval_en.sqlite')
+                    if (parent / 'metadata_inventory.json').is_file():
+                        names.append('metadata_inventory.json')
                     for name in names:
                         _check(cancel)
                         shutil.copy2(parent / name, output / name)
@@ -314,6 +322,8 @@ def build_index(knowledge, output, *, mode='lexical', embedding_config=None,
                 lexical_names = [DB, 'metadata_v2.sqlite', 'compact_label_v1.sqlite']
                 if (output / 'retrieval_en.sqlite').is_file():
                     lexical_names.insert(1, 'retrieval_en.sqlite')
+                if (output / 'metadata_inventory.json').is_file():
+                    lexical_names.append('metadata_inventory.json')
                 state['lexical_files'] = {name: digest(output / name) for name in lexical_names}
                 state['lexical_complete'] = True
                 notify('lexical_complete', counts)
@@ -423,7 +433,8 @@ def verify_index(path, *, scratch_root=None):
 def _load_dense_shard(index_path, ids_path):
     """Completed index files are immutable; avoid rereading vectors per query."""
     import faiss
-    index = faiss.read_index(index_path)
+    from .vectors import read_faiss_index
+    index = read_faiss_index(index_path)
     with Path(ids_path).open() as handle:
         ids = [json.loads(line)['retrieval_id'] for line in handle if line.strip()]
     if len(ids) != index.ntotal:
@@ -482,7 +493,7 @@ def search_index(path, query, *, limit=8, embedding_config=None, skill=None, fil
                     allowed_positions = np.asarray([i for i, rid in enumerate(ids) if rid in allowed], dtype=np.int64)
                     if not len(allowed_positions):
                         continue
-                    selector = faiss.IDSelectorBatch(allowed_positions)
+                    selector = faiss.IDSelectorArray(allowed_positions)
                     distances, positions = index.search(vector, min(candidate_limit, len(allowed_positions)), params=faiss.SearchParameters(sel=selector))
                 dense_hits.extend((float(score), ids[int(pos)]) for score, pos in zip(distances[0], positions[0]) if pos >= 0)
             for rank, (_, rid) in enumerate(sorted(dense_hits, reverse=True)[:candidate_limit], 1):

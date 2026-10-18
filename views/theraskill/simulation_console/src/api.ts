@@ -33,8 +33,10 @@ async function request<T>(
     },
   })
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({ detail: response.statusText }))
-    throw new Error(payload.detail || `Request failed: ${response.status}`)
+    const text = await response.text()
+    let detail = text || response.statusText
+    try { const payload = JSON.parse(text); detail = typeof payload.detail === 'string' ? payload.detail : JSON.stringify(payload.detail || payload) } catch { /* A proxy may return plain text. */ }
+    throw new Error(detail || `Request failed: ${response.status}`)
   }
   return response.json() as Promise<T>
 }
@@ -114,6 +116,14 @@ export async function reviewGeneratedScenario(
   })
 }
 
+export type BatchJob = { job_id: string; status: string; progress: { processed: number; total: number }; error?: string; result?: { scenarios: Scenario[]; count: number; course_draft: { title: string; scenario_ids: string[] } } }
+
+export const getBatchJob = (role: CallerRole, id: string) => request<BatchJob>(`/scenarios/generate-batch/jobs/${id}`, role)
+export const retryBatchJob = (role: CallerRole, id: string) => request<BatchJob>(`/scenarios/generate-batch/jobs/${id}/retry`, role, { method: 'POST' })
+export const listBatchJobs = (role: CallerRole) => request<{ jobs: BatchJob[] }>('/scenarios/generate-batch/jobs', role)
+export const retrySessionUpdate = (role: CallerRole, id: string) => request<SessionView>(`/sessions/${id}/updates/retry`, role, { method: 'POST' })
+export const retrySessionReview = (role: CallerRole, id: string) => request<SessionView>(`/sessions/${id}/review/retry`, role, { method: 'POST' })
+
 export async function generateScenarioBatch(
   role: CallerRole,
   payload: {
@@ -127,8 +137,8 @@ export async function generateScenarioBatch(
     difficulty_band?: string
     risk_band?: string
   },
-): Promise<{ batch_id: string; scenarios: Scenario[]; course_draft: { title: string; scenario_ids: string[] }; quality_summary: Record<string, number> }> {
-  return request('/scenarios/generate-batch', role, {
+): Promise<BatchJob> {
+  return request('/scenarios/generate-batch/jobs', role, {
     method: 'POST',
     body: JSON.stringify({ language: 'zh', ...payload }),
   })

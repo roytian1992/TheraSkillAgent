@@ -1,3 +1,5 @@
+Output language: write all user-facing explanations, summaries, findings, recommendations and uncertainties in English. Preserve JSON keys, enum values and verbatim source quotations.
+
 # Patient Runtime Reviewer
 
 Review one generated patient turn against the persona bundle, patient-state memory, therapist context, and retrieved evidence.

@@ -17,7 +17,7 @@ class BuildBusinessAssets(build_py):
         if destination.exists():
             shutil.rmtree(destination)
         patterns = (
-            "configs/**/*.yaml", "prompts/**/*.md",
+            "configs/**/*.yaml", "configs/theraskill/evaluations/*.json", "prompts/**/*.md",
             "scripts/Simulation/*.py", "scripts/AdvancedRetrieval/*.py",
             "scripts/AgentSkill/*.py", "scripts/_common/*.py",
             "extraction/scripts/**/*.py", "extraction/prompts/**/*.md",

@@ -8,6 +8,7 @@ from typing import Any, Mapping
 import httpx
 
 from theraskill_agent.config import cfg_get, load_config_readonly
+from theraskill_agent.local_services import service_client
 
 from .contracts import TheraSkillRequest
 
@@ -22,12 +23,12 @@ class ServiceConfig:
 
 
 _DEFAULTS = {
-    "support": ("http://127.0.0.1:8878", "/sessions"),
-    "simulation": ("http://127.0.0.1:8876", "/sessions"),
-    "response_review": ("http://127.0.0.1:8879", "/reviews/prepare"),
-    "contribution": ("http://127.0.0.1:8881", "/v1/reviews/prepare"),
+    "support": ("inprocess://support", "/sessions"),
+    "simulation": ("inprocess://simulation", "/sessions"),
+    "response_review": ("inprocess://expert", "/reviews/prepare"),
+    "contribution": ("inprocess://contribution", "/v1/reviews/prepare"),
     "knowledge_search": ("", ""),
-    "extraction": ("http://127.0.0.1:8891", "/v1/extraction/jobs"),
+    "extraction": ("inprocess://extraction", "/v1/extraction/jobs"),
 }
 
 
@@ -219,10 +220,10 @@ def call_service(config: ServiceConfig, request: TheraSkillRequest) -> tuple[int
     headers["X-TheraSkill-Scope"] = request.scope
     if config.token:
         headers["Authorization"] = f"Bearer {config.token}"
-    with httpx.Client(timeout=config.timeout_seconds) as client:
+    with service_client(config.base_url, timeout=config.timeout_seconds) as client:
         response = client.request(
             method,
-            f"{config.base_url}{path}",
+            path if config.base_url.startswith("inprocess://") else f"{config.base_url}{path}",
             json=payload,
             params=query_params,
             headers=headers,

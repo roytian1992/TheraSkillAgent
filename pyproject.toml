@@ -20,7 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "build>=1.2"]
-retrieval = ["numpy>=1.26", "faiss-cpu>=1.8"]
+retrieval = ["numpy>=1.26", "faiss-cpu>=1.13.2"]
 
 [project.scripts]
 theraskill-agent = "theraskill_agent.cli:main"

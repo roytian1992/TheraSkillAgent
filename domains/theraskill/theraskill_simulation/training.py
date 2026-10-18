@@ -42,6 +42,8 @@ class TrainingCourse(TrainingModel):
     scenario_ids: list[str] = Field(default_factory=list)
     difficulty_path: list[str] = Field(default_factory=list)
     completion_review_gate: str = "pass"
+    learning_objectives: list[dict[str, str]] = Field(default_factory=list)
+    require_instructor_review: bool = True
     created_at: datetime = Field(default_factory=utc_now)
 
 

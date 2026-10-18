@@ -1,4 +1,4 @@
-"""Serve the built workspaces with the existing Python runtime, without Node."""
+"""Serve all workspaces and domain APIs in one process and one port."""
 
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from domains.theraskill.runtime import service_specs
 from .paths import resource_path
+from .local_services import get_services, set_services, LocalServices
 
 
 UI_APPS = {
@@ -28,22 +29,30 @@ def create_app(*, assets_root: Path | None = None, transport=None) -> FastAPI:
     if missing:
         raise RuntimeError("UI assets missing; run npm ci && npm run build in the source checkout: " + ", ".join(missing))
 
+    from .task_runtime import TaskEngine
+    task_engine = TaskEngine()
+
+    services = LocalServices(transport=transport) if transport is not None else get_services()
+
     @asynccontextmanager
     async def lifespan(app):
-        async with httpx.AsyncClient(timeout=httpx.Timeout(600, connect=5), trust_env=False,
-                                     follow_redirects=False, transport=transport) as client:
-            app.state.client = client
-            try:
-                yield
-            finally:
-                from .resource_jobs import cancel_running_jobs
-                cancel_running_jobs()
+        import asyncio
+        set_services(services)
+        try:
+            await asyncio.to_thread(services.start)
+            yield
+        finally:
+            from .resource_jobs import cancel_running_jobs
+            cancel_running_jobs()
+            task_engine.close()
+            await asyncio.to_thread(services.close)
 
     app = FastAPI(title="TheraSkillAgent Workbench", lifespan=lifespan)
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "application": "TheraSkillAgent Workbench"}
+        return {"status": "ok", "application": "TheraSkillAgent", "deployment": "single_process",
+                "modules": list(services.clients)}
 
     async def proxy(request: Request, service: str, path: str = ""):
         # The browser can select only our named services, never arbitrary URLs.
@@ -53,15 +62,16 @@ def create_app(*, assets_root: Path | None = None, transport=None) -> FastAPI:
             raise HTTPException(404, "Unknown service")
         if "\\" in path or any(part == ".." for part in path.split("/")):
             raise HTTPException(400, "Invalid service path")
-        url = httpx.URL(f"http://127.0.0.1:{int(spec['port'])}/{path.lstrip('/')}")
-        url = url.copy_with(query=request.url.query.encode("utf-8"))
+        target = "/" + path.lstrip("/")
+        if request.url.query:
+            target += "?" + request.url.query
         headers = {key: value for key, value in request.headers.items() if key.lower() not in _HOP_HEADERS}
         try:
-            upstream = await request.app.state.client.request(
-                request.method, url, headers=headers, content=await request.body(),
+            upstream = await services.arequest(
+                service, request.method, target, headers=headers, content=await request.body(),
             )
         except httpx.RequestError:
-            raise HTTPException(503, f"{service} service unavailable; start it with theraskill-agent service start --service {service}") from None
+            raise HTTPException(503, f"{service} module unavailable; restart TheraSkillAgent") from None
         # httpx decodes the body; don't forward the original compression headers.
         response_headers = {key: value for key, value in upstream.headers.items()
                             if key.lower() not in _HOP_HEADERS | {"content-encoding"}}
@@ -70,7 +80,10 @@ def create_app(*, assets_root: Path | None = None, transport=None) -> FastAPI:
     from .resource_api import router as resource_router
     app.include_router(resource_router)
     from .overview import create_router as overview_router
-    app.include_router(overview_router(), prefix="/api")
+    app.include_router(overview_router(services=services), prefix="/api")
+
+    from .task_api import create_router as task_router
+    app.include_router(task_router(task_engine))
 
     methods = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     app.add_api_route("/api/plugins/{service}/{path:path}", proxy, methods=methods)

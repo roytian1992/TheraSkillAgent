@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +26,7 @@ from domains.theraskill.runtime import runtime_root
 from domains.theraskill.theraskill_contribution.extraction_import import import_extraction_units
 from domains.theraskill.theraskill_contribution.repository import SQLiteContributionRepository
 from plugins.theraskill.extraction_plan import ExtractionPlanError, validate_plan
-from theraskill_agent.source_adapters import inspect_source
+from theraskill_agent.source_adapters import inspect_source, sample_source
 
 
 from theraskill_agent.paths import resource_root, resource_path
@@ -63,6 +65,7 @@ class StartExtractionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     plan: dict[str, Any]
     limit: int | None = Field(default=None, ge=1, le=100000)
+    request_id: str | None = Field(default=None, min_length=1, max_length=160)
 
 
 class InspectSourceRequest(BaseModel):
@@ -74,6 +77,11 @@ class SourceUploadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     filename: str = Field(min_length=1, max_length=256)
     text: str = Field(min_length=1, max_length=2_000_000)
+
+
+class SuggestPlanRequest(InspectSourceRequest):
+    goal: str = Field(min_length=1, max_length=12000)
+    language: str = Field(default="auto", pattern="^(auto|zh|en)$")
 
 
 class ExtractionJobStore:
@@ -111,7 +119,9 @@ class ExtractionJobStore:
     def _save(self, job: dict[str, Any]) -> None:
         path = self._path(str(job["job_id"]))
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(job, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+        temp.write_text(json.dumps(job, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temp.replace(path)
 
     def _load(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
@@ -125,11 +135,23 @@ class ExtractionJobStore:
         except (OSError, json.JSONDecodeError):
             return None
 
-    def create(self, plan: dict[str, Any], limit: int | None, actor: str) -> dict[str, Any]:
+    def create(self, plan: dict[str, Any], limit: int | None, actor: str, request_id: str | None = None) -> dict[str, Any]:
+        with self._lock:
+            return self._create(plan, limit, actor, request_id)
+
+    def _create(self, plan: dict[str, Any], limit: int | None, actor: str, request_id: str | None = None) -> dict[str, Any]:
+        if request_id:
+            with self._lock:
+                for existing in self._jobs.values():
+                    if existing.get("request_id") == request_id:
+                        if existing['plan'] != plan or existing['limit'] != limit or existing['actor'] != actor:
+                            raise ValueError("request_id was already used for different extraction inputs")
+                        return dict(existing)
         job_id = f"extract_{uuid.uuid4().hex[:16]}"
         now = datetime.now(timezone.utc).isoformat()
         job = {
             "job_id": job_id,
+            "request_id": request_id,
             "status": "queued",
             "created_at": now,
             "updated_at": now,
@@ -150,6 +172,25 @@ class ExtractionJobStore:
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         return self._load(job_id)
+
+    def list(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict(job) for job in sorted(self._jobs.values(), key=lambda j: j["created_at"], reverse=True)[:100]]
+
+    def retry(self, job_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            job = self._load(job_id)
+            if job is None:
+                return None
+            if job["status"] not in {"failed", "partial"}:
+                raise ValueError("only failed or partial extraction jobs can be retried")
+            job.update(status="queued", error=None, retry_failed_records=True,
+                       retry_count=int(job.get("retry_count") or 0) + 1,
+                       updated_at=datetime.now(timezone.utc).isoformat())
+            self._jobs[job_id] = job
+            self._save(job)
+            self._executor.submit(self._run, job_id)
+            return dict(job)
 
     def cancel(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
@@ -294,6 +335,18 @@ class ExtractionJobStore:
             work_dir.mkdir(parents=True, exist_ok=True)
             checkpoint_units_path = work_dir / "knowledge_units.checkpoint.jsonl"
             checkpoint_failures_path = work_dir / "failures.checkpoint.jsonl"
+            fingerprint = build_manifest(extraction_plan, source_path, units=[], failures=[], model_name=client.model)["source"]["fingerprint"]
+            previous_fingerprint = (job.get("source_info") or {}).get("fingerprint")
+            if previous_fingerprint and previous_fingerprint != fingerprint:
+                raise ValueError("source changed since this job started; create a new extraction job")
+            if job.get("retry_failed_records"):
+                # Keep the previous attempt for audit while retrying only records
+                # that have not produced a successful unit.
+                archive = work_dir / f"failures.attempt-{job.get('retry_count', 1)}.jsonl"
+                if checkpoint_failures_path.exists() and not archive.exists():
+                    shutil.copyfile(checkpoint_failures_path, archive)
+                checkpoint_failures_path.write_text("", encoding="utf-8")
+                self._update(job_id, retry_failed_records=False)
             checkpoint_units: list[dict[str, Any]] = []
             checkpoint_failures: list[dict[str, Any]] = []
             for checkpoint_path, target in ((checkpoint_units_path, checkpoint_units), (checkpoint_failures_path, checkpoint_failures)):
@@ -319,7 +372,7 @@ class ExtractionJobStore:
                     "resumed": bool(completed_source_ids),
                 })
 
-            self._update(job_id, source_info={"path": str(source_path), "record_count": len(records), "fingerprint": build_manifest(extraction_plan, source_path, units=[], failures=[], model_name=client.model)["source"]["fingerprint"]}, progress={"processed": len(completed_source_ids), "units": len(checkpoint_units), "failures": len(checkpoint_failures), "resumed": bool(completed_source_ids)})
+            self._update(job_id, source_info={"path": str(source_path), "record_count": len(records), "fingerprint": fingerprint}, progress={"processed": len(completed_source_ids), "units": len(checkpoint_units), "failures": len(checkpoint_failures), "resumed": bool(completed_source_ids)})
             units, failures = extract_records(
                 records,
                 extraction_plan,
@@ -353,7 +406,17 @@ class ExtractionJobStore:
 def create_app(settings: ExtractionAPISettings | None = None) -> FastAPI:
     settings = settings or ExtractionAPISettings()
     store = ExtractionJobStore(settings)
-    app = FastAPI(title="TheraSkill Dynamic Extraction API", version="1.0")
+    @asynccontextmanager
+    async def lifespan(app):
+        try:
+            yield
+        finally:
+            for job in list(store._jobs.values()):
+                if job['status'] in {'queued', 'running'}:
+                    store.cancel(job['job_id'])
+            store._executor.shutdown(wait=False, cancel_futures=True)
+
+    app = FastAPI(title="TheraSkill Dynamic Extraction API", version="1.0", lifespan=lifespan)
 
     def require_role(role: str) -> str:
         role = role.strip().lower()
@@ -379,7 +442,10 @@ def create_app(settings: ExtractionAPISettings | None = None) -> FastAPI:
         plan_source = plan.get("source") or {}
         if not plan_source.get("path") and not plan_source.get("input_uri"):
             raise HTTPException(status_code=422, detail="plan.source.path or plan.source.input_uri is required")
-        return store.create(plan, request.limit, x_extraction_user.strip() or actor_role)
+        try:
+            return store.create(plan, request.limit, x_extraction_user.strip() or actor_role, request.request_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/v1/extraction/inspect")
     def inspect_input(
@@ -388,7 +454,7 @@ def create_app(settings: ExtractionAPISettings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         require_role(x_extraction_role)
         try:
-            return {"source": inspect_source(request.path).to_dict()}
+            return {"source": inspect_source(request.path).to_dict(), "samples": [item.to_dict() for item in sample_source(request.path, limit=5)], "sample_limit": 5}
         except (OSError, ValueError, TypeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -409,6 +475,36 @@ def create_app(settings: ExtractionAPISettings | None = None) -> FastAPI:
             path.unlink(missing_ok=True)
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"path": str(path), "filename": safe_name, "source": info}
+
+    @app.post("/v1/extraction/plans/suggest")
+    def suggest_plan(request: SuggestPlanRequest,
+                     x_extraction_role: str = Header(default="", alias="X-Extraction-Role")) -> dict[str, Any]:
+        require_role(x_extraction_role)
+        from plugins.theraskill.extraction_plan import plan_with_active_model
+        try:
+            samples = [item.to_dict() for item in sample_source(request.path, limit=5)]
+            plan = plan_with_active_model(request.goal, samples, source={"path": request.path}, language=request.language)
+            return {"plan": plan, "sample_count": len(samples), "requires_confirmation": True}
+        except (OSError, ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=f"Plan generation failed: {exc}. Your input is preserved; retry after checking the model service.") from exc
+
+    @app.get("/v1/extraction/jobs")
+    def list_jobs(x_extraction_role: str = Header(default="", alias="X-Extraction-Role")) -> dict[str, Any]:
+        require_role(x_extraction_role)
+        return {"jobs": store.list()}
+
+    @app.post("/v1/extraction/jobs/{job_id}/retry", status_code=202)
+    def retry_job(job_id: str, x_extraction_role: str = Header(default="", alias="X-Extraction-Role")) -> dict[str, Any]:
+        require_role(x_extraction_role)
+        try:
+            job = store.retry(job_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if job is None:
+            raise HTTPException(status_code=404, detail="Extraction job not found")
+        return job
 
     @app.get("/v1/extraction/jobs/{job_id}")
     def get_job(job_id: str, x_extraction_role: str = Header(default="", alias="X-Extraction-Role")) -> dict[str, Any]:

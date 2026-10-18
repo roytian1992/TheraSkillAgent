@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
+from theraskill_agent.local_services import service_client
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
@@ -43,9 +44,9 @@ ROOT = resource_root()
 class ExpertAPISettings(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     database_path: Path = Field(default_factory=lambda: runtime_root() / "expert/expert.sqlite")
-    support_api_url: str = "http://127.0.0.1:8878"
-    simulation_api_url: str = "http://127.0.0.1:8876"
-    contribution_api_url: str = "http://127.0.0.1:8881"
+    support_api_url: str = Field(default_factory=lambda: os.environ.get("THERASKILL_SUPPORT_API_URL", "inprocess://support"))
+    simulation_api_url: str = Field(default_factory=lambda: os.environ.get("THERASKILL_SIMULATION_API_URL", "inprocess://simulation"))
+    contribution_api_url: str = Field(default_factory=lambda: os.environ.get("THERASKILL_CONTRIBUTION_API_URL", "inprocess://contribution"))
     contribution_client_override: Any | None = None
     api_token: str | None = Field(
         default_factory=lambda: os.environ.get("THERASKILL_EXPERT_API_TOKEN")
@@ -245,6 +246,10 @@ def create_app(settings: ExpertAPISettings | None = None) -> FastAPI:
                 status_code=exc.status_code or 503, detail=str(exc)
             ) from exc
 
+    def upstream(method, base_url, path, **kwargs):
+        with service_client(base_url, timeout=kwargs.pop('timeout', 30)) as client:
+            return client.request(method, path, **kwargs)
+
     def support_headers(role: str = "user") -> dict[str, str]:
         headers = {"X-Support-User": "expert-studio", "X-Support-Role": role}
         if cfg.support_api_token:
@@ -266,8 +271,8 @@ def create_app(settings: ExpertAPISettings | None = None) -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, Any]:
         try:
-            support = httpx.get(f"{cfg.support_api_url}/health", timeout=5).json()
-            simulation = httpx.get(f"{cfg.simulation_api_url}/health", timeout=5).json()
+            support = upstream("GET", cfg.support_api_url, f"/health", timeout=5).json()
+            simulation = upstream("GET", cfg.simulation_api_url, f"/health", timeout=5).json()
         except Exception:
             support, simulation = {"status": "offline"}, {"status": "offline"}
         return {"status": "ok", "support": support["status"], "simulation": simulation["status"]}
@@ -282,8 +287,11 @@ def create_app(settings: ExpertAPISettings | None = None) -> FastAPI:
         x_expert_role: str = Depends(expert_identity),
     ) -> dict[str, Any]:
         require_role(x_expert_role)
-        with httpx.Client(base_url=cfg.support_api_url, timeout=30) as client:
-            session = client.post("/sessions", headers=support_headers(), json={})
+        with service_client(cfg.support_api_url, timeout=30) as client:
+            session = client.post("/sessions", headers=support_headers(), json={
+                "workflow": "response_review" if request.workflow == "response_review" else "synthetic_construction",
+                "output_language": request.payload.get("output_language", "auto"),
+            })
             session.raise_for_status()
             session_id = session.json()["session_id"]
             submitted = client.post(
@@ -306,7 +314,18 @@ def create_app(settings: ExpertAPISettings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         require_role(_role)
         rows = store.rows("SELECT * FROM expert_jobs ORDER BY created_at DESC LIMIT ?", (limit,))
-        return {"count": len(rows), "jobs": [dict(row) for row in rows]}
+        states: dict[str, str] = {}
+        try:
+            response = upstream("GET", cfg.support_api_url, f"/sessions", params={"limit": 500}, headers=support_headers(), timeout=5)
+            response.raise_for_status()
+            states = {session["session_id"]: session["generation"]["status"]
+                      for session in response.json()["sessions"]}
+        except (httpx.HTTPError, KeyError, ValueError):
+            pass
+        return {"count": len(rows), "jobs": [
+            {**dict(row), "status": states.get(row["support_session_id"], "unavailable")}
+            for row in rows
+        ]}
 
     @app.get("/jobs/{job_id}")
     def get_job(
@@ -316,7 +335,7 @@ def create_app(settings: ExpertAPISettings | None = None) -> FastAPI:
         require_role(x_expert_role)
         row = load_job(job_id)
         session_id = row["support_session_id"]
-        with httpx.Client(base_url=cfg.support_api_url, timeout=30) as client:
+        with service_client(cfg.support_api_url, timeout=30) as client:
             public = client.get(f"/sessions/{session_id}", headers=support_headers())
             public.raise_for_status()
             researcher = client.get(
@@ -342,6 +361,18 @@ def create_app(settings: ExpertAPISettings | None = None) -> FastAPI:
             "versions": [json.loads(item["payload_json"]) for item in versions],
         }
 
+    @app.post("/jobs/{job_id}/retry", status_code=202)
+    def retry_job(job_id: str, _role: str = Depends(expert_identity)) -> dict[str, Any]:
+        row = load_job(job_id)
+        response = upstream("POST", cfg.support_api_url, f"/sessions/{row['support_session_id']}/retry",
+                              headers=support_headers(), json={
+                                  "workflow": "response_review" if row["workflow"] == "response_review" else "synthetic_construction",
+                                  "output_language": json.loads(row["payload_json"]).get("output_language", "auto"),
+                              }, timeout=30)
+        if not response.is_success:
+            raise HTTPException(status_code=response.status_code, detail=response.json().get("detail", "Retry failed"))
+        return {"job_id": job_id, "workflow": row["workflow"], "status": "pending"}
+
     @app.delete("/jobs/{job_id}")
     def delete_job(
         job_id: str,
@@ -362,7 +393,7 @@ def create_app(settings: ExpertAPISettings | None = None) -> FastAPI:
     @app.post("/jobs/{job_id}/regenerate", status_code=202)
     def regenerate(job_id: str, request: RegenerateRequest, x_expert_role: str = Depends(expert_identity)) -> dict[str, Any]:
         row = load_job(job_id)
-        with httpx.Client(base_url=cfg.support_api_url, timeout=30) as client:
+        with service_client(cfg.support_api_url, timeout=30) as client:
             response = client.post(
                 f"/sessions/{row['support_session_id']}/messages",
                 headers={**support_headers(), "Idempotency-Key": f"regen-{uuid.uuid4().hex}"},
@@ -398,6 +429,8 @@ def create_app(settings: ExpertAPISettings | None = None) -> FastAPI:
             headers=simulation_headers(),
             timeout=30,
         )
+        if response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Simulation session not found; choose an existing completed session")
         response.raise_for_status()
         source = response.json()
         if source["public_view"]["status"] not in {"completed", "terminated", "failed"}:

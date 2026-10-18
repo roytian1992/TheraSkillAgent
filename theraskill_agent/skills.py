@@ -36,6 +36,7 @@ class SkillRecord:
     capabilities: tuple[str, ...] = ()
     dependencies: tuple[str, ...] = ()
     checksum: str = ""
+    bundle_checksum: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
@@ -109,6 +110,11 @@ def _skill_metadata(skill_file: Path, *, source: str) -> SkillRecord:
     if isinstance(dependencies, str):
         dependencies = [dependencies]
     checksum = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    bundle = hashlib.sha256()
+    for entry in sorted(skill_file.parent.rglob('*')):
+        if entry.is_file() and not entry.is_symlink() and not any(p in {'.git', '__pycache__'} for p in entry.relative_to(skill_file.parent).parts):
+            bundle.update(entry.relative_to(skill_file.parent).as_posix().encode('utf-8') + b'\0')
+            bundle.update(hashlib.sha256(entry.read_bytes()).digest())
     return SkillRecord(
         name=name,
         description=description,
@@ -120,6 +126,7 @@ def _skill_metadata(skill_file: Path, *, source: str) -> SkillRecord:
         capabilities=tuple(str(item) for item in capabilities if str(item).strip()),
         dependencies=tuple(str(item) for item in dependencies if str(item).strip()),
         checksum=checksum,
+        bundle_checksum=bundle.hexdigest(),
     )
 
 
@@ -208,7 +215,7 @@ class SkillManager:
             raise ValueError(f"invalid skill name: {name!r}")
         return value
 
-    def install_local(self, source: str | Path, *, name: str | None = None, overwrite: bool = False) -> SkillRecord:
+    def install_local(self, source: str | Path, *, name: str | None = None, overwrite: bool = False, report_id: str | None = None) -> SkillRecord:
         skill_file = discover_skill_file(source)
         source_dir = skill_file.parent
         source_record = _skill_metadata(skill_file, source="local")
@@ -225,14 +232,26 @@ class SkillManager:
 
         self.user_root.mkdir(parents=True, exist_ok=True)
         destination = self.user_root / target_name
-        if destination.exists():
+        if source_dir.resolve() == destination.resolve():
+            raise ValueError("Use a separate candidate directory for skill installation")
+        previous = next((record for record in self.list_skills() if record.name == target_name), None)
+        if destination.exists() or previous:
             if not overwrite:
                 raise FileExistsError(f"skill already installed: {destination}")
+            if not report_id:
+                raise ValueError('Replacing a skill requires a reviewed behavior comparison report')
+            if target_name != source_record.name:
+                raise ValueError('Set the candidate skill name before evaluation when replacing a skill')
+            from .behavior_eval import verify_gate
+            report = verify_gate(report_id, {})
+            if source_record.bundle_checksum not in report['target']['skill_checksums'].values():
+                raise ValueError('Report did not evaluate this skill bundle')
             self.backup_root.mkdir(parents=True, exist_ok=True)
-            backup = self.backup_root / f"{target_name}.{_skill_metadata(destination / 'SKILL.md', source='user').checksum[:12]}"
+            prior_dir = destination if destination.exists() else Path(previous.path)
+            backup = self.backup_root / f"{target_name}.{_skill_metadata(prior_dir / 'SKILL.md', source='user').bundle_checksum[:12]}"
             if not backup.exists():
-                shutil.copytree(destination, backup)
-            shutil.rmtree(destination)
+                shutil.copytree(prior_dir, backup)
+            if destination.exists():shutil.rmtree(destination)
         shutil.copytree(source_dir, destination)
         if target_name != source_record.name:
             installed_path = destination / "SKILL.md"
@@ -253,7 +272,7 @@ class SkillManager:
                     payload.update({"schema_version": loaded.get("schema_version", payload["schema_version"]), "skills": dict(loaded.get("skills") or {})})
             except (OSError, json.JSONDecodeError):
                 pass
-        payload["skills"][record.name] = {"version": record.version, "checksum": record.checksum, "source": source, "path": record.path, "dependencies": list(record.dependencies)}
+        payload["skills"][record.name] = {"version": record.version, "checksum": record.checksum, "bundle_checksum": record.bundle_checksum, "source": source, "path": record.path, "dependencies": list(record.dependencies)}
         self.user_root.mkdir(parents=True, exist_ok=True)
         self.lock_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 

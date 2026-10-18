@@ -102,3 +102,38 @@ python scripts/AdvancedRetrieval/evaluate_managed_retrieval.py \
 27. 为 CJK FTS 长尾增加两阶段召回：先在中文倒排表取有界 rowid，再按有限 ID 回读正文和元数据；小家族主证据也使用有界 ranked page 后在 Python 侧筛选，避免大量字符串 ID 过滤连接。相关提交为 `92f30d5`，147 项 TheraSkillAgent 专属测试仍全部通过。
 28. 混合索引已原子启用：`idx_d5b9f0077e1ca31b990080de`，当前模式 `hybrid`，active selection 写入 `data/theraskill/active-index.json`。六个领域服务和工作台全部重启并健康返回 200；健康记录在 `service-health-after-hybrid.json`。
 29. 启用后的真实支持 E2E 成功，响应状态回到 `idle`，中文 assistant 回复非空，证据中的检索模式为 `advanced_retrieval_v3_llm_structured_hybrid`，总耗时 150.971 秒，见 `support-after-hybrid/summary.json`。浏览器实测工作台中英文切换和知识页，页面明确显示 active hybrid、1,808,415 条可检索记录及上一词法索引；截图为 `ui-after-hybrid-*.png`、`ui-knowledge-after-hybrid.png`。
+30. 用户要求完整、深入地从用户角度体验。对 `0e0fe53f57bccb859b52b48f90edeb4909555277` 进行了真实 Chromium 操作与当前真实 `deepseek-v4-pro` / `text-embedding-3-large` 业务调用，另以有界 API、独立根目录 Python 管理器及代码检查补充定位。结果保存在 `artifacts/user_experience_audit_20261018/`，详细报告为 `docs/user_experience_audit_20261018.zh.md`。覆盖清单 48 项：15 项限定操作成功、14 项部分完成、13 项阻塞、6 项未完成验收；不是产品整体通过率。15 张截图组成 `index.html`，`manifest.json` 保存版本、输入 hash、证据、命令和限制。明确发现对话工作台四操作全部 422（旧 provider_profile 字段）、危险输入安全卡约 461.9 秒后才出现、空训练 gate=pass、训练记忆失败导致结束 409；专家审核被路由为 emotional-support，检索约 471.8 秒；批次 UI 仍用同步端点并实测 502。抽取单样本、支持记忆/反馈/导出/结束、单场景生成与编辑批准退回、隔离索引安装构建启用回滚实际成功。候选去重客户端 150 秒超时后后台完成，后续验证 pass 只代表局部不变量，不代表真实检索或行为回归通过。已有四测试文件 14 passed / 3 warnings / 2.35 秒，日志 `existing-tests.log`；它们不能替代浏览器端到端验收。全部输入为 QA 合成内容，原用户记录只读；只保留 QA 新记录，未发布知识，QA 场景最终退回。临时 5186 工作台已停止，5176 和已有领域服务保留，主活动混合索引未改变。本轮未改业务代码/模型配置、未打包、未提交或推送；既有未跟踪文件未清理。未经完整验收的多轮支持、有效训练后的回应比较/标注、正式知识发布回滚和课程学习结果在报告单列，未冒充通过。
+31. 根据上述审计完成本地体验修复与真实业务复测：统一对话文件适配器、修复旧字段 422、提前展示即时安全状态、拒绝无效训练评分、补齐训练记忆/复盘恢复和独立复盘源上下文、专家工作流显式路由、批量场景持久任务逐项恢复、抽取模型规划与失败项重试/源指纹保护、任务中心与草稿恢复、治理定位和窄屏布局。当前直接配置的 LLM 输出预算由 4096 调到 8192，并显式设置 thinking disabled；早期预算试验仍被公共抽取模板覆盖，随后去掉覆盖并确认有效设置为 8192/disabled/retry_attempts=2。仍用原有真实模型和 embedding，主混合索引未切换。限定浏览器/API 复测清单 27 项通过；三种训练模式和独立复盘均完成真实模型调用，但上游断线、截断的初次失败另存保留，不据不同输入作受控延迟结论。最终专属回归 168 passed / 4 warnings / 20.34 秒，四个前端生产构建通过，没有新增运行依赖；没有宣称整个仓库所有可选测试通过。详细报告 `docs/ux_improvements_20261018.zh.md`，证据、输入/代码/提示词哈希及日志在 `artifacts/ux_improvements_20261018/`，最终回归日志为 `regression-release.log`。全部为合成 QA 输入，两条批次场景已退回，试抽候选待治理，未发布知识。正式行为回归、任意 skill 通用执行、完整课程学习结果和全面双语仍为后续工作。本轮未打包、提交或推送，既有未跟踪文件保留。
+
+32. 完成四项平台升级：统一持久技能任务与完整抽取生命周期、真实效果评测/人工复核门禁、课程与练习/教师评价闭环、界面与输出语言兼容。执行器调用注册工具并支持交互暂停、写操作确认和检查点恢复；模型生成技能优化草稿，替换技能、知识发布及活动索引变更均校验效果报告，报告绑定 LLM/embedding、索引、技能及引用。真实合成抽取首次因模型 operations 类型与执行契约不一致而失败，保留失败，补齐共同校验和最多两次有错误反馈的模型重规划，随后试抽 1 条/全量 2 条均通过并交接 2 个候选。真实评测保留 7 份报告共 16 个案例；最终四例套件和原版/优化草稿专项比较均无新增工程失败、模型平均变化 0，未据此声称质量提升或临床效果，所有真实报告仍待人工复核。浏览器验证课程创建、分配、进入真实练习、完成复盘并记录“继续练习”的自动化 QA 反馈，没有伪造教师批准。中文对话→英文评估保留中文引文，中文复盘的混杂语言提示词已修正并真实复测。双向语言切换保留原文，7 个界面在 390 px 下无整页横向溢出，最终无浏览器异常。最终回归 202 passed / 4 warnings / 19.74 秒（含独立内核和安装相关测试），四界面构建通过，wheel 隔离资源导入检查通过（4 案例、12 内置技能），没有新增运行依赖。原始输入、失败、代码/模型/提示指纹和报告在 `artifacts/platform_upgrade_20261018/`，交付说明见 `docs/platform_upgrade_20261018.zh.md`，中英文工作流与部署文档及 README 已同步。主索引、模型选择和生产知识未改变；全部 QA 候选/技能草稿保留审核状态，本轮未提交或推送。
+
+## 33. 单进程部署与公共模型恢复
+
+默认 UI 改为在进程内托管六个业务模块及其生命周期；工具、专家调用、贡献/记忆客户端和首页探测同步切换，不再要求六个独立服务端口。保留旧独立服务命令用于迁移和显式调试。增加 `--project` 和初始化时的最简本地 provider 示例。
+
+公共模型客户端对截断/空回复做有上限的恢复，推理设置保持原配置。真实 32-token 截断请求以 8192 tokens 恢复成功。实际专家审核暴露大语料 FTS 等待，增加通道执行预算和诊断；用户明确的知识过滤条件继续执行。最终真实审核成功，提交约 0.14 秒，检索约 84.8 秒，生成约 18.6 秒；不能据此宣称普遍的质量或时延提升。
+
+验证：项目回归 214 passed；禁用业务网络连接的跨模块集成；生命周期和 202 后台语义；八页浏览器检查与移动端宽度；最终 wheel 在精简环境通过 python -I 独立安装 smoke。当前应用端口 5176，旧六端口关闭。具体限制见 `docs/deployment_simplification_20261018.zh.md`；证据在 `artifacts/deployment_simplification_20261018/`。未执行 git commit/push。
+
+## 34. 检索链路优化与完整索引复测（2026-10-19 整理验收）
+
+- 目标与授权：用户要求继续优化检索，保留功能对应的知识范围与真实模型规划。基线为上次专家任务检索 84.810 秒，以及本轮独立进程 `baseline-live/manifest.json` 的 67.994 秒，其中五次元数据枚举扫描累计 40.284 秒、LLM 请求 10.864 秒。这里测量查询已有索引，不是构建索引。
+- 环境：工作目录 `/vepfs-mlp2/c20250513/241404044/users/roytian/TheraSkillAgent`；解释器 `/vepfs-mlp2/c20250513/241404044/users/roytian/anaconda3/bin/python`，Python 3.12.7、FAISS 1.13.2。活动索引仍为 `data/theraskill/indexes/phase6-v2-20261018-hybrid`，模型仍为 `deepseek-v4-pro` / `text-embedding-3-large`；未切换索引或重建向量。
+- 实现：构建时同步写元数据清单，旧索引一次扫描生成可跨进程的版本缓存；独立通道并行并与 LLM 规划重叠；请求内共享范围 ID，小范围按完整约束及文件指纹缓存；移除同技能整请求串行锁，保护共享 FAISS 初始化；修正重复 eligibility 谓词触发的 SQLite 广泛扫描；只读映射 Flat 向量，使用 IDSelectorArray 与紧凑 ID/行号映射。新增 `inventory.py`、`diagnostics.py`、`vectors.py`，可选 FAISS 最低版本更新为 1.13.2；基础依赖数不变。
+- 功能修正：发现 required-family 合并 LIMIT 会被问答记录占满，逐家族补缺后认知重构前三条包含方法量规，REBT 前四条包含量规。回填仅放宽模型建议范围，保留用户硬过滤及功能禁用范围。新增认知重构家族检查。此修正有意改变最终排序，不与纯性能优化的结果一致性混称。
+- 对比界限：`baseline-v1/` 固定记录计划的两次检索为 20.098 / 13.791 秒；`optimized-reference-v1/` 为 9.609 / 6.038 秒，八条 ID 和排序相同。最终 `final-review-reference/` 为 6.094 / 6.033 秒，因量规覆盖修正而改变排名。reference 模式是显式诊断参数，不进入生产或真实业务评估；生产每次继续真实 LLM 规划，没有以缓存答案或规则替代。
+- 真实检索结果：`final-six-skills-live/manifest.json` 的六例全部完成，情绪支持 14.214、风险分流 16.883、认知重构 18.400、REBT 9.530、情景构建 16.456、回应审核 11.524 秒，均包括真实规划；每例八条，共 48 条结果。策略与对应家族检查均通过，硬过滤另按主索引元数据复核。累计进程峰值 RSS 最大 726756 KiB（709.7 MiB），不是全应用内存承诺。
+- 界面与业务：八页浏览器 200，无页面异常/请求失败，所有浏览器请求端口为 5176，390 px 无整页溢出。真实中文专家任务 `expert_job_8d59ae32159d479c9173f097e1735cc5` 提交 0.22 秒，最终 idle 且结果非空；检索 14.773 秒、生成 15.049 秒。上次同类任务输入和模型计划不同，不据此声称受控加速倍数。应用已加载新代码，PID 2116572。
+- 验证：`python -m pytest -q -o addopts='' tests/test_standalone_kernel.py tests/test_theraskill*.py tests/smoke_theraskill_install.py` 为 228 passed / 4 条既有警告 / 21.55 秒。重建 wheel 后在 `/tmp/theraskill-lean-verify-0_b93602/venv` 以 `python -I tests/smoke_theraskill_install.py` 通过；隔离环境无 NumPy、FAISS、PyTorch 或旧 agent 模块，模型接口使用明确的本地 fixture。wheel 新增模块完整，不含本机 provider 文件。
+- 证据与复现：`artifacts/retrieval_optimization_20261018/` 保留各阶段 manifest/bundle/log、六例输入 `cases.json`、`expert-result.json`、`browser-validation.json`、`regression.log`、`lean-validation.log`；最终 `manifest.json` 记录代码/提示词 hash、来源、范围复核与安装结果。诊断脚本 `scripts/AdvancedRetrieval/profile_runtime_retrieval.py` 支持 `--plan-mode live|reference`、`--reference-bundle`、新 `--output-dir`、`--runs` 和 live 下的 `--cases`。完整命令和比较边界见 `docs/retrieval_optimization_20261018.zh.md`。
+- 排查与限制：单独使用 FTS rank 或 rowid 提示未消除大语料开销，SQL 诊断结果保留；最终处理重复 eligibility 条件后小范围才能使用语言索引。宽泛中文词法仍可能触及预算，明确暴露 warnings；旧索引首次清单准备、网络盘、模型调用和无过滤全局向量读取仍可能慢。六例工程检查及一次业务复测不能替代正式相关性或临床评价，也未进行并发负载测试。
+- 状态与保留：本轮本地实现、部署复测和文档完成；保留已有未提交改动和全部中间结果。没有额外发布知识、备份上传、git commit 或 push。
+
+## 35. README 与 main 源码同步准备（2026-10-19）
+
+- 用户要求更新 Git 和 README；沿用此前直接推送 main 的授权。更新中英文 README 的产品流程、单进程入口、检索说明和编辑配置步骤，增加 `CHANGELOG.md`，同步前端说明、中英文工作流和源码验收说明。
+- 补齐发布清单缺少的共享翻译组件、评估 JSON、新功能与验收文档。按清单暂存本轮及此前已完成的平台/部署/检索源码，不把旧宿主未跟踪代码、完整数据、运行日志或本机 provider 文件加入 Git。开发版 Vite 的 `/api` 改为统一转发至单个 5186 后端，与当前部署路由一致；正常应用端口仍为 5176。
+- 基线提交 `0e0fe53f57bccb859b52b48f90edeb4909555277`，远端 main 经 SSH 读取和 fetch 核对一致。HTTPS fetch 首次等待未完成后终止，改用既有 SSH 凭据；没有改写 Git 全局配置。
+- 在 `/tmp/theraskill-git-source-p4bw51_l/source` 验证发布清单导出的干净源码：Node 22.22.2 / npm 10.9.7，`npm ci` 与四界面 `npm run build` 成功；Python 3.12.7，`python -m pytest -q -o addopts='' tests/test_standalone_kernel.py tests/test_theraskill*.py tests/smoke_theraskill_install.py` 为 219 passed / 6 skipped / 3 warnings / 17.96 秒。六项跳过依赖未分发的模拟语言素材，三项旧宿主测试未导出；不可把此口径与完整本机 228 passed 混为一谈。
+- 同一干净源码 `python -m build --no-isolation` 成功生成 sdist 并从 sdist 构建 wheel；在 `/tmp/theraskill-lean-verify-0_b93602/venv` 以 `python -I` 运行导出源码中的安装 smoke，通过四界面、六模块、fixture 抽取交接及词法检索检查。没有为这轮 Git 同步额外发起真实业务模型任务。
+- 证据：`artifacts/git_sync_20261019/source-manifest.json`、`npm-ci.log`、`frontend-build.log`、`clean-source-tests.log`、`package-build.log`、`lean-validation.log`。提交前继续执行清单、链接、暂存范围及文件 hash 核对；实际提交和推送收据记录到本地 `git-receipt.json`。远端 CI 以实际运行状态为准。

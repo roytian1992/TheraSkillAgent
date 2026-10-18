@@ -101,7 +101,9 @@ def _subtitle_dialogue_text(text: str) -> str:
                 cue.append(lines[index])
                 index += 1
             if cue:
-                output.append(f"[{timestamp}] unknown: {' '.join(cue)}")
+                content = ' '.join(cue)
+                labelled = content if _SPEAKER_RE.match(content) else f"unknown: {content}"
+                output.append(f"[{timestamp}] {labelled}")
             continue
         # A malformed cue is retained as an unlabeled line for review.
         output.append(f"unknown: {line}")
@@ -226,7 +228,9 @@ class TranscriptDocument:
 def parse_transcript(text: str, *, source_path: str = "", encoding: str = "utf-8", language: str = "auto", document_id: str | None = None, speaker_role_overrides: Mapping[str, str] | None = None) -> TranscriptDocument:
     raw = str(text)
     normalized_source = normalize_text(raw)
-    lines = normalized_source.splitlines() or ([normalized_source] if normalized_source else [])
+    # Parse original lines so raw_text and source line numbers remain evidence.
+    # Normalization belongs only in normalized_text, never in the raw layer.
+    lines = raw.splitlines()
     seen: dict[str, str] = {}
     overrides = {str(key).strip().lower(): str(value).strip().lower() for key, value in (speaker_role_overrides or {}).items()}
     turns: list[TranscriptTurn] = []
@@ -316,12 +320,9 @@ def parse_transcript(text: str, *, source_path: str = "", encoding: str = "utf-8
     )
 
 
-def load_transcript(path: str | Path, *, language: str = "auto", speaker_role_overrides: Mapping[str, str] | None = None) -> tuple[TranscriptDocument, str]:
-    source = Path(path).expanduser().resolve()
-    if not source.is_file():
-        raise FileNotFoundError(f"transcript source is not a file: {source}")
-    text, encoding = _read_text(source)
-    source_format = source.suffix.lower().lstrip(".") or "txt"
+def parse_transcript_source(text: str, *, filename: str = "dialogue.txt", encoding: str = "utf-8", language: str = "auto", speaker_role_overrides: Mapping[str, str] | None = None) -> TranscriptDocument:
+    """Use the same source adapters for browser uploads and local files."""
+    source_format = Path(filename).suffix.lower().lstrip(".") or "txt"
     parse_text = text
     if source_format == "json":
         parse_text = _json_dialogue_text(json.loads(text))
@@ -333,12 +334,20 @@ def load_transcript(path: str | Path, *, language: str = "auto", speaker_role_ov
         parse_text = _json_dialogue_text(records)
     elif source_format in {"srt", "vtt"}:
         parse_text = _subtitle_dialogue_text(text)
-    document = parse_transcript(parse_text, source_path=str(source), encoding=encoding, language=language, speaker_role_overrides=speaker_role_overrides)
+    document = parse_transcript(parse_text, source_path=filename, encoding=encoding, language=language, speaker_role_overrides=speaker_role_overrides)
     # Hash and retain the original source representation even when a
     # structured/subtitle adapter creates a canonical parse view.
     document.raw_text_sha256 = _sha256(text)
     document.metadata.update({"source_format": source_format, "parse_view": "canonical_dialogue" if parse_text != text else "source_text"})
-    return document, text
+    return document
+
+
+def load_transcript(path: str | Path, *, language: str = "auto", speaker_role_overrides: Mapping[str, str] | None = None) -> tuple[TranscriptDocument, str]:
+    source = Path(path).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"transcript source is not a file: {source}")
+    text, encoding = _read_text(source)
+    return parse_transcript_source(text, filename=str(source), encoding=encoding, language=language, speaker_role_overrides=speaker_role_overrides), text
 
 
 def analyze_transcript(document: TranscriptDocument) -> dict[str, Any]:

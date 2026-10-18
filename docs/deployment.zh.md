@@ -8,11 +8,12 @@ Linux / Python 3.11+。本地开发源码需要 Node 22.12+ 来构建四个界�
 python -m venv .venv
 source .venv/bin/activate
 pip install /path/to/theraskill_agent-0.4.0-py3-none-any.whl
-theraskill-agent project init /path/to/TheraSkillAgent
-export THERASKILL_AGENT_ROOT=/path/to/TheraSkillAgent
+theraskill-agent project init ~/TheraSkillAgent
 theraskill-agent status
 theraskill-agent run extraction.plan --goal 'Extract response strategies grounded in source quotations'
 ```
+
+wheel 默认使用 `~/TheraSkillAgent` 保存配置和数据；源码安装默认使用项目目录。自定义目录时使用 `theraskill-agent --project /你的目录 ui`，无需设置环境变量。
 
 源码安装见根目录 README。需要 FAISS 向量构建与查询时，再安装同版本软件的 `retrieval` extra；模型权重和推理框架不在基础依赖中。
 
@@ -20,7 +21,7 @@ theraskill-agent run extraction.plan --goal 'Extract response strategies grounde
 
 共享的 provider 模板在 `configs/theraskill/providers.yaml`，本机凭据和覆盖项放在自动读取的 `configs/theraskill/providers.local.yaml`。这个本地文件被 Git 忽略，也不会进入 wheel 或源码发布物。LLM 和 embedding 是两个直接配置块，可以分别填写 URL、模型名和 API key。
 
-首次配置可复制模板：
+进入工作目录（wheel 安装为 `cd ~/TheraSkillAgent`），首次配置可复制模板：
 
 ```bash
 cp configs/theraskill/providers.local.example.yaml configs/theraskill/providers.local.yaml
@@ -54,25 +55,69 @@ theraskill-agent provider check --kind embedding
 
 加 `--live` 会发起一次真实请求。默认配置只提供本地服务地址示例，端点本身需另外准备。更换生成 LLM 不需重建已有索引；更换 embedding 应使用对应索引或重建。
 
-输出预算可能同时包含推理和可见回复。收到 `finish_reason: length` 会明确失败，避免接受不完整回复；可增大 `llm.max_output_tokens`，或在原来的 `llm` 配置块设置服务支持的 `reasoning_effort` / `thinking`。例如 DeepSeek 支持 `thinking: {type: disabled}` 和推理强度设置，参见[官方说明](https://api-docs.deepseek.com/guides/thinking_mode/)。这些选项均可选，应用不会自动改变模型默认值。支持助手会额外验证非空 `response_text`，格式有效但字段缺失时最多重新生成一次。
+正常部署只需填写上述模型名、URL 和密钥。输出截断与空回复由公共模型层自动进行有上限的恢复；高级参数见下方故障排查。
 
 ## 启动
 
 ```bash
-theraskill-agent ui --start-services
+theraskill-agent ui
 ```
 
-浏览器打开 `http://127.0.0.1:5176/`。UI 与资源管理共用端口；业务服务默认使用 8876、8878、8879、8881、8891、8892。端口可通过项目的 `THERASKILL_<SERVICE>_PORT` 环境变量配置。UI 的 `--port` 只改变 UI 端口。默认监听本机，供本地用户使用；跨机器共享部署应另行设置访问控制。
+浏览器打开 `http://127.0.0.1:5176/`。整个应用默认只有 **一个进程、一个监听端口**。情景模拟、支持助手、专家工作台、知识治理、知识抽取和文本处理是进程内模块，随主程序一起启动和关闭；无需分别启动六个服务。
 
 ```bash
-theraskill-agent service status
-theraskill-agent service stop
+# 修改整个应用的网页/API 入口端口
+theraskill-agent ui --port 8080
+# 检查运行中的应用与各模块
+curl http://127.0.0.1:5176/health
+curl http://127.0.0.1:5176/api/overview
 ```
 
-`service stop` 管理领域服务；前台 UI 用 Ctrl-C 退出。不要在旧进程仍运行时认为源码改动已生效，更新后重启相应进程。
+前台用 Ctrl-C 退出。模型服务由本地模型进程或远程 API 提供，LLM 和 embedding 的地址各自配置；它们不属于上述应用模块。
+
+从旧版升级：先在旧应用中确认没有正在执行的任务，退出旧 UI，再运行一次 `theraskill-agent service stop` 停止旧版独立服务，之后使用 `theraskill-agent ui`。旧端口 8876、8878、8879、8881、8891、8892 不再是默认部署依赖。`--start-services` 暂时兼容已有启动脚本，但效果等同于 `ui`，不会再拉起六个子进程。独立 `service` 命令仅用于显式的分离调试。
+
+默认监听本机；跨机器共享时需要配置相应的访问控制。升级代码或修改模型配置后，重启这个应用进程即可。
 
 ## 数据
 
 `project init` 会创建配置和小型自编知识示例。完整知识、索引与模拟素材需独立安装，参见 [知识和索引](knowledge_and_indexes.zh.md)。首次体验可直接在界面导入 `examples/knowledge/demo.jsonl`，选择词法构建，无需启动任何模型。没有完整素材时，不应把界面可启动理解为所有正式训练课程均已安装。
 
 保留整个可写工作目录可备份配置、已安装资源、skills/local、state 和用户业务数据。 `.env`、会话和运行数据不进入公开源码或下载包。升级 wheel 不会清空工作目录。
+
+## 检索性能与诊断
+
+启动方式和配置保持上述用法。高级检索会并行执行独立召回通道，自动复用与索引版本绑定的元数据清单及范围缓存。新建索引自带 `metadata_inventory.json`；旧索引第一次使用时自动生成运行缓存，这次准备可能较慢，后续进程可直接复用。缓存不保存模型规划答案，正常请求仍调用配置的 LLM。
+
+混合检索的可选 `retrieval` extra 使用 `faiss-cpu>=1.13.2`，支持只读映射本项目的 Flat 向量索引，并只对符合过滤条件的向量做近邻选择。基础安装依赖数不变，无需增加进程、端口或手工缓存配置。
+
+遇到慢请求时，查看专家/支持任务 provenance 中的 `retrieval_summary.timings`、`planner_timings` 和 `warnings`；对应 bundle 还包含 `planner_trace.inventory_cache`。规划、向量和词法耗时会分别记录，并行阶段不能相加当作总耗时。宽泛中文查询仍可能触及词法通道预算，此时会明确报告并保留已完成通道；模型或网络延迟也会影响总时间。真实测量和复现命令见[检索优化验收](retrieval_optimization_20261018.zh.md)。
+
+## 业务验证与任务恢复
+
+健康检查只证明服务可连接。部署后还应在界面运行一次对话分析与 bundle 下载、知识抽取试跑、有效训练及复盘、专家回应审核和课程批次。首页任务中心、抽取历史、专家任务历史与课程批次历史可以重新打开任务；批次和抽取失败可重试未完成项，训练状态更新与复盘也有单独的重试入口。无有效双边对话或状态更新失败时，训练标记为不可评估，不能提交训练评分。
+
+## 模型输出故障排查
+
+公共模型层会对输出截断或空回复最多恢复两次。截断时重新生成完整结果，并逐步增加输出预算，自动增长上限为 32768 tokens；如果原配置更大则保留该值，不再自动增加。不会拼接不完整 JSON，也不会把截断结果交给业务执行。临时网络故障与限流使用独立的有限重试；认证或参数错误会直接报告。
+
+通常无需修改参数。如果服务本身的输出上限或推理消耗导致恢复后仍然失败，可在已有 `llm` 块增加可选的 `max_output_tokens`，以及服务明确支持的 `thinking` / `reasoning_effort`。应用不会根据模型名称判断行为，也不会自动关闭推理。字段与非空回复检查继续保留，支持助手的结构错误最多重新生成一次。
+
+```yaml
+llm:
+  # 与已有 model/base_url/api_key 一起设置，仅在需要时添加。
+  max_output_tokens: 8192
+  retry_attempts: 2
+```
+
+修改后重启 `theraskill-agent ui`。失败任务可从界面恢复；业务记录和之前的输出会保留。
+
+## 交互工作流与升级门禁
+
+新功能使用方法见[工作流说明](workflows.zh.md)：持久技能执行、抽取至索引的治理、效果基线及课程练习均在现有工作台操作，不新增端口或运行依赖。备份应同时包含 `data/theraskill/tasks`、`data/theraskill/evaluations`、课程/会话数据库和 `skills/local`。
+
+空设备可首次初始化索引。替换已有活动索引或同名技能需要已复核的效果对比报告；CLI 的 `knowledge activate` 和 `skill install --overwrite` 使用 `--behavior-report REPORT_ID`。专家页面的知识预发布正式发布也需要该门禁。被评估产物、模型设置或评价器变化后，旧报告不能继续放行；保留历史并重新评价。
+
+## 部署简化验收
+
+单进程合并、公共模型恢复、独立安装检查及真实浏览器结果见[部署简化验收记录](deployment_simplification_20261018.zh.md)。

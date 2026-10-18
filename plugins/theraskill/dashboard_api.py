@@ -58,14 +58,22 @@ def create_router(app_name: str) -> APIRouter:
             headers["authorization"] = f"Bearer {service.token}"
 
         try:
-            async with httpx.AsyncClient(timeout=service.timeout_seconds) as client:
-                upstream = await client.request(
-                    request.method,
-                    target,
-                    params=request.query_params,
-                    content=await request.body(),
-                    headers=headers,
+            if service.base_url.startswith('inprocess://'):
+                from theraskill_agent.local_services import get_services
+                upstream = await get_services().arequest(
+                    service.base_url.removeprefix('inprocess://'), request.method,
+                    '/' + path.lstrip('/'), params=request.query_params,
+                    content=await request.body(), headers=headers,
                 )
+            else:
+                async with httpx.AsyncClient(timeout=service.timeout_seconds) as client:
+                    upstream = await client.request(
+                        request.method,
+                        target,
+                        params=request.query_params,
+                        content=await request.body(),
+                        headers=headers,
+                    )
         except httpx.HTTPError as exc:
             return JSONResponse(
                 {"detail": f"TheraSkill {app_name} service unavailable: {exc}"},

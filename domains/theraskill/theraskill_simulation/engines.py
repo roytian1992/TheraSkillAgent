@@ -22,6 +22,27 @@ from .contracts import (
 from .persona_compiler import PersonaCompiler, runtime_bundle_with_context
 
 
+
+class SimulationEngineError(RuntimeError):
+    """A model or released runtime failed; the saved session can be retried."""
+
+
+def _adapter_error(process: subprocess.CompletedProcess) -> str:
+    try:
+        payload = json.loads(process.stdout)
+        report_path = (payload.get("parsed_stdout") or {}).get("output")
+        if report_path and Path(report_path).is_file():
+            report = json.loads(Path(report_path).read_text(encoding="utf-8"))
+            error = report.get("error") or {}
+            if error.get("details"):
+                return f"{error.get('type', 'ModelError')}: {error['details']}"
+        if payload.get("stage"):
+            return f"{payload['stage']} failed. Check the saved runtime report and retry."
+    except (ValueError, OSError, AttributeError):
+        pass
+    return process.stderr.strip() or process.stdout.strip() or "Runtime returned no error details"
+
+
 def _subprocess_environment(project_root: Path) -> dict[str, str]:
     """Keep the repository package importable in direct Python child processes."""
     environment = os.environ.copy()
@@ -188,7 +209,7 @@ class ExistingLLMPatientEngine:
                 patient_text = str(row.get("text") or "")
                 break
         if not patient_text:
-            raise RuntimeError("released patient runtime returned no patient utterance")
+            raise SimulationEngineError("released patient runtime returned no patient utterance")
         evidence_ids = list(private_state.evidence_unit_ids)
         for key in (
             "patient_protocol_unit_ids",
@@ -240,7 +261,7 @@ class DeferredLLMPatientEngine:
         model_config: str | Path,
         parse_retries: int = 1,
         max_prompt_tokens: int = 12000,
-        max_output_tokens: int = 1800,
+        max_output_tokens: int | None = None,
         fast_mode: bool = True,
     ) -> None:
         self.project_root = Path(project_root).resolve()
@@ -426,7 +447,7 @@ class DeferredLLMPatientEngine:
         )
         patient_text = " ".join(str(result.get("patient_utterance") or "").split())
         if not patient_text:
-            raise RuntimeError("patient opening runtime returned no patient utterance")
+            raise SimulationEngineError("patient opening runtime returned no patient utterance")
         evidence_ids = self._evidence_ids(private_state, case_bundle)
         return AgentTurnResult(
             text=patient_text,
@@ -540,7 +561,7 @@ class DeferredLLMPatientEngine:
             str(turn_result.get("patient_utterance") or "").split()
         )
         if not patient_text:
-            raise RuntimeError("deferred patient runtime returned no patient utterance")
+            raise SimulationEngineError("deferred patient runtime returned no patient utterance")
         evidence_ids = self._evidence_ids(private_state, case_bundle)
         response_contract = self._response_contract(turn_result, disclosure_result, turn_compiled)
         next_private = private_state.model_copy(
@@ -623,7 +644,7 @@ class DeferredLLMPatientEngine:
         )
         patient_text = " ".join(str(result.get("patient_utterance") or "").split())
         if not patient_text:
-            raise RuntimeError("fast patient runtime returned no patient utterance")
+            raise SimulationEngineError("fast patient runtime returned no patient utterance")
         plan = result.get("patient_turn_plan") or {}
         hidden_delta = result.get("hidden_state_delta") or {}
         next_private = private_state.model_copy(update={
@@ -1037,18 +1058,17 @@ class CommandBackedLLMTherapistEngine:
             check=False,
         )
         if process.returncode != 0:
-            raise RuntimeError(
-                "released therapist runtime failed: "
-                + (process.stderr.strip() or process.stdout.strip())
+            raise SimulationEngineError(
+                "released therapist runtime failed: " + _adapter_error(process)
             )
         try:
             output = json.loads(process.stdout)
         except json.JSONDecodeError as exc:
-            raise RuntimeError("therapist adapter returned non-JSON output") from exc
+            raise SimulationEngineError("therapist adapter returned non-JSON output") from exc
         digest = output.get("review_digest") or {}
         utterance = str(digest.get("therapist_utterance") or "").strip()
         if not utterance:
-            raise RuntimeError("released therapist runtime returned no therapist utterance")
+            raise SimulationEngineError("released therapist runtime returned no therapist utterance")
         memory_report_path = Path(output["therapist_case_memory_report_path"])
         turn_report_path = Path(output["therapist_turn_report_path"])
         memory_report = json.loads(memory_report_path.read_text(encoding="utf-8"))
@@ -1152,14 +1172,22 @@ class CommandBackedLLMTherapistEngine:
             check=False,
         )
         if process.returncode != 0:
-            raise RuntimeError(
+            details = process.stderr.strip() or process.stdout.strip()
+            if output_path.is_file():
+                try:
+                    failure = json.loads(output_path.read_text(encoding="utf-8")).get("error") or {}
+                    if failure.get("details"):
+                        details = f"{failure.get('type', 'ModelError')}: {failure['details']}"
+                except (OSError, ValueError, AttributeError):
+                    pass
+            raise SimulationEngineError(
                 "deferred therapist memory update failed: "
-                + (process.stderr.strip() or process.stdout.strip())
+                + details
             )
         report = json.loads(output_path.read_text(encoding="utf-8"))
         memory = (report.get("result") or {}).get("therapist_case_memory") or {}
         if not memory:
-            raise RuntimeError("deferred therapist memory update returned no memory")
+            raise SimulationEngineError("deferred therapist memory update returned no memory")
         next_private = private_state.model_copy(
             update={
                 "case_formulation_memory": memory,
@@ -1241,14 +1269,13 @@ class CommandBackedLLMSimulationReviewer:
             check=False,
         )
         if process.returncode != 0:
-            raise RuntimeError(
-                "released simulation reviewer failed: "
-                + (process.stderr.strip() or process.stdout.strip())
+            raise SimulationEngineError(
+                "released simulation reviewer failed: " + _adapter_error(process)
             )
         try:
             output = json.loads(process.stdout)
         except json.JSONDecodeError as exc:
-            raise RuntimeError("simulation reviewer returned non-JSON output") from exc
+            raise SimulationEngineError("simulation reviewer returned non-JSON output") from exc
         digest = output.get("review_digest") or {}
         review_gate = digest.get("review_gate") or {}
         summary = {

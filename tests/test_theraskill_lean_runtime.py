@@ -125,11 +125,12 @@ def test_ui_serves_all_workspaces_and_preserves_api_requests(tmp_path, monkeypat
         result = client.post("/api/transcript/v1/transcript/analyze?language=zh", json={"text": "医生：你好"}, headers={"X-Transcript-Role": "researcher"})
         assert result.status_code == 201
         assert result.headers["X-Result"] == "ok"
-        assert str(calls[-1].url) == "http://127.0.0.1:19892/v1/transcript/analyze?language=zh"
+        assert str(calls[-1].url) == "http://transcript.internal/v1/transcript/analyze?language=zh"
         assert calls[-1].headers["X-Transcript-Role"] == "researcher"
         assert json.loads(calls[-1].content)["text"] == "医生：你好"
         assert client.get("/api/plugins/theraskill-support/health").status_code == 201
-        assert calls[-1].url.port == 8878
+        assert calls[-1].url.host == 'support.internal'
+        assert calls[-1].url.port is None
         assert client.get("/api/transcript/down").status_code == 503
         assert client.get("/api/unknown/health").status_code == 404
 

@@ -8,6 +8,7 @@ recursive-include plugins/theraskill/skills *.md *.yaml *.json
 # Runtime scripts and templates are copied under theraskill_agent/_resources
 # by the build hook. Knowledge, credentials and legacy host code stay outside.
 recursive-include configs *.yaml
+recursive-include configs/theraskill/evaluations *.json
 exclude configs/theraskill/providers.local.yaml
 recursive-include prompts *.md
 recursive-include scripts/Simulation *.py

@@ -256,7 +256,7 @@ def test_verify_checks_actual_vectors_instead_of_only_declared_counts(workspace,
         verify_index(output)
 
 
-def test_package_roundtrip_parts_and_activation(workspace):
+def test_package_roundtrip_parts_and_activation(workspace, monkeypatch):
     archive = workspace / 'demo.tar.gz'
     record = resources.pack_resource(DEMO, archive, package_id='demo', kind='knowledge', license_id='CC0-1.0', part_bytes=700)
     catalog = workspace / 'catalog.json'; write_json(catalog, {'schema_version': resources.CATALOG_SCHEMA, 'packages': [record]})
@@ -271,7 +271,15 @@ def test_package_roundtrip_parts_and_activation(workspace):
     from domains.theraskill.hybrid_retrieval import selected_retrieval_paths
     assert selected_retrieval_paths(workspace / 'model.yaml', workspace / 'cache').sqlite_fts == resources.index_path('demo-index') / 'phase6_retrieval_fts.sqlite'
     second = resources.index_path('second'); build_index(installed, second)
-    resources.activate_index('second')
+    with pytest.raises(ValueError, match='reviewed behavior comparison'):
+        resources.activate_index('second')
+    assert resources.active_index()[0] == resources.index_path('demo-index')
+    from theraskill_agent import behavior_eval
+    checked = []
+    monkeypatch.setattr(behavior_eval, 'verify_gate', lambda report_id, target: checked.append((report_id, target)))
+    resources.activate_index('second', report_id='fixture-reviewed-report')
+    assert checked[0][0] == 'fixture-reviewed-report'
+    assert checked[0][1]['knowledge_sha256'] == first['knowledge_sha256']
     assert resources.rollback_index() == first
     with pytest.raises(ValueError, match='immutable'): resources.install_package(packed_index)
 

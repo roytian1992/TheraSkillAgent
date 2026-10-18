@@ -8,14 +8,19 @@ running BM25, dense, and controlled-label channels.
 from __future__ import annotations
 
 import argparse
+from array import array
 import hashlib
 import heapq
 import json
 import os
 import sqlite3
+import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import sys
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +34,9 @@ for path in (SCRIPT_DIR.parents[1], SCRIPT_DIR, COMMON_DIR):
 
 from io_utils import ensure_output_path, read_json, write_json
 from theraskill_agent.query_understanding import understand_query
-from theraskill_agent.indexing.search import compile_scope, lexical_candidates, filter_candidates
+from theraskill_agent.indexing.search import compile_scope, lexical_candidates, filter_candidates, language_scoped_database
+from theraskill_agent.indexing.diagnostics import RetrievalTimings
+from theraskill_agent.indexing.vectors import read_faiss_index
 from domains.theraskill.runtime import runtime_root
 from retrieval_module_registry import PROJECT_ROOT, load_advanced_v2, load_hybrid_v2, load_planner
 from retrieval_surface_registry import (
@@ -66,7 +73,9 @@ HYBRID_V2 = load_hybrid_v2()
 PLANNER = load_planner()
 
 _FAISS_INDEX_CACHE: dict[str, Any] = {}
-_FAISS_SHARD_IDS_CACHE: dict[str, list[dict[str, Any]]] = {}
+_FAISS_SHARD_IDS_CACHE: dict[str, tuple[list[str], Any]] = {}
+_FAISS_CACHE_LOCK = threading.RLock()
+_CHANNEL_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix='theraskill-retrieval')
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -226,11 +235,13 @@ def stable_json_sha256(obj: Any) -> str:
 
 
 def metadata_index_fingerprint(db: Path) -> dict[str, Any]:
+    from theraskill_agent.indexing.inventory import index_fingerprint
     stat = db.stat()
     return {
         "path": str(db.resolve()),
         "size_bytes": stat.st_size,
         "mtime_ns": stat.st_mtime_ns,
+        "sqlite_files": index_fingerprint(db)['files'],
     }
 
 
@@ -371,6 +382,7 @@ def plan_args(args: argparse.Namespace) -> argparse.Namespace:
         overwrite=True,
         json=False,
         allow_degraded_fallback=args.allow_degraded_fallback,
+        inventory_cache=str(Path(args.scope_count_cache_db).parent.parent / 'planner_inventory.json') if args.scope_count_cache_db else None,
     )
 
 
@@ -412,6 +424,16 @@ def append_query_scope(db: Path, plan: dict[str, Any], where: list[str], params:
             clauses, values = compile_scope(connection, understanding, table=table)
         where.extend(clauses)
         params.extend(values)
+    # The eligibility index covers almost the whole released corpus. Without
+    # ANALYZE statistics, SQLite can choose it over selective language/family
+    # indexes and read millions of rows for a small scope. IS TRUE preserves
+    # the original comparison (including NULL/type behavior), while leaving
+    # those selective indexes available. Keep the plain guard for an unscoped
+    # eligibility-only count, where its covering index is useful.
+    eligibility = [clause for clause in where if clause.replace(' ', '') == 'm.retrieval_eligible=1']
+    if eligibility:
+        other = [clause for clause in where if clause not in eligibility]
+        where[:] = ['(m.retrieval_eligible = 1) IS TRUE' if other else 'm.retrieval_eligible = 1', *other]
 
 
 def token_exists_clauses(token_filters: list[tuple[str, str]], params: list[Any]) -> list[str]:
@@ -647,7 +669,22 @@ def should_skip_wide_scan(allowed_ids: set[str] | None, max_sql_allowed_ids: int
     return allowed_ids is not None and len(allowed_ids) > max_sql_allowed_ids
 
 
+def bounded_fts_rows(connection, sql, params, timeout_seconds=2.0):
+    """Bound broad FTS scans without dropping the caller's metadata filters."""
+    deadline = time.monotonic() + timeout_seconds
+    connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+    try:
+        return [dict(row) for row in connection.execute(sql, params).fetchall()], False
+    except sqlite3.OperationalError as exc:
+        if str(exc).lower() != 'interrupted':
+            raise
+        return [], True
+    finally:
+        connection.set_progress_handler(None, 0)
+
+
 def fetch_bm25_candidates(db: Path, plan: dict[str, Any], query: str, limit: int, allowed_ids: set[str] | None = None, max_sql_allowed_ids: int = 50000) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    db = language_scoped_database(db, plan.get('_query_understanding') or {})
     search_queries = plan.get("search_queries") or {}
     match = fts_match_query(search_queries.get("bm25_queries") or [], query)
     where, params, _ = compile_filter(plan, include_fts=True)
@@ -683,13 +720,16 @@ def fetch_bm25_candidates(db: Path, plan: dict[str, Any], query: str, limit: int
     con = sqlite3.connect(str(db))
     con.row_factory = sqlite3.Row
     try:
-        rows = con.execute(sql, params).fetchall()
+        rows, timed_out = bounded_fts_rows(con, sql, params)
     except sqlite3.OperationalError:
         params[0] = f'"{query.replace(chr(34), chr(32))}"'
-        rows = con.execute(sql, params).fetchall()
+        rows, timed_out = bounded_fts_rows(con, sql, params)
     finally:
         con.close()
-    return [dict(row) for row in rows], {
+    return rows, {
+        "timed_out": timed_out,
+        "source_index": str(db),
+        "timeout_seconds": 2.0,
         "fts_query": match,
         "limit": limit,
         "allowed_ids": len(allowed_ids) if allowed_ids is not None else None,
@@ -698,6 +738,7 @@ def fetch_bm25_candidates(db: Path, plan: dict[str, Any], query: str, limit: int
 
 
 def fetch_label_candidates(db: Path, plan: dict[str, Any], limit: int, allowed_ids: set[str] | None = None, max_sql_allowed_ids: int = 50000) -> list[dict[str, Any]]:
+    db = language_scoped_database(db, plan.get('_query_understanding') or {})
     label_queries = [str(value).lower() for value in (plan.get("search_queries", {}).get("label_queries") or []) if str(value).strip()]
     if not label_queries:
         return []
@@ -743,13 +784,17 @@ def fetch_label_candidates(db: Path, plan: dict[str, Any], limit: int, allowed_i
         con.close()
 
 
-def fetch_required_family_candidates(db: Path, plan: dict[str, Any], query: str, limit: int, allowed_ids: set[str] | None = None, max_sql_allowed_ids: int = 50000, skip_fts: bool = False) -> list[dict[str, Any]]:
+def fetch_required_family_candidates(db: Path, plan: dict[str, Any], query: str, limit: int, allowed_ids: set[str] | None = None, max_sql_allowed_ids: int = 50000, skip_fts: bool = False, trace: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    db = language_scoped_database(db, plan.get('_query_understanding') or {})
+    if trace is not None:
+        trace['source_index'] = str(db)
     families = required_families(plan)
     if not families:
         return []
     scoped_allowed_ids = allowed_ids if not should_skip_wide_scan(allowed_ids, max_sql_allowed_ids) else None
     filters = dict(plan.get("metadata_filters") or {})
     routes = [str(value) for value in (filters.get("default_route") or []) if str(value)]
+    lexical_rows = []
     if not skip_fts:
         search_queries = []
         search_queries.extend(plan.get("search_queries", {}).get("label_queries") or [])
@@ -792,19 +837,22 @@ def fetch_required_family_candidates(db: Path, plan: dict[str, Any], query: str,
         con = sqlite3.connect(str(db))
         con.row_factory = sqlite3.Row
         try:
-            rows = [dict(row) for row in con.execute(sql, params).fetchall()]
+            rows, timed_out = bounded_fts_rows(con, sql, params)
+            if trace is not None:
+                trace.update(fts_timed_out=timed_out, timeout_seconds=2.0)
         except sqlite3.OperationalError:
             rows = []
         finally:
             con.close()
-        if rows:
+        if rows and all(any(row['dedup_family'] == family for row in rows) for family in families):
             return rows
+        lexical_rows = rows
 
     # If lexical matching is too narrow, still provide a small required-family
     # fallback so quota selection can include the family mandated by the LLM plan.
-    def fallback_query(use_routes: bool, use_allowed_ids: bool) -> list[dict[str, Any]]:
-        where = ["m.retrieval_eligible = 1", f"m.dedup_family in ({placeholders(families)})"]
-        params = list(families)
+    def fallback_query(family: str, use_routes: bool, use_allowed_ids: bool) -> list[dict[str, Any]]:
+        where = ["m.retrieval_eligible = 1", "m.dedup_family = ?"]
+        params = [family]
         if use_routes and routes:
             where.append(f"m.default_route in ({placeholders(routes)})")
             params.extend(routes)
@@ -841,13 +889,32 @@ def fetch_required_family_candidates(db: Path, plan: dict[str, Any], query: str,
         finally:
             con.close()
 
-    rows = fallback_query(use_routes=True, use_allowed_ids=True)
-    if rows or not routes:
-        return rows
-    rows = fallback_query(use_routes=False, use_allowed_ids=True)
-    if rows:
-        return rows
-    return fallback_query(use_routes=False, use_allowed_ids=False)
+    # A combined LIMIT lets a large QA family crowd a small method/rubric
+    # family out of the entire candidate pool. Backfill each missing required
+    # family separately, keeping explicit user/policy scope on every query.
+    groups = {family: [row for row in lexical_rows if row['dedup_family'] == family] for family in families}
+    fallback_families = []
+    for family in families:
+        if groups[family]:
+            continue
+        fallback_families.append(family)
+        rows = fallback_query(family, use_routes=True, use_allowed_ids=True)
+        if not rows and routes:
+            rows = fallback_query(family, use_routes=False, use_allowed_ids=True)
+        if not rows:
+            rows = fallback_query(family, use_routes=False, use_allowed_ids=False)
+        groups[family] = rows
+    if trace is not None:
+        trace.update(used_scoped_fallback=bool(fallback_families), fallback_families=fallback_families,
+                     family_counts={family: len(rows) for family, rows in groups.items()})
+    balanced = []
+    for offset in range(limit):
+        for family in families:
+            if offset < len(groups[family]):
+                balanced.append(groups[family][offset])
+                if len(balanced) >= limit:
+                    return balanced
+    return balanced
 
 
 def fetch_policy_family_fallback(db: Path, skill: str, plan: dict[str, Any], limit: int) -> list[dict[str, Any]]:
@@ -963,6 +1030,12 @@ def fetch_compact_label_candidates(compact_db: Path, plan: dict[str, Any], query
     return rows, {"fts_query": match, "limit": limit, "compact_label_db": str(compact_db)}
 
 
+@lru_cache(maxsize=8)
+def _cached_scope_ids(db_path: str, fingerprint: str, sql: str, parameters: tuple) -> frozenset[str]:
+    with closing(sqlite3.connect(f'{Path(db_path).as_uri()}?mode=ro', uri=True)) as connection:
+        return frozenset(str(row[0]) for row in connection.execute(sql, parameters))
+
+
 def allowed_retrieval_ids(db: Path, plan: dict[str, Any], max_materialized_ids: int | None = None, known_count: int | None = None) -> set[str] | None:
     if max_materialized_ids is not None and known_count is not None and known_count > max_materialized_ids:
         return None
@@ -971,6 +1044,8 @@ def allowed_retrieval_ids(db: Path, plan: dict[str, Any], max_materialized_ids: 
         where.extend(token_exists_clauses(token_filters, params))
     append_query_scope(db, plan, where, params, table_name(db))
     sql = f"select retrieval_id from {table_name(db)} m where {' and '.join(where)}"
+    if known_count is not None and known_count <= 50000:
+        return set(_cached_scope_ids(str(db.resolve()), stable_json_sha256(metadata_index_fingerprint(db)), sql, tuple(params)))
     con = sqlite3.connect(str(db))
     try:
         return {str(row[0]) for row in con.execute(sql, params)}
@@ -1084,7 +1159,7 @@ def cached_faiss_search(faiss_state: dict[str, Any], dense_state: dict[str, Any]
     cache_hit = index_path in _FAISS_INDEX_CACHE
     index = _FAISS_INDEX_CACHE.get(index_path)
     if index is None:
-        index = faiss.read_index(index_path)
+        index = read_faiss_index(index_path)
         ann = faiss_state.get("ann_parameters") or {}
         if hasattr(index, "nprobe") and ann.get("nprobe"):
             index.nprobe = int(ann["nprobe"])
@@ -1119,16 +1194,18 @@ def cached_faiss_search(faiss_state: dict[str, Any], dense_state: dict[str, Any]
     }
 
 
-def load_shard_ids(ids_path: str) -> list[dict[str, Any]]:
-    if ids_path in _FAISS_SHARD_IDS_CACHE:
+def load_shard_ids(ids_path: str) -> tuple[list[str], Any]:
+    with _FAISS_CACHE_LOCK:
+        if ids_path not in _FAISS_SHARD_IDS_CACHE:
+            ids, rows = [], array('q')
+            with Path(ids_path).open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    if line.strip():
+                        item = json.loads(line)
+                        ids.append(item.get('retrieval_id'))
+                        rows.append(int(item['row_index']) if item.get('row_index') is not None else -1)
+            _FAISS_SHARD_IDS_CACHE[ids_path] = ids, rows
         return _FAISS_SHARD_IDS_CACHE[ids_path]
-    rows: list[dict[str, Any]] = []
-    with Path(ids_path).open("r", encoding="utf-8") as handle:
-        for line in handle:
-            if line.strip():
-                rows.append(json.loads(line))
-    _FAISS_SHARD_IDS_CACHE[ids_path] = rows
-    return rows
 
 
 def selected_faiss_shards(shards_dir: Path, plan: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -1185,32 +1262,36 @@ def faiss_shard_search(shards_dir: Path, plan: dict[str, Any], query_embedding: 
             continue
         index_path = str((shards_dir / index_ref).resolve()) if not Path(index_ref).is_absolute() else index_ref
         ids_path = str((shards_dir / ids_ref).resolve()) if not Path(ids_ref).is_absolute() else ids_ref
-        cache_hit = index_path in _FAISS_INDEX_CACHE
-        index = _FAISS_INDEX_CACHE.get(index_path)
-        if index is None:
-            index = faiss.read_index(index_path)
-            _FAISS_INDEX_CACHE[index_path] = index
+        with _FAISS_CACHE_LOCK:
+            cache_hit = index_path in _FAISS_INDEX_CACHE
+            index = _FAISS_INDEX_CACHE.get(index_path)
+            if index is None:
+                index = read_faiss_index(index_path)
+                _FAISS_INDEX_CACHE[index_path] = index
         k = min(per_shard_k, int(index.ntotal))
         if k <= 0:
             continue
-        id_rows = load_shard_ids(ids_path)
+        shard_ids, shard_rows = load_shard_ids(ids_path)
+        if len(shard_ids) != index.ntotal:
+            raise ValueError('FAISS vector and ID counts differ')
         if allowed_ids is None:
             distances, indices = index.search(query, k)
         else:
-            positions = np.asarray([i for i, item in enumerate(id_rows) if item.get('retrieval_id') in allowed_ids], dtype=np.int64)
+            positions = np.asarray([i for i, rid in enumerate(shard_ids) if rid in allowed_ids], dtype=np.int64)
             if not len(positions):
                 continue
-            selector = faiss.IDSelectorBatch(positions)
+            # IndexFlat has a direct gather path for IDSelectorArray. Batch
+            # selectors still loop over every vector in a large style shard.
+            selector = faiss.IDSelectorArray(positions)
             distances, indices = index.search(query, min(k, len(positions)), params=faiss.SearchParameters(sel=selector))
         added = 0
         for rank, (local_idx, score) in enumerate(zip(indices[0].tolist(), distances[0].tolist()), start=1):
             local_idx = int(local_idx)
-            if local_idx < 0 or local_idx >= len(id_rows):
+            if local_idx < 0 or local_idx >= len(shard_ids):
                 continue
-            meta = id_rows[local_idx]
             merged.append({
-                "retrieval_id": meta.get("retrieval_id"),
-                "row_index": meta.get("row_index"),
+                "retrieval_id": shard_ids[local_idx],
+                "row_index": shard_rows[local_idx] if shard_rows[local_idx] >= 0 else None,
                 "dense_rank": rank,
                 "dense_score": round(float(score), 6),
                 "_shard_name": shard.get("shard_name"),
@@ -1223,6 +1304,8 @@ def faiss_shard_search(shards_dir: Path, plan: dict[str, Any], query_embedding: 
             "cache_hit": cache_hit,
             "ntotal": int(index.ntotal),
             "returned": added,
+            "loading": "memory_mapped" if hasattr(faiss, 'IO_FLAG_MMAP_IFC') else "resident",
+            "scoped_vectors": len(positions) if allowed_ids is not None else None,
         })
     merged.sort(key=lambda item: float(item.get("dense_score") or 0.0), reverse=True)
     seen = set()
@@ -1249,6 +1332,7 @@ def faiss_shard_search(shards_dir: Path, plan: dict[str, Any], query_embedding: 
 
 
 def fetch_dense_candidates(args: argparse.Namespace, db: Path, plan: dict[str, Any], allowed_ids: set[str] | None) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any] | None, dict[str, Any]]:
+    timings = RetrievalTimings()
     if args.dense_backend == "none":
         return [], {"status": "disabled", "backend": "none"}, None, {"status": "disabled", "backend": "none"}
     if args.dense_backend == "faiss_shards":
@@ -1272,7 +1356,7 @@ def fetch_dense_candidates(args: argparse.Namespace, db: Path, plan: dict[str, A
         elif config.get("name") != "bge-m3":
             raise ValueError("legacy BGE index is incompatible with this embedding model; rebuild the index")
     query_text = dense_query_text(plan, args.query)
-    query_embedding, embedding_cache_trace = embedding_request_cached(
+    query_embedding, embedding_cache_trace = timings.call('embedding', embedding_request_cached,
         Path(args.model_config),
         query_text,
         Path(args.embedding_cache_db) if getattr(args, "embedding_cache_db", None) else None,
@@ -1307,13 +1391,13 @@ def fetch_dense_candidates(args: argparse.Namespace, db: Path, plan: dict[str, A
                 with closing(sqlite3.connect(str(db))) as con:
                     clauses, parameters = compile_scope(con, understanding)
                     allowed_ids = {row[0] for row in con.execute(f"SELECT m.retrieval_id FROM retrieval_meta m WHERE {' AND '.join(clauses)}", parameters)}
-        raw_hits, shard_trace = faiss_shard_search(Path(args.faiss_shards_dir), plan, query_embedding, pool_n, allowed_ids)
+        raw_hits, shard_trace = timings.call('shard_search', faiss_shard_search, Path(args.faiss_shards_dir), plan, query_embedding, pool_n, allowed_ids)
         dense_trace.update(shard_trace)
     else:
         dense_trace.update({"mode": "memmap_global_then_filter"})
         raw_hits = HYBRID_V2.dense_search(dense_state, query_embedding, pool_n, args.dense_chunk_size)
     filtered_hits = raw_hits if allowed_ids is None else [hit for hit in raw_hits if str(hit.get("retrieval_id")) in allowed_ids]
-    rows = HYBRID_V2.fetch_rows_by_retrieval_id(db, [str(hit.get("retrieval_id")) for hit in filtered_hits])
+    rows = timings.call('hydrate', HYBRID_V2.fetch_rows_by_retrieval_id, db, [str(hit.get("retrieval_id")) for hit in filtered_hits])
     candidates: list[dict[str, Any]] = []
     for hit in filtered_hits:
         rid = str(hit.get("retrieval_id"))
@@ -1329,6 +1413,7 @@ def fetch_dense_candidates(args: argparse.Namespace, db: Path, plan: dict[str, A
         "raw_hits": len(raw_hits),
         "filtered_hits": len(filtered_hits),
         "returned_candidates": len(candidates),
+        "timings": timings.snapshot(),
     })
     return candidates, dense_state, faiss_state, dense_trace
 
@@ -1425,6 +1510,7 @@ def build_items(fused: list[dict[str, Any]], plan: dict[str, Any], skill: str, t
 
 
 def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
+    timings = RetrievalTimings()
     db = Path(args.db)
     if not db.exists():
         raise FileNotFoundError(db)
@@ -1432,11 +1518,14 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
     if not metadata_db.exists():
         metadata_db = db
     compact_label_db = Path(args.compact_label_db)
-    plan_artifact = load_or_build_plan(args)
     understanding = getattr(args, "query_understanding", None) or understand_query(args.query, skill=args.skill, filters=getattr(args, "filters", None))
+    query_lexical_trace = {}
+    query_future = _CHANNEL_POOL.submit(timings.call, 'query_lexical', lexical_candidates,
+                                        db, understanding, args.bm25_top_n, trace=query_lexical_trace)
+    plan_artifact = timings.call('planning', load_or_build_plan, args)
     plan = json.loads(json.dumps(plan_artifact["plan"]))
     plan["_query_understanding"] = understanding
-    scoped_plan, filter_trace = resolve_plan_scope(
+    scoped_plan, filter_trace = timings.call('scope_resolution', resolve_plan_scope,
         metadata_db,
         plan,
         args.min_candidate_scope,
@@ -1445,9 +1534,18 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         args.skill,
     )
     scope_count = int(filter_trace.get("candidate_scope_count") or 0)
-    ids = allowed_retrieval_ids(metadata_db, scoped_plan, args.max_sql_allowed_ids, scope_count)
-    dense_ids = allowed_retrieval_ids(metadata_db, scoped_plan, args.max_scoped_dense_ids, scope_count)
+    # Materialize a scope at most once, then share it with both channels. The
+    # separate limits still control whether each channel receives the ID set.
+    largest_limit = max(args.max_sql_allowed_ids, args.max_scoped_dense_ids)
+    shared_ids = timings.call('scope_ids', allowed_retrieval_ids, metadata_db, scoped_plan, largest_limit, scope_count)
+    ids = shared_ids if scope_count <= args.max_sql_allowed_ids else None
+    dense_ids = shared_ids if scope_count <= args.max_scoped_dense_ids else None
     wide_scope = scope_count > args.max_wide_scope_channel_scan
+    required_family_trace = {}
+    required_future = _CHANNEL_POOL.submit(timings.call, 'required_families', fetch_required_family_candidates,
+        db, scoped_plan, args.query, args.required_family_top_n, ids, args.max_sql_allowed_ids,
+        skip_fts=wide_scope, trace=required_family_trace)
+    dense_future = _CHANNEL_POOL.submit(timings.call, 'dense', fetch_dense_candidates, args, db, scoped_plan, dense_ids)
     if wide_scope:
         bm25_candidates, bm25_trace = [], {
             "skipped": True,
@@ -1455,7 +1553,7 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
             "candidate_scope": scope_count,
             "max_wide_scope_channel_scan": args.max_wide_scope_channel_scan,
         }
-        label_candidates, compact_label_trace = fetch_compact_label_candidates(
+        label_future = _CHANNEL_POOL.submit(timings.call, 'compact_labels', fetch_compact_label_candidates,
             compact_label_db,
             scoped_plan,
             args.query,
@@ -1467,31 +1565,30 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
             f"wide scope channel scan skipped for bm25/label: {scope_count} > {args.max_wide_scope_channel_scan}"
         )
     else:
-        bm25_candidates, bm25_trace = fetch_bm25_candidates(db, scoped_plan, args.query, args.bm25_top_n, ids, args.max_sql_allowed_ids)
-        label_candidates = fetch_label_candidates(db, scoped_plan, args.label_top_n, ids, args.max_sql_allowed_ids)
+        bm25_future = _CHANNEL_POOL.submit(timings.call, 'bm25', fetch_bm25_candidates, db, scoped_plan, args.query, args.bm25_top_n, ids, args.max_sql_allowed_ids)
+        label_future = _CHANNEL_POOL.submit(timings.call, 'labels', fetch_label_candidates, db, scoped_plan, args.label_top_n, ids, args.max_sql_allowed_ids)
         compact_label_trace = {"skipped": True, "reason": "not_wide_scope"}
-    required_family_candidates = fetch_required_family_candidates(
-        db,
-        scoped_plan,
-        args.query,
-        args.required_family_top_n,
-        ids,
-        args.max_sql_allowed_ids,
-        skip_fts=wide_scope,
-    )
-    policy_family_candidates = fetch_policy_family_fallback(db, args.skill, scoped_plan, args.required_family_top_n) if wide_scope and not required_family_candidates else []
-    dense_candidates, dense_state, faiss_state, dense_trace = fetch_dense_candidates(args, db, scoped_plan, dense_ids)
-    overlay_path, overlay_trace = active_overlay_from_slot(Path(args.knowledge_release_slot))
+    required_family_candidates = required_future.result()
+    if wide_scope:
+        label_candidates, compact_label_trace = label_future.result()
+    else:
+        bm25_candidates, bm25_trace = bm25_future.result()
+        label_candidates = label_future.result()
+    if bm25_trace.get("timed_out") or required_family_trace.get("fts_timed_out"):
+        filter_trace.setdefault("warnings", []).append("FTS channel exceeded its 2-second query budget; bounded fallback channels were used")
+    policy_family_candidates = timings.call('policy_fallback', fetch_policy_family_fallback, db, args.skill, scoped_plan, args.required_family_top_n) if wide_scope and not required_family_candidates else []
+    dense_candidates, dense_state, faiss_state, dense_trace = dense_future.result()
+    overlay_path, overlay_trace = timings.call('overlay_lookup', active_overlay_from_slot, Path(args.knowledge_release_slot))
     overlay_channels: dict[str, list[dict[str, Any]]] = {
         "overlay_sparse": [], "overlay_dense": [], "overlay_label": []
     }
     if overlay_path is not None:
-        overlay_query_embedding, overlay_embedding_trace = embedding_request_cached(
+        overlay_query_embedding, overlay_embedding_trace = timings.call('overlay_embedding', embedding_request_cached,
             Path(args.model_config),
             dense_query_text(scoped_plan, args.query),
             Path(args.embedding_cache_db) if args.embedding_cache_db else None,
         )
-        overlay_channels, overlay_query_trace = query_overlay(
+        overlay_channels, overlay_query_trace = timings.call('overlay_search', query_overlay,
             overlay_path,
             scoped_plan,
             args.query,
@@ -1501,7 +1598,9 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         overlay_trace.update(
             {"query": overlay_query_trace, "embedding": overlay_embedding_trace}
         )
-    query_candidates = lexical_candidates(db, understanding, args.bm25_top_n)
+    query_candidates = query_future.result()
+    if query_lexical_trace.get('timed_out_queries') or query_lexical_trace.get('skipped_queries'):
+        filter_trace.setdefault('warnings', []).append('Query lexical channel exceeded its FTS budget; completed channels were retained')
     for item in query_candidates:
         item["text_preview"] = item.pop("retrieval_text", "")[:1200]
     channels = {
@@ -1513,8 +1612,8 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         "policy_family_fallback": policy_family_candidates,
         **overlay_channels,
     }
-    channels = {name: filter_candidates(db, items, understanding) for name, items in channels.items()}
-    fused = rrf_merge_channels(
+    channels = {name: timings.call('policy_filter', filter_candidates, db, items, understanding) for name, items in channels.items()}
+    fused = timings.call('fusion', rrf_merge_channels,
         channels,
         {
             "query_lexical": args.bm25_weight,
@@ -1529,7 +1628,7 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         },
         args.rrf_k,
     )
-    selected = build_items(fused, scoped_plan, args.skill, args.top_k)
+    selected = timings.call('selection', build_items, fused, scoped_plan, args.skill, args.top_k)
     families = {item.get("dedup_family") for item in selected}
     routes = {item.get("default_route") for item in selected}
     labels = " ".join(str(item.get("canonical_label") or "") for item in selected[:1])
@@ -1546,10 +1645,14 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
         "llm_retrieval_plan": scoped_plan,
         "query_understanding": understanding,
         "planner_trace": plan_artifact["planner_trace"],
+        "timings": timings.snapshot(),
+        "warnings": list(filter_trace.get('warnings') or []),
         "structured_filter": filter_trace,
         "dense_index": dense_state,
         "faiss_index": faiss_state,
         "retrieval_config": {
+            "execution": "parallel_channels",
+            "channel_workers": 4,
             "version": "advanced_retrieval_v3_llm_structured_hybrid",
             "channels": ["query_understanding_lexical", "sqlite_fts_bm25", f"dense_bge_m3_{args.dense_backend}", "controlled_label", "required_family_backfill", "promoted_overlay_sparse", "promoted_overlay_dense", "promoted_overlay_controlled_label"],
             "fusion": "rrf_v1",
@@ -1562,6 +1665,8 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
                 "label_weight": args.label_weight,
             },
             "bm25_trace": bm25_trace,
+            "required_family_trace": required_family_trace,
+            "query_lexical_trace": query_lexical_trace,
             "compact_label_trace": compact_label_trace,
             "dense_trace": dense_trace,
             "promoted_overlay_trace": overlay_trace,
@@ -1590,6 +1695,7 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
             "high_risk_query_top1_not_low_risk": (not high_query) or (not V2.contains_any(labels, V2.LOW_RISK_LABEL_TERMS)),
         },
         "quality_checks": {
+            "method_rubric_in_top5_for_cognitive": args.skill != "cognitive-reframing-support" or any(item.get("dedup_family") == "method_rubric" for item in selected[:5]),
             "method_rubric_in_top5_for_rebt": args.skill != "rebt-belief-work-support" or any(item.get("dedup_family") == "method_rubric" for item in selected[:5]),
             "clinical_risk_in_top3_for_high_risk": args.skill != "risk-triage" or (not high_query) or any(item.get("dedup_family") == "clinical_risk_assessment" for item in selected[:3]),
         },

@@ -24,37 +24,6 @@ SERVICES = {
 }
 
 
-def _service_config(name: str, config: dict[str, Any]) -> tuple[str, float, str]:
-    raw = cfg_get(config, "platforms", "theraskill", "services", name, default={})
-    raw = raw if isinstance(raw, dict) else {}
-    defaults = {"support": 8878, "simulation": 8876, "response_review": 8879, "contribution": 8881, "extraction": 8891}
-    base_url = str(raw.get("base_url") or f"http://127.0.0.1:{defaults[name]}").rstrip("/")
-    try:
-        timeout = max(1.0, min(float(raw.get("timeout_seconds", 5)), 15.0))
-    except (TypeError, ValueError):
-        timeout = 5.0
-    return base_url, timeout, str(raw.get("token") or "")
-
-
-async def _probe(name: str, config: dict[str, Any]) -> dict[str, Any]:
-    base_url, timeout, token = _service_config(name, config)
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-    result: dict[str, Any] = {"base_url": base_url, "status": "offline", "health": None, "metrics": None}
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            health_response, metrics_response = await asyncio.gather(
-                client.get(f"{base_url}/health", headers=headers),
-                client.get(f"{base_url}/metrics", headers=headers),
-            )
-        result["status"] = "online" if health_response.is_success else "degraded"
-        result["health"] = health_response.json()
-        if metrics_response.is_success:
-            result["metrics"] = metrics_response.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        result["error"] = str(exc)
-    return result
-
-
 def _release_summary() -> dict[str, Any]:
     root = data_root()
     releases = root / "releases"
@@ -71,14 +40,28 @@ def _release_summary() -> dict[str, Any]:
     }
 
 
-def create_router() -> APIRouter:
+def create_router(*, services=None) -> APIRouter:
     router = APIRouter()
 
     @router.get("/overview")
     async def overview() -> dict[str, Any]:
         config = load_config_readonly()
-        probes = await asyncio.gather(*(_probe(name, config) for name, _, _ in SERVICES.values()))
-        services = {
+        if services is None:
+            from .local_services import get_services
+            host = get_services()
+        else:
+            host = services
+        async def probe_local(name):
+            name = 'expert' if name == 'response_review' else name
+            try:
+                health, metrics = await asyncio.gather(host.arequest(name, 'GET', '/health'), host.arequest(name, 'GET', '/metrics'))
+                return {'base_url': '/api/' + name, 'transport': 'inprocess',
+                        'status': 'online' if health.is_success else 'degraded',
+                        'health': health.json(), 'metrics': metrics.json() if metrics.is_success else None}
+            except (httpx.HTTPError, ValueError) as exc:
+                return {'status': 'offline', 'error': str(exc), 'transport': 'inprocess'}
+        probes = await asyncio.gather(*(probe_local(name) for name, _, _ in SERVICES.values()))
+        service_states = {
             key: {"label": label, "app_path": app_path, **probe}
             for key, (_, label, app_path), probe in zip(SERVICES, SERVICES.values(), probes)
         }
@@ -87,7 +70,7 @@ def create_router() -> APIRouter:
         return {
             "schema_version": "theraskill_hub_overview_v1",
             "platform": THERASKILL_PLATFORM.runtime_snapshot(),
-            "services": services,
+            "services": service_states,
             "model": {
                 "provider": model.get("provider") or "auto",
                 "name": model.get("default") or model.get("model") or "auto",

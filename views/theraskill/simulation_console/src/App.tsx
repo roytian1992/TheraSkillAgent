@@ -1,3 +1,4 @@
+import { tr, useTranslationSubscription } from '../../shared/i18n'
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Archive,
@@ -38,6 +39,7 @@ import {
   generatePatientOpening,
   generateScenario,
   generateScenarioBatch,
+  getBatchJob, listBatchJobs, retryBatchJob, retrySessionUpdate, retrySessionReview,
   getSession,
   health,
   listScenarios,
@@ -67,6 +69,7 @@ import type {
   TurnAnnotation,
 } from './types'
 import { useLocale } from './i18n'
+import type { BatchJob } from './api'
 
 const FAMILY_LABELS: Record<string, string> = {
   supportive_exploration: '支持性探索',
@@ -84,27 +87,29 @@ const FEEDBACK_DIMENSIONS = [
 ] as const
 
 function familyLabel(value: string) {
-  return FAMILY_LABELS[value] || value
+  return tr(FAMILY_LABELS[value] || value)
 }
 
 function statusLabel(value: string) {
   return {
-    active: '进行中',
-    paused: '已暂停',
-    completed: '已完成',
-    terminated: '已终止',
-    failed: '失败',
+    active: tr('进行中'),
+    paused: tr('已暂停'),
+    completed: tr('已完成'),
+    terminated: tr('已终止'),
+    failed: tr('失败'),
   }[value] || value
 }
 
 export default function App() {
+  useTranslationSubscription()
+
   const { locale, toggleLocale } = useLocale()
-  const [role, setRole] = useState<CallerRole>('human_therapist')
+  const [role, setRole] = useState<CallerRole>(() => new URLSearchParams(location.search).has('batch_job') ? 'researcher' : 'human_therapist')
   const [connected, setConnected] = useState(false)
   const [view, setView] = useState<'scenarios' | 'history'>(() => (
     new URLSearchParams(window.location.search).get('view') === 'history' ? 'history' : 'scenarios'
   ))
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 800)
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [historyRows, setHistoryRows] = useState<SessionView[]>([])
   const [selected, setSelected] = useState<Scenario | null>(null)
@@ -128,6 +133,8 @@ export default function App() {
   const [batchCount, setBatchCount] = useState(4)
   const [batchBusy, setBatchBusy] = useState(false)
   const [batchNotice, setBatchNotice] = useState('')
+  const [batchJob, setBatchJob] = useState<BatchJob | null>(null)
+  const [batchHistory, setBatchHistory] = useState<BatchJob[]>([])
   const [draft, setDraft] = useState('')
   const [openingMode, setOpeningMode] = useState<'patient' | 'therapist'>('patient')
   const [trainingMode, setTrainingMode] = useState<InteractiveMode>('human_therapist_vs_patient')
@@ -419,7 +426,7 @@ export default function App() {
   async function reviewSelectedGenerated(action: 'approve' | 'reject') {
     if (!selected?.generated || governanceBusy) return
     if (action === 'reject' && !reviewReason.trim()) {
-      setError('退回草稿前请填写原因。')
+      setError(tr('退回草稿前请填写原因。'))
       return
     }
     setGovernanceBusy(true)
@@ -436,6 +443,37 @@ export default function App() {
     }
   }
 
+  useEffect(() => {
+    if (!['researcher', 'instructor'].includes(role)) return
+    listBatchJobs(role).then(value => setBatchHistory(value.jobs)).catch(err => setError(String(err)))
+    const id = new URLSearchParams(location.search).get('batch_job') || localStorage.getItem('theraskill_batch_job')
+    if (id) getBatchJob(role, id).then(setBatchJob).catch(err => setError(String(err)))
+  }, [role])
+  useEffect(() => {
+    if (!batchJob) return
+    const inProgress = ['queued', 'running'].includes(batchJob.status)
+    setBatchBusy(inProgress)
+    const rows = batchJob.result?.scenarios || []
+    if (rows.length) setScenarios(current => [...rows, ...current.filter(row => !rows.some(item => item.scenario_id === row.scenario_id))])
+    if (!inProgress) return
+    const timer = window.setInterval(() => getBatchJob(role, batchJob.job_id).then(setBatchJob).catch(err => setError(String(err))), 1500)
+    return () => window.clearInterval(timer)
+  }, [batchJob?.job_id, batchJob?.status, batchJob?.progress?.processed, role])
+  async function retryBatch() {
+    if (!batchJob) return
+    try { setBatchJob(await retryBatchJob(role, batchJob.job_id)) } catch (err) { setError(String(err)) }
+  }
+  async function recoverSession(kind: 'update' | 'review') {
+    if (!session) return
+    setBusy(true); setError('')
+    try {
+      if (kind === 'update') await retrySessionUpdate(requestRole, session.public_view.session_id)
+      else await retrySessionReview(requestRole, session.public_view.session_id)
+      setSession(await getSession(requestRole, session.public_view.session_id))
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)) }
+    finally { setBusy(false) }
+  }
+
   async function runBatchGeneration() {
     if (!canGovernGenerated || batchBrief.trim().length < 8 || !batchTitle.trim() || batchBusy) return
     setBatchBusy(true)
@@ -450,11 +488,10 @@ export default function App() {
         count: Math.max(1, Math.min(12, batchCount)),
         language: locale,
       })
-      setScenarios((rows) => [...result.scenarios, ...rows.filter((row) => !result.scenarios.some((item) => item.scenario_id === row.scenario_id))])
-      if (result.scenarios[0]) setSelected(result.scenarios[0])
-      setBatchNotice(`已生成 ${result.scenarios.length} 个草稿；课程草案待逐个审核后使用。`)
-      setBatchTitle('')
-      setBatchBrief('')
+      setBatchJob(result)
+      localStorage.setItem('theraskill_batch_job', result.job_id)
+      const url = new URL(location.href); url.searchParams.set('batch_job', result.job_id); window.history.replaceState({}, '', url)
+      setBatchNotice(locale === 'zh' ? tr('任务已保存，离开页面后仍可继续。') : 'Job saved. You can leave and return later.')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -720,42 +757,36 @@ export default function App() {
           <button
             className="icon-button mobile-only"
             onClick={() => setSidebarOpen((value) => !value)}
-            title={sidebarOpen ? '收起侧栏' : '展开侧栏'}
+            title={sidebarOpen ? tr('收起侧栏') : tr('展开侧栏')}
           >
             {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
           </button>
-          <div className="brand-mark">TS</div>
+          <div className="brand-mark">{tr("TS")}</div>
           <div>
-            <strong>TheraSkill</strong>
-            <span>Training Studio</span>
+            <a href="/">{tr("← TheraSkillAgent")}</a>
+            <span>{tr("Training Studio")}</span>
           </div>
         </div>
         <div className="topbar-actions">
-          <button className="language-toggle" onClick={toggleLocale} title={locale === 'zh' ? '切换到英文' : 'Switch to Chinese'} aria-label={locale === 'zh' ? '切换到英文' : 'Switch to Chinese'}>{locale === 'zh' ? 'EN' : '中文'}</button>
+          <button className="language-toggle" onClick={toggleLocale} title={locale === 'zh' ? tr('切换到英文') : 'Switch to Chinese'} aria-label={locale === 'zh' ? tr('切换到英文') : 'Switch to Chinese'}>{locale === 'zh' ? 'EN' : '中文'}</button>
           <div className={`connection ${connected ? 'online' : 'offline'}`}>
             <span />
-            {connected ? '服务已连接' : '服务未连接'}
+            {connected ? tr('服务已连接') : tr('服务未连接')}
           </div>
-          <button className="icon-button" onClick={openContributions} title="我的反馈"><ListChecks size={17} /></button>
-          <div className="segmented" aria-label="查看角色">
+          <button className="icon-button" onClick={openContributions} title={tr("我的反馈")}><ListChecks size={17} /></button>
+          <div className="segmented" aria-label={tr("查看角色")}>
             <button
               className={role === 'human_therapist' ? 'active' : ''}
               onClick={() => setRole('human_therapist')}
-            >
-              学员
-            </button>
+            >{tr("学员")}</button>
             <button
               className={role === 'instructor' ? 'active' : ''}
               onClick={() => setRole('instructor')}
-            >
-              教师
-            </button>
+            >{tr("教师")}</button>
             <button
               className={role === 'researcher' ? 'active' : ''}
               onClick={() => setRole('researcher')}
-            >
-              研究员
-            </button>
+            >{tr("研究员")}</button>
           </div>
         </div>
       </header>
@@ -764,11 +795,9 @@ export default function App() {
         <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
           <nav className="sidebar-tabs">
             <button className={view === 'scenarios' ? 'active' : ''} onClick={() => setView('scenarios')}>
-              <BookOpenText size={17} /> 场景库
-            </button>
+              <BookOpenText size={17} />{tr("场景库")}</button>
             <button className={view === 'history' ? 'active' : ''} onClick={() => setView('history')}>
-              <History size={17} /> 训练记录
-            </button>
+              <History size={17} />{tr("训练记录")}</button>
           </nav>
 
           {view === 'scenarios' ? (
@@ -780,35 +809,34 @@ export default function App() {
                     value={searchText}
                     onChange={(event) => setSearchText(event.target.value)}
                     onKeyDown={(event) => event.key === 'Enter' && loadScenarios()}
-                    placeholder="搜索主题或标签"
+                    placeholder={tr("搜索主题或标签")}
                   />
                 </label>
                 <div className="filter-row">
                   <Filter size={15} />
                   <select value={family} onChange={(event) => setFamily(event.target.value)}>
-                    <option value="">全部类型</option>
+                    <option value="">{tr("全部类型")}</option>
                     {Object.entries(FAMILY_LABELS).map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
+                      <option key={value} value={value}>{tr(label)}</option>
                     ))}
                   </select>
                   <select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}>
-                    <option value="">全部难度</option>
-                    <option value="low">低</option>
-                    <option value="medium">中</option>
-                    <option value="high">高</option>
+                    <option value="">{tr("全部难度")}</option>
+                    <option value="low">{tr("低")}</option>
+                    <option value="medium">{tr("中")}</option>
+                    <option value="high">{tr("高")}</option>
                   </select>
                   <select value={risk} onChange={(event) => setRisk(event.target.value)}>
-                    <option value="">全部风险</option>
-                    <option value="low">低</option>
-                    <option value="elevated">需关注</option>
-                    <option value="high">高</option>
+                    <option value="">{tr("全部风险")}</option>
+                    <option value="low">{tr("低")}</option>
+                    <option value="elevated">{tr("需关注")}</option>
+                    <option value="high">{tr("高")}</option>
                   </select>
                 </div>
                 <button className="secondary-button" onClick={loadScenarios}>
-                  <RefreshCw size={15} /> 更新结果
-                </button>
+                  <RefreshCw size={15} />{tr("更新结果")}</button>
               </div>
-              <div className="list-caption">{scenarios.length} 个可用训练场景</div>
+              <div className="list-caption">{scenarios.length}{tr("个可用训练场景")}</div>
               <div className="scenario-list">
                 {scenarios.map((scenario) => (
                   <button
@@ -818,12 +846,12 @@ export default function App() {
                   >
                     <div className="scenario-row-top">
                       <span>{familyLabel(scenario.scenario_family)}</span>
-                      <small>{scenario.difficulty_band || '未标注'}</small>
+                      <small>{scenario.difficulty_band || tr('未标注')}</small>
                     </div>
                     <strong>{scenario.scenario_brief?.replaceAll('`', '')}</strong>
                     <div className="scenario-meta">
                       <span>{scenario.case_family}</span>
-                      <span>{scenario.risk_band === 'elevated' ? '需关注' : '低风险'}</span>
+                      <span>{scenario.risk_band === 'elevated' ? tr('需关注') : tr('低风险')}</span>
                     </div>
                   </button>
                 ))}
@@ -831,7 +859,7 @@ export default function App() {
             </>
           ) : (
             <div className="history-list">
-              <div className="list-caption">最近 {historyRows.length} 次训练</div>
+              <div className="list-caption">{tr("最近")}{historyRows.length}{tr("次训练")}</div>
               {historyRows.map((row) => (
                 <button key={row.session_id} className="history-row" onClick={() => openHistorySession(row)}>
                   <div>
@@ -857,23 +885,21 @@ export default function App() {
                       <h1>{selected.scenario_brief?.replaceAll('`', '')}</h1>
                     </div>
                     <button className="primary-button" onClick={startScenario} disabled={busy || !connected || role === 'instructor'}>
-                      {busy ? <LoaderCircle className="spin" size={17} /> : <CirclePlay size={17} />}
-                      开始训练
-                    </button>
+                      {busy ? <LoaderCircle className="spin" size={17} /> : <CirclePlay size={17} />}{tr("开始训练")}</button>
                   </div>
                   <div className="fact-strip">
-                    <div><UserRound size={17} /><span>病例类别</span><strong>{selected.case_family || '未标注'}</strong></div>
-                    <div><Clock3 size={17} /><span>建议轮次</span><strong>{selected.recommended_turn_budget || 3} 轮</strong></div>
-                    <div><ShieldCheck size={17} /><span>风险带</span><strong>{selected.risk_band === 'elevated' ? '需关注' : '低风险'}</strong></div>
+                    <div><UserRound size={17} /><span>{tr("病例类别")}</span><strong>{selected.case_family || tr('未标注')}</strong></div>
+                    <div><Clock3 size={17} /><span>{tr("建议轮次")}</span><strong>{selected.recommended_turn_budget || 3}{tr("轮")}</strong></div>
+                    <div><ShieldCheck size={17} /><span>{tr("风险带")}</span><strong>{selected.risk_band === 'elevated' ? tr('需关注') : tr('低风险')}</strong></div>
                   </div>
                   {selected.learner_role_card && Object.keys(selected.learner_role_card).length > 0 && (
                     <section className="detail-band role-card-band">
-                      <div className="role-card-heading"><UserRound size={20} /><h2>来访者角色</h2></div>
+                      <div className="role-card-heading"><UserRound size={20} /><h2>{tr("来访者角色")}</h2></div>
                       <div className="role-card-grid">
-                        <div><span>称呼</span><strong>{selected.learner_role_card.display_name || '模拟来访者'}</strong></div>
-                        <div><span>年龄段</span><strong>{selected.learner_role_card.age_band || '未说明'}</strong></div>
-                        <div><span>职业</span><strong>{selected.learner_role_card.occupation || '未说明'}</strong></div>
-                        <div><span>关系状态</span><strong>{selected.learner_role_card.marital_status || '未说明'}</strong></div>
+                        <div><span>{tr("称呼")}</span><strong>{selected.learner_role_card.display_name || tr('模拟来访者')}</strong></div>
+                        <div><span>{tr("年龄段")}</span><strong>{selected.learner_role_card.age_band || tr('未说明')}</strong></div>
+                        <div><span>{tr("职业")}</span><strong>{selected.learner_role_card.occupation || tr('未说明')}</strong></div>
+                        <div><span>{tr("关系状态")}</span><strong>{selected.learner_role_card.marital_status || tr('未说明')}</strong></div>
                       </div>
                       {(selected.learner_role_card.surface_presenting_problems || []).length > 0 && (
                         <div className="role-card-problems">
@@ -884,48 +910,47 @@ export default function App() {
                   )}
                   {selected.generated && canGovernGenerated && (
                     <section className="detail-band governance-band">
-                      <div className="role-card-heading"><ClipboardCheck size={20} /><h2>生成草稿治理</h2></div>
+                      <div className="role-card-heading"><ClipboardCheck size={20} /><h2>{tr("生成草稿治理")}</h2></div>
                       <div className="governance-summary">
                         <span className={`governance-status ${selected.review_status || 'draft'}`}>
-                          {selected.review_status === 'approved' ? '已批准' : selected.review_status === 'rejected' ? '已退回' : '待审核'}
+                          {selected.review_status === 'approved' ? tr('已批准') : selected.review_status === 'rejected' ? tr('已退回') : tr('待审核')}
                         </span>
-                        <span>质量 {selected.quality_report?.score ?? '—'} 分</span>
-                        <span>{selected.quality_report?.status === 'fail' ? '存在阻断问题' : selected.quality_report?.status === 'warn' ? '有提醒项' : '检查通过'}</span>
-                        {selected.batch_id && <span>批次 {selected.batch_index}/{selected.batch_size}</span>}
+                        <span>{tr("结构检查")}{selected.quality_report?.score ?? '—'}{tr("分（不代表教学质量）")}</span>
+                        <span>{selected.quality_report?.status === 'fail' ? tr('存在阻断问题') : selected.quality_report?.status === 'warn' ? tr('有提醒项') : tr('检查通过')}</span>
+                        {selected.batch_id && <span>{tr("批次")}{selected.batch_index}/{selected.batch_size}</span>}
                       </div>
                       {selected.quality_report?.duplicate_of && (
-                        <p className="governance-warning">与已有草稿「{selected.quality_report.duplicate_of}」相似度 {selected.quality_report.duplicate_similarity}，请先修改主题。</p>
+                        <p className="governance-warning">{tr("与已有草稿「")}{selected.quality_report.duplicate_of}{tr("」相似度")}{selected.quality_report.duplicate_similarity}{tr("，请先修改主题。")}</p>
                       )}
                       {!draftEditOpen ? (
                         <div className="governance-actions">
-                          <button className="secondary-button" onClick={() => setDraftEditOpen(true)}>编辑草稿</button>
+                          <button className="secondary-button" onClick={() => setDraftEditOpen(true)}>{tr("编辑草稿")}</button>
                           <button className="primary-button" onClick={() => void reviewSelectedGenerated('approve')} disabled={governanceBusy || selected.review_status === 'approved'}>
-                            {governanceBusy ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={15} />} 批准复用
-                          </button>
+                            {governanceBusy ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={15} />}{tr("批准复用")}</button>
                         </div>
                       ) : (
                         <div className="governance-editor">
-                          <label>场景描述<textarea value={draftBrief} onChange={(event) => setDraftBrief(event.target.value)} rows={3} maxLength={1200} /></label>
-                          <label>训练标签<input value={draftTags} onChange={(event) => setDraftTags(event.target.value)} placeholder="用逗号分隔" /></label>
+                          <label>{tr("场景描述")}<textarea value={draftBrief} onChange={(event) => setDraftBrief(event.target.value)} rows={3} maxLength={1200} /></label>
+                          <label>{tr("训练标签")}<input value={draftTags} onChange={(event) => setDraftTags(event.target.value)} placeholder={tr("用逗号分隔")} /></label>
                           <div className="governance-selects">
-                            <label>难度<select value={draftDifficulty} onChange={(event) => setDraftDifficulty(event.target.value)}><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
-                            <label>风险<select value={draftRisk} onChange={(event) => setDraftRisk(event.target.value)}><option value="low">低</option><option value="elevated">需关注</option><option value="high">高</option></select></label>
+                            <label>{tr("难度")}<select value={draftDifficulty} onChange={(event) => setDraftDifficulty(event.target.value)}><option value="low">{tr("低")}</option><option value="medium">{tr("中")}</option><option value="high">{tr("高")}</option></select></label>
+                            <label>{tr("风险")}<select value={draftRisk} onChange={(event) => setDraftRisk(event.target.value)}><option value="low">{tr("低")}</option><option value="elevated">{tr("需关注")}</option><option value="high">{tr("高")}</option></select></label>
                           </div>
-                          <div className="governance-actions"><button className="secondary-button" onClick={() => setDraftEditOpen(false)}>取消</button><button className="primary-button" onClick={() => void saveGeneratedDraft()} disabled={governanceBusy || draftBrief.trim().length < 8}>保存并重新检查</button></div>
+                          <div className="governance-actions"><button className="secondary-button" onClick={() => setDraftEditOpen(false)}>{tr("取消")}</button><button className="primary-button" onClick={() => void saveGeneratedDraft()} disabled={governanceBusy || draftBrief.trim().length < 8}>{tr("保存并重新检查")}</button></div>
                         </div>
                       )}
-                      <label className="governance-reason">退回原因<input value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} placeholder="退回时必填，批准时可留空" /></label>
-                      <button className="tertiary-danger" onClick={() => void reviewSelectedGenerated('reject')} disabled={governanceBusy}>退回草稿</button>
+                      <label className="governance-reason">{tr("退回原因")}<input value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} placeholder={tr("退回时必填，批准时可留空")} /></label>
+                      <button className="tertiary-danger" onClick={() => void reviewSelectedGenerated('reject')} disabled={governanceBusy}>{tr("退回草稿")}</button>
                     </section>
                   )}
                   {canGenerateOnline && !session && (
                     <section className="detail-band online-generation-band">
-                      <div className="role-card-heading"><Sparkles size={20} /><h2>在线生成训练情景</h2></div>
-                      <p>输入一个训练主题，生成仅用于研究和演示的 synthetic draft。生成结果会带有可追踪的病例状态，确认后即可开始训练，不会写入正式测试集。</p>
+                      <div className="role-card-heading"><Sparkles size={20} /><h2>{tr("在线生成训练情景")}</h2></div>
+                      <p>{tr("输入一个训练主题，生成仅用于研究和演示的 synthetic draft。生成结果会带有可追踪的病例状态，确认后即可开始训练，不会写入正式测试集。")}</p>
                       <textarea
                         value={onlineBrief}
                         onChange={(event) => setOnlineBrief(event.target.value)}
-                        placeholder="例如：来访者因为工作绩效下降而持续自责，但暂时不愿讨论家庭关系"
+                        placeholder={tr("例如：来访者因为工作绩效下降而持续自责，但暂时不愿讨论家庭关系")}
                         rows={3}
                         maxLength={1200}
                       />
@@ -935,20 +960,22 @@ export default function App() {
                         disabled={onlineGenerating || onlineBrief.trim().length < 8}
                       >
                         {onlineGenerating ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}
-                        {onlineGenerating ? '正在生成情景…' : '生成 synthetic draft'}
+                        {onlineGenerating ? tr('正在生成情景…') : tr('生成 synthetic draft')}
                       </button>
-                      {onlineGenerated && <small className="online-generation-note">草稿已生成。开始训练前请确认场景描述、难度和风险带。</small>}
+                      {onlineGenerated && <small className="online-generation-note">{tr("草稿已生成。开始训练前请确认场景描述、难度和风险带。")}</small>}
                       <div className="batch-generator">
-                        <h3>批量生成课程场景</h3>
-                        <input value={batchTitle} onChange={(event) => setBatchTitle(event.target.value)} placeholder="课程标题" maxLength={200} />
-                        <textarea value={batchBrief} onChange={(event) => setBatchBrief(event.target.value)} placeholder="课程目标或共同训练主题（至少 8 个字）" rows={2} maxLength={1200} />
-                        <div className="batch-generator-row"><input type="number" min={1} max={12} value={batchCount} onChange={(event) => setBatchCount(Number(event.target.value) || 1)} /><button className="secondary-button" onClick={() => void runBatchGeneration()} disabled={batchBusy || batchBrief.trim().length < 8 || !batchTitle.trim()}>{batchBusy ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />} 生成课程批次</button></div>
+                        <h3>{tr("批量生成课程场景")}</h3>
+                        <input value={batchTitle} onChange={(event) => setBatchTitle(event.target.value)} placeholder={tr("课程标题")} maxLength={200} />
+                        <textarea value={batchBrief} onChange={(event) => setBatchBrief(event.target.value)} placeholder={tr("课程目标或共同训练主题（至少 8 个字）")} rows={2} maxLength={1200} />
+                        <div className="batch-generator-row"><input type="number" min={1} max={12} value={batchCount} onChange={(event) => setBatchCount(Number(event.target.value) || 1)} /><button className="secondary-button" onClick={() => void runBatchGeneration()} disabled={batchBusy || batchBrief.trim().length < 8 || !batchTitle.trim()}>{batchBusy ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}{tr("生成课程批次")}</button></div>
                         {batchNotice && <small className="online-generation-note">{batchNotice}</small>}
+                        {batchJob && <div role="status"><strong>{batchJob.status} · {batchJob.progress.processed}/{batchJob.progress.total}</strong>{batchJob.error && <p className="error">{batchJob.error}</p>}{['failed','partial'].includes(batchJob.status) && <button onClick={() => void retryBatch()}>{locale === 'zh' ? tr('继续生成未完成场景') : 'Retry unfinished scenarios'}</button>}{batchJob.result?.scenarios.map(row => <button key={row.scenario_id} onClick={() => setSelected(row)}>{row.scenario_brief}</button>)}</div>}
+                        {batchHistory.length > 0 && <details><summary>{locale === 'zh' ? tr('课程生成任务历史') : 'Course generation history'}</summary>{batchHistory.map(row => <button key={row.job_id} onClick={() => { setBatchJob(row); localStorage.setItem('theraskill_batch_job', row.job_id) }}>{row.job_id} · {row.status} · {row.progress.processed}/{row.progress.total}</button>)}</details>}
                       </div>
                     </section>
                   )}
                   <section className="detail-band">
-                    <h2>训练标签</h2>
+                    <h2>{tr("训练标签")}</h2>
                     <div className="tag-cloud">
                       {selected.scenario_tags.slice(0, 12).map((tag) => <span key={tag}>{tag}</span>)}
                     </div>
@@ -956,37 +983,31 @@ export default function App() {
                   <section className="detail-band readiness-band">
                     <ClipboardCheck size={22} />
                     <div>
-                      <h2>会话准备</h2>
+                      <h2>{tr("会话准备")}</h2>
                       <p>{trainingMode === 'human_therapist_vs_patient'
-                        ? '系统将固定病例设定并维护隐藏状态。训练开始后，学员只能看到患者实际披露的内容。'
+                        ? tr('系统将固定病例设定并维护隐藏状态。训练开始后，学员只能看到患者实际披露的内容。')
                         : trainingMode === 'dual_agent_research'
-                          ? '系统将连续运行模拟治疗师与模拟患者，用于研究、回归测试和过程分析。生成内容均为合成对话。'
-                          : '你将依据公开病例信息扮演来访者，与模拟治疗师进行受控训练。模拟回应仅用于学习，不构成医疗服务。'}</p>
+                          ? tr('系统将连续运行模拟治疗师与模拟患者，用于研究、回归测试和过程分析。生成内容均为合成对话。')
+                          : tr('你将依据公开病例信息扮演来访者，与模拟治疗师进行受控训练。模拟回应仅用于学习，不构成医疗服务。')}</p>
                     </div>
                   </section>
                   <section className="detail-band opening-band">
                     <div>
-                      <h2>训练角色</h2>
-                      <div className="opening-control" aria-label="训练角色">
+                      <h2>{tr("训练角色")}</h2>
+                      <div className="opening-control" aria-label={tr("训练角色")}>
                         <button
                           className={trainingMode === 'human_therapist_vs_patient' ? 'active' : ''}
                           onClick={() => setTrainingMode('human_therapist_vs_patient')}
-                        >
-                          扮演治疗师
-                        </button>
+                        >{tr("扮演治疗师")}</button>
                         <button
                           className={trainingMode === 'human_client_role_vs_therapist' ? 'active' : ''}
                           onClick={() => setTrainingMode('human_client_role_vs_therapist')}
-                        >
-                          扮演来访者
-                        </button>
+                        >{tr("扮演来访者")}</button>
                         {role === 'researcher' && (
                           <button
                             className={trainingMode === 'dual_agent_research' ? 'active' : ''}
                             onClick={() => setTrainingMode('dual_agent_research')}
-                          >
-                            双代理研究
-                          </button>
+                          >{tr("双代理研究")}</button>
                         )}
                       </div>
                     </div>
@@ -994,20 +1015,16 @@ export default function App() {
                   {trainingMode === 'human_therapist_vs_patient' && (
                   <section className="detail-band opening-band">
                     <div>
-                      <h2>开场角色</h2>
-                      <div className="opening-control" aria-label="开场角色">
+                      <h2>{tr("开场角色")}</h2>
+                      <div className="opening-control" aria-label={tr("开场角色")}>
                         <button
                           className={openingMode === 'patient' ? 'active' : ''}
                           onClick={() => setOpeningMode('patient')}
-                        >
-                          患者先说
-                        </button>
+                        >{tr("患者先说")}</button>
                         <button
                           className={openingMode === 'therapist' ? 'active' : ''}
                           onClick={() => setOpeningMode('therapist')}
-                        >
-                          治疗师先说
-                        </button>
+                        >{tr("治疗师先说")}</button>
                       </div>
                     </div>
                   </section>
@@ -1015,20 +1032,20 @@ export default function App() {
                   {role === 'instructor' && (
                     <section className="detail-band instructor-assignment">
                       <div>
-                        <h2>分配当前场景</h2>
+                        <h2>{tr("分配当前场景")}</h2>
                         <div className="assignment-fields">
                           <input
                             value={assignmentTitle}
                             onChange={(event) => setAssignmentTitle(event.target.value)}
-                            placeholder="训练任务名称"
+                            placeholder={tr("训练任务名称")}
                           />
                           <input
                             value={assignmentAssignee}
                             onChange={(event) => setAssignmentAssignee(event.target.value)}
-                            placeholder="学员标识"
+                            placeholder={tr("学员标识")}
                           />
                           <button className="secondary-button" onClick={sendAssignment} disabled={busy || !assignmentTitle.trim() || !assignmentAssignee.trim()}>
-                            <ListChecks size={15} /> {assignmentSent ? '已分配' : '分配任务'}
+                            <ListChecks size={15} /> {assignmentSent ? tr('已分配') : tr('分配任务')}
                           </button>
                         </div>
                       </div>
@@ -1036,14 +1053,14 @@ export default function App() {
                   )}
                 </>
               ) : (
-                <div className="empty-state"><BookOpenText size={30} /><p>选择一个训练场景</p></div>
+                <div className="empty-state"><BookOpenText size={30} /><p>{tr("选择一个训练场景")}</p></div>
               )}
             </section>
           ) : (
             <section className="session-layout">
               <div className="session-main">
                 <div className="session-header">
-                  <button className="icon-button" onClick={() => setSession(null)} title="返回场景库">
+                  <button className="icon-button" onClick={() => setSession(null)} title={tr("返回场景库")}>
                     <ArrowLeft size={18} />
                   </button>
                   <div>
@@ -1053,21 +1070,21 @@ export default function App() {
                   <div className="session-controls">
                     <span className={`session-status ${activeSession.status}`}>{statusLabel(activeSession.status)}</span>
                     {activeSession.status === 'active' && (
-                      <button className="icon-button" onClick={() => runAction('pause')} title="暂停会话" disabled={busy || stateUpdatePending}>
+                      <button className="icon-button" onClick={() => runAction('pause')} title={tr("暂停会话")} disabled={busy || stateUpdatePending}>
                         <CirclePause size={18} />
                       </button>
                     )}
                     {activeSession.status === 'paused' && (
-                      <button className="icon-button" onClick={() => runAction('resume')} title="恢复会话" disabled={busy}>
+                      <button className="icon-button" onClick={() => runAction('resume')} title={tr("恢复会话")} disabled={busy}>
                         <CirclePlay size={18} />
                       </button>
                     )}
                     {['active', 'paused'].includes(activeSession.status) && (
-                      <button className="icon-button danger" onClick={() => runAction('complete')} title="结束并复盘" disabled={busy || stateUpdatePending}>
+                      <button className="icon-button danger" onClick={() => runAction('complete')} title={tr("结束并复盘")} disabled={busy || stateUpdatePending}>
                         <Square size={17} />
                       </button>
                     )}
-                    <button className="icon-button" onClick={refreshSession} title="刷新会话" disabled={busy}>
+                    <button className="icon-button" onClick={refreshSession} title={tr("刷新会话")} disabled={busy}>
                       <RefreshCw size={17} />
                     </button>
                   </div>
@@ -1077,8 +1094,8 @@ export default function App() {
                   {activeSession.transcript.length === 0 && (
                     <div className="conversation-start">
                       <MessageSquareText size={25} />
-                      <strong>会话已就绪</strong>
-                      <span>{isDualMode ? '输入首个治疗师回合，系统将运行一轮双代理对话。' : isClientRoleMode ? '请以来访者身份开始这次受控体验。' : '等待治疗师开始这次访谈。'}</span>
+                      <strong>{tr("会话已就绪")}</strong>
+                      <span>{isDualMode ? tr('输入首个治疗师回合，系统将运行一轮双代理对话。') : isClientRoleMode ? tr('请以来访者身份开始这次受控体验。') : tr('等待治疗师开始这次访谈。')}</span>
                     </div>
                   )}
                   {activeSession.transcript.map((turn) => {
@@ -1091,13 +1108,12 @@ export default function App() {
                         <div className="turn-avatar">{turn.role === 'therapist' ? 'T' : 'P'}</div>
                         <div className="turn-body">
                           <span>{turn.role === 'therapist'
-                            ? (isDualMode ? '模拟治疗师' : isClientRoleMode ? '模拟治疗师' : '治疗师 · 你')
-                            : (isClientRoleMode ? '来访者 · 你' : '模拟患者')}</span>
+                            ? (isDualMode ? tr('模拟治疗师') : isClientRoleMode ? tr('模拟治疗师') : tr('治疗师 · 你'))
+                            : (isClientRoleMode ? tr('来访者 · 你') : tr('模拟患者'))}</span>
                           <p>{turn.text}</p>
                           {flaggable && (
-                            <button className="turn-flag" onClick={() => setFlagTurnId(turn.turn_id)} title="标记此回应">
-                              <Flag size={13} />标记
-                            </button>
+                            <button className="turn-flag" onClick={() => setFlagTurnId(turn.turn_id)} title={tr("标记此回应")}>
+                              <Flag size={13} />{tr("标记")}</button>
                           )}
                         </div>
                       </div>
@@ -1106,12 +1122,13 @@ export default function App() {
                   {patientPending && activeSession.status === 'active' && (
                     <div className={`turn ${isClientRoleMode ? 'therapist' : 'patient'} pending`}>
                       <div className="turn-avatar">{isClientRoleMode ? 'T' : 'P'}</div>
-                      <div className="turn-body"><span>{isDualMode ? '双代理运行中' : isClientRoleMode ? '模拟治疗师' : '模拟患者'}</span><p><LoaderCircle className="spin" size={17} /> 正在形成回应{waitSeconds > 0 ? ` · ${waitSeconds} 秒` : '…'}</p></div>
+                      <div className="turn-body"><span>{isDualMode ? tr('双代理运行中') : isClientRoleMode ? tr('模拟治疗师') : tr('模拟患者')}</span><p><LoaderCircle className="spin" size={17} />{tr("正在形成回应")}{waitSeconds > 0 ? ` · ${waitSeconds} 秒` : '…'}</p></div>
                     </div>
                   )}
                   <div ref={transcriptEnd} />
                 </div>
 
+                {Boolean(activeSession.progress.state_update_failed || activeSession.progress.therapist_memory_update_failed) && <div className="error" role="alert"><p>{locale === 'zh' ? tr('状态或记忆更新失败。对话已保存；可重试更新，或结束并保留未完成状态。') : 'State or memory update failed. Your dialogue is saved. Retry the update or end with an incomplete assessment.'}</p>{!terminal && <button disabled={busy || stateUpdatePending} onClick={() => void recoverSession('update')}>{locale === 'zh' ? tr('重试状态更新') : 'Retry state update'}</button>}</div>}
                 {activeSession.status === 'active' && sessionReady && role !== 'instructor' && (
                   <form className="composer" onSubmit={sendTurn}>
                     <textarea
@@ -1123,54 +1140,54 @@ export default function App() {
                           event.currentTarget.form?.requestSubmit()
                         }
                       }}
-                      placeholder={isDualMode ? '输入首个或下一轮治疗师回合' : isClientRoleMode ? '以来访者身份回应' : '输入治疗师回应'}
+                      placeholder={isDualMode ? tr('输入首个或下一轮治疗师回合') : isClientRoleMode ? tr('以来访者身份回应') : tr('输入治疗师回应')}
                       rows={3}
                       disabled={busy || stateUpdatePending}
                     />
-                    <button className="send-button" disabled={!draft.trim() || busy || stateUpdatePending} title="发送回应">
+                    <button className="send-button" disabled={!draft.trim() || busy || stateUpdatePending} title={tr("发送回应")}>
                       {busy ? <LoaderCircle className="spin" size={18} /> : <Send size={18} />}
                     </button>
                   </form>
                 )}
                 {stateUpdatePending && (
-                  <div className="state-sync"><LoaderCircle className="spin" size={13} /> {isClientRoleMode ? '正在同步治疗师案例记忆' : '正在同步患者状态与记忆'}</div>
+                  <div className="state-sync"><LoaderCircle className="spin" size={13} /> {isClientRoleMode ? tr('正在同步治疗师案例记忆') : tr('正在同步患者状态与记忆')}</div>
                 )}
               </div>
 
               <aside className="session-inspector">
                 <section>
-                  <div className="inspector-title"><Clock3 size={16} /><h2>训练进度</h2></div>
-                  <div className="progress-row"><strong>{responseCount} / {turnBudget || '—'}</strong><span>{isClientRoleMode ? '治疗师回应' : '患者回应'}</span></div>
+                  <div className="inspector-title"><Clock3 size={16} /><h2>{tr("训练进度")}</h2></div>
+                  <div className="progress-row"><strong>{responseCount} / {turnBudget || '—'}</strong><span>{isClientRoleMode ? tr('治疗师回应') : tr('患者回应')}</span></div>
                   <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
                 </section>
                 <section>
-                  <div className="inspector-title"><ShieldCheck size={16} /><h2>场景信息</h2></div>
+                  <div className="inspector-title"><ShieldCheck size={16} /><h2>{tr("场景信息")}</h2></div>
                   <dl>
-                    <div><dt>难度</dt><dd>{activeSession.scenario.difficulty_band}</dd></div>
-                    <div><dt>风险带</dt><dd>{activeSession.scenario.risk_band}</dd></div>
-                    <div><dt>类别</dt><dd>{activeSession.scenario.case_family}</dd></div>
+                    <div><dt>{tr("难度")}</dt><dd>{activeSession.scenario.difficulty_band}</dd></div>
+                    <div><dt>{tr("风险带")}</dt><dd>{activeSession.scenario.risk_band}</dd></div>
+                    <div><dt>{tr("类别")}</dt><dd>{activeSession.scenario.case_family}</dd></div>
                   </dl>
                 </section>
                 {activeSession.scenario.learner_role_card && Object.keys(activeSession.scenario.learner_role_card).length > 0 && (
                   <section>
-                    <div className="inspector-title"><UserRound size={16} /><h2>来访者角色</h2></div>
+                    <div className="inspector-title"><UserRound size={16} /><h2>{tr("来访者角色")}</h2></div>
                     <dl>
-                      <div><dt>称呼</dt><dd>{activeSession.scenario.learner_role_card.display_name}</dd></div>
-                      <div><dt>年龄段</dt><dd>{activeSession.scenario.learner_role_card.age_band}</dd></div>
-                      <div><dt>职业</dt><dd>{activeSession.scenario.learner_role_card.occupation}</dd></div>
+                      <div><dt>{tr("称呼")}</dt><dd>{activeSession.scenario.learner_role_card.display_name}</dd></div>
+                      <div><dt>{tr("年龄段")}</dt><dd>{activeSession.scenario.learner_role_card.age_band}</dd></div>
+                      <div><dt>{tr("职业")}</dt><dd>{activeSession.scenario.learner_role_card.occupation}</dd></div>
                     </dl>
                   </section>
                 )}
                 {hasReview && (
                   <section className="review-panel">
-                    <div className="inspector-title"><CheckCircle2 size={17} /><h2>会话复盘</h2></div>
+                    <div className="inspector-title"><CheckCircle2 size={17} /><h2>{tr("会话复盘")}</h2></div>
                     {reviewPending ? (
-                      <div className="review-pending"><LoaderCircle className="spin" size={15} /> 正在生成复盘</div>
+                      <div className="review-pending"><LoaderCircle className="spin" size={15} />{tr("正在生成复盘")}</div>
                     ) : activeSession.review?.status === 'failed' ? (
-                      <div className="review-failed">复盘生成失败，请稍后重试。</div>
+                      <div className="review-failed"><p>{locale === 'zh' ? tr('复盘生成失败，训练记录已保留。') : 'Review failed. Your transcript is saved.'}</p><button disabled={busy} onClick={() => void recoverSession('review')}>{locale === 'zh' ? tr('重试复盘') : 'Retry review'}</button></div>
                     ) : (
                       <>
-                        <div className="review-gate">Reviewer gate: {activeSession.review?.gate_status || '未标注'}</div>
+                        <div className={'review-gate ' + (activeSession.review?.gate_status === 'pass' ? 'pass' : 'not-passed')}>{activeSession.review?.status === 'not_evaluable' ? (locale === 'zh' ? tr('暂不可评估：证据或状态不完整') : 'Not evaluable: incomplete evidence or state') : 'Reviewer gate: ' + (activeSession.review?.gate_status || tr('未标注'))}</div>{activeSession.review?.findings?.map((finding: any, index: number) => <p key={index}>{finding.message}</p>)}
                         {summaryEntries.map(([key, value]) => (
                           <div className="review-section" key={key}>
                             <h3>{key.replaceAll('_', ' ')}</h3>
@@ -1185,35 +1202,34 @@ export default function App() {
                 )}
                 {role === 'researcher' && terminal && activeSession.mode !== 'review_only' && (
                   <section className="review-panel review-only-panel">
-                    <div className="inspector-title"><GitCompareArrows size={17} /><h2>独立复盘</h2></div>
-                    <p>创建一个只读复盘 session，保留原训练记录并独立运行 reviewer。</p>
+                    <div className="inspector-title"><GitCompareArrows size={17} /><h2>{tr("独立复盘")}</h2></div>
+                    <p>{tr("创建一个只读复盘 session，保留原训练记录并独立运行 reviewer。")}</p>
                     <button className="secondary-button" onClick={() => void openReviewOnly()} disabled={busy}>
-                      {busy ? <LoaderCircle className="spin" size={15} /> : <GitCompareArrows size={15} />} 创建 review-only
-                    </button>
+                      {busy ? <LoaderCircle className="spin" size={15} /> : <GitCompareArrows size={15} />}{tr("创建 review-only")}</button>
                   </section>
                 )}
                 {role === 'instructor' && hiddenState && ['completed', 'terminated', 'failed'].includes(activeSession.status) && (
                   <section className="instructor-panel">
-                    <div className="inspector-title"><Archive size={16} /><h2>教师视图</h2></div>
+                    <div className="inspector-title"><Archive size={16} /><h2>{tr("教师视图")}</h2></div>
                     <div className="review-section">
-                      <h3>潜在核心冲突</h3>
+                      <h3>{tr("潜在核心冲突")}</h3>
                       <ul>{((hiddenState.latent_concerns as string[]) || []).map((item) => <li key={item}>{item}</li>)}</ul>
                     </div>
                     <div className="review-section">
-                      <h3>渐进披露条件</h3>
+                      <h3>{tr("渐进披露条件")}</h3>
                       <ul>{((hiddenState.disclosure_conditions as string[]) || []).map((item) => <li key={item}>{item}</li>)}</ul>
                     </div>
                   </section>
                 )}
                 {role === 'instructor' && instructorReveal && terminal && (
                   <section className="instructor-panel">
-                    <div className="inspector-title"><BookOpenText size={16} /><h2>参考 Persona</h2></div>
+                    <div className="inspector-title"><BookOpenText size={16} /><h2>{tr("参考 Persona")}</h2></div>
                     <div className="review-section">
-                      <h3>固定身份</h3>
-                      <p>{instructorReveal.reference_identity?.display_name || '模拟来访者'}</p>
+                      <h3>{tr("固定身份")}</h3>
+                      <p>{instructorReveal.reference_identity?.display_name || tr('模拟来访者')}</p>
                     </div>
                     <div className="review-section">
-                      <h3>隐藏事实与披露条件</h3>
+                      <h3>{tr("隐藏事实与披露条件")}</h3>
                       <ul>
                         {(instructorReveal.hidden_fact_nodes || []).map((node) => (
                           <li key={node.fact_id}>
@@ -1227,20 +1243,18 @@ export default function App() {
                 )}
                 {terminal && role === 'instructor' && (
                   <section className="annotation-panel">
-                    <div className="inspector-title"><NotebookPen size={16} /><h2>逐轮批注</h2></div>
+                    <div className="inspector-title"><NotebookPen size={16} /><h2>{tr("逐轮批注")}</h2></div>
                     <select value={annotationTurnId} onChange={(event) => setAnnotationTurnId(event.target.value)}>
-                      <option value="">选择一个 turn</option>
+                      <option value="">{tr("选择一个 turn")}</option>
                       {activeSession.transcript.map((turn) => (
                         <option key={turn.turn_id} value={turn.turn_id}>
-                          {turn.turn_index}. {turn.role === 'therapist' ? '治疗师' : '患者'}
+                          {turn.turn_index}. {turn.role === 'therapist' ? tr('治疗师') : tr('患者')}
                         </option>
                       ))}
                     </select>
-                    <textarea value={annotationComment} onChange={(event) => setAnnotationComment(event.target.value)} placeholder="批注" rows={3} />
-                    <textarea value={alternativeResponse} onChange={(event) => setAlternativeResponse(event.target.value)} placeholder="替代回应（可选）" rows={3} />
-                    <button className="secondary-button" onClick={sendAnnotation} disabled={busy || !annotationTurnId || !annotationComment.trim()}>
-                      保存批注
-                    </button>
+                    <textarea value={annotationComment} onChange={(event) => setAnnotationComment(event.target.value)} placeholder={tr("批注")} rows={3} />
+                    <textarea value={alternativeResponse} onChange={(event) => setAlternativeResponse(event.target.value)} placeholder={tr("替代回应（可选）")} rows={3} />
+                    <button className="secondary-button" onClick={sendAnnotation} disabled={busy || !annotationTurnId || !annotationComment.trim()}>{tr("保存批注")}</button>
                     {annotations.map((item) => (
                       <div className="annotation-item" key={item.annotation_id}>
                         <strong>{item.turn_id}</strong>
@@ -1252,11 +1266,10 @@ export default function App() {
                 )}
                 {terminal && !isClientRoleMode && (
                   <section className="comparison-panel">
-                    <div className="inspector-title"><GitCompareArrows size={16} /><h2>回应比较</h2></div>
+                    <div className="inspector-title"><GitCompareArrows size={16} /><h2>{tr("回应比较")}</h2></div>
                     {!latestComparison ? (
                       <button className="secondary-button" onClick={generateComparison} disabled={busy || !activeSession.transcript.some((turn) => turn.role === 'patient')}>
-                        {busy ? <LoaderCircle className="spin" size={15} /> : <GitCompareArrows size={15} />} 生成三个策略候选
-                      </button>
+                        {busy ? <LoaderCircle className="spin" size={15} /> : <GitCompareArrows size={15} />}{tr("生成三个策略候选")}</button>
                     ) : (
                       <div className="candidate-list">
                         {latestComparison.candidates.map((candidate) => {
@@ -1271,10 +1284,10 @@ export default function App() {
                               <p>{candidate.response}</p>
                               {selectedCandidate && (
                                 <div className="candidate-analysis">
-                                  <strong>分析</strong>
+                                  <strong>{tr("分析")}</strong>
                                   <p>{candidate.rationale}</p>
-                                  <small>适用：{candidate.applicable_context}</small>
-                                  <small>局限：{candidate.limitations}</small>
+                                  <small>{tr("适用：")}{candidate.applicable_context}</small>
+                                  <small>{tr("局限：")}{candidate.limitations}</small>
                                 </div>
                               )}
                             </button>
@@ -1284,14 +1297,14 @@ export default function App() {
                     )}
                   </section>
                 )}
-                {['completed', 'terminated', 'failed'].includes(activeSession.status) && (
+                {['completed', 'terminated', 'failed'].includes(activeSession.status) && activeSession.review?.status !== 'not_evaluable' && (
                   <section className="feedback-panel">
-                    <div className="inspector-title"><Star size={16} /><h2>会话反馈</h2></div>
+                    <div className="inspector-title"><Star size={16} /><h2>{tr("会话反馈")}</h2></div>
                     {feedbackSent ? (
-                      <div className="feedback-sent"><CheckCircle2 size={17} /> 已提交</div>
+                      <div className="feedback-sent"><CheckCircle2 size={17} />{tr("已提交")}</div>
                     ) : (
                       <>
-                        <div className="rating-row" aria-label="会话评分">
+                        <div className="rating-row" aria-label={tr("会话评分")}>
                           {[1, 2, 3, 4, 5].map((value) => (
                             <button
                               key={value}
@@ -1306,8 +1319,8 @@ export default function App() {
                         <div className="dimension-ratings">
                           {FEEDBACK_DIMENSIONS.map(([key, label]) => (
                             <div className="dimension-row" key={key}>
-                              <span>{label}</span>
-                              <div className="rating-row" aria-label={label}>
+                              <span>{tr(label)}</span>
+                              <div className="rating-row" aria-label={tr(label)}>
                                 {[1, 2, 3, 4, 5].map((value) => (
                                   <button
                                     key={value}
@@ -1325,21 +1338,19 @@ export default function App() {
                         <textarea
                           value={feedbackComment}
                           onChange={(event) => setFeedbackComment(event.target.value)}
-                          placeholder="记录体验或问题"
+                          placeholder={tr("记录体验或问题")}
                           rows={3}
                         />
                         <div className="feedback-consent">
-                          <label><input type="checkbox" checked={feedbackConsent.content_review} onChange={(event) => setFeedbackConsent((current) => ({ ...current, content_review: event.target.checked, ...(!event.target.checked ? { knowledge_derivation: false } : {}) }))} />允许内容评审</label>
-                          <label><input type="checkbox" checked={feedbackConsent.research_use} onChange={(event) => setFeedbackConsent((current) => ({ ...current, research_use: event.target.checked }))} />允许研究使用</label>
-                          <label><input type="checkbox" checked={feedbackConsent.knowledge_derivation} onChange={(event) => setFeedbackConsent((current) => ({ ...current, knowledge_derivation: event.target.checked, ...(event.target.checked ? { content_review: true } : {}) }))} />允许形成知识候选</label>
+                          <label><input type="checkbox" checked={feedbackConsent.content_review} onChange={(event) => setFeedbackConsent((current) => ({ ...current, content_review: event.target.checked, ...(!event.target.checked ? { knowledge_derivation: false } : {}) }))} />{tr("允许内容评审")}</label>
+                          <label><input type="checkbox" checked={feedbackConsent.research_use} onChange={(event) => setFeedbackConsent((current) => ({ ...current, research_use: event.target.checked }))} />{tr("允许研究使用")}</label>
+                          <label><input type="checkbox" checked={feedbackConsent.knowledge_derivation} onChange={(event) => setFeedbackConsent((current) => ({ ...current, knowledge_derivation: event.target.checked, ...(event.target.checked ? { content_review: true } : {}) }))} />{tr("允许形成知识候选")}</label>
                         </div>
                         <button
                           className="secondary-button"
                           onClick={sendFeedback}
                           disabled={feedbackRating < 1 || busy}
-                        >
-                          提交反馈
-                        </button>
+                        >{tr("提交反馈")}</button>
                       </>
                     )}
                   </section>
@@ -1351,31 +1362,31 @@ export default function App() {
       </div>
       {flagTurnId && (
         <div className="flag-modal-layer">
-          <button className="drawer-scrim" onClick={() => setFlagTurnId('')} aria-label="关闭标记" />
-          <section className="flag-modal" role="dialog" aria-modal="true" aria-label="标记此回应">
-            <header><h2>标记此回应</h2><button className="icon-button" onClick={() => setFlagTurnId('')} title="关闭"><X size={17} /></button></header>
-            <select value={flagCategory} onChange={(event) => setFlagCategory(event.target.value)} aria-label="问题类别">
-              <option value="unrealistic">表现不真实</option>
-              <option value="inappropriate_response">回应不恰当</option>
-              <option value="state_inconsistent">前后状态不一致</option>
-              <option value="risk_handling_concern">风险处理有疑问</option>
-              <option value="other">其他</option>
+          <button className="drawer-scrim" onClick={() => setFlagTurnId('')} aria-label={tr("关闭标记")} />
+          <section className="flag-modal" role="dialog" aria-modal="true" aria-label={tr("标记此回应")}>
+            <header><h2>{tr("标记此回应")}</h2><button className="icon-button" onClick={() => setFlagTurnId('')} title={tr("关闭")}><X size={17} /></button></header>
+            <select value={flagCategory} onChange={(event) => setFlagCategory(event.target.value)} aria-label={tr("问题类别")}>
+              <option value="unrealistic">{tr("表现不真实")}</option>
+              <option value="inappropriate_response">{tr("回应不恰当")}</option>
+              <option value="state_inconsistent">{tr("前后状态不一致")}</option>
+              <option value="risk_handling_concern">{tr("风险处理有疑问")}</option>
+              <option value="other">{tr("其他")}</option>
             </select>
-            <textarea value={flagComment} onChange={(event) => setFlagComment(event.target.value)} placeholder="补充说明（可选）" rows={3} />
+            <textarea value={flagComment} onChange={(event) => setFlagComment(event.target.value)} placeholder={tr("补充说明（可选）")} rows={3} />
             <div className="feedback-consent">
-              <label><input type="checkbox" checked={flagConsent.content_review} onChange={(event) => setFlagConsent((current) => ({ ...current, content_review: event.target.checked, ...(!event.target.checked ? { knowledge_derivation: false } : {}) }))} />允许内容评审</label>
-              <label><input type="checkbox" checked={flagConsent.research_use} onChange={(event) => setFlagConsent((current) => ({ ...current, research_use: event.target.checked }))} />允许研究使用</label>
-              <label><input type="checkbox" checked={flagConsent.knowledge_derivation} onChange={(event) => setFlagConsent((current) => ({ ...current, knowledge_derivation: event.target.checked, ...(event.target.checked ? { content_review: true } : {}) }))} />允许形成知识候选</label>
+              <label><input type="checkbox" checked={flagConsent.content_review} onChange={(event) => setFlagConsent((current) => ({ ...current, content_review: event.target.checked, ...(!event.target.checked ? { knowledge_derivation: false } : {}) }))} />{tr("允许内容评审")}</label>
+              <label><input type="checkbox" checked={flagConsent.research_use} onChange={(event) => setFlagConsent((current) => ({ ...current, research_use: event.target.checked }))} />{tr("允许研究使用")}</label>
+              <label><input type="checkbox" checked={flagConsent.knowledge_derivation} onChange={(event) => setFlagConsent((current) => ({ ...current, knowledge_derivation: event.target.checked, ...(event.target.checked ? { content_review: true } : {}) }))} />{tr("允许形成知识候选")}</label>
             </div>
-            <button className="primary-button" onClick={sendTurnFlag} disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <Flag size={15} />}提交标记</button>
+            <button className="primary-button" onClick={sendTurnFlag} disabled={busy}>{busy ? <LoaderCircle className="spin" size={15} /> : <Flag size={15} />}{tr("提交标记")}</button>
           </section>
         </div>
       )}
       {contributionOpen && (
         <>
-          <button className="drawer-scrim" onClick={() => setContributionOpen(false)} aria-label="关闭我的反馈" />
+          <button className="drawer-scrim" onClick={() => setContributionOpen(false)} aria-label={tr("关闭我的反馈")} />
           <aside className="contribution-drawer">
-            <header><h2>我的反馈</h2><button className="icon-button" onClick={() => setContributionOpen(false)} title="关闭"><X size={17} /></button></header>
+            <header><h2>{tr("我的反馈")}</h2><button className="icon-button" onClick={() => setContributionOpen(false)} title={tr("关闭")}><X size={17} /></button></header>
             {contributionLoading ? (
               <div className="drawer-loading"><LoaderCircle className="spin" size={18} /></div>
             ) : contributions.length ? (
@@ -1385,14 +1396,14 @@ export default function App() {
                     <div><strong>{item.contribution_type}</strong><span>{new Date(item.created_at).toLocaleString()}</span></div>
                     <small>{item.origin.product} · {item.target.target_type}</small>
                     {item.privacy_status === 'deletion_requested' ? (
-                      <span className="withdrawn-label">已申请删除</span>
+                      <span className="withdrawn-label">{tr("已申请删除")}</span>
                     ) : (
-                      <button onClick={() => withdraw(item.contribution_id)}><Trash2 size={14} />撤回</button>
+                      <button onClick={() => withdraw(item.contribution_id)}><Trash2 size={14} />{tr("撤回")}</button>
                     )}
                   </article>
                 ))}
               </div>
-            ) : <div className="drawer-empty">暂无反馈</div>}
+            ) : <div className="drawer-empty">{tr("暂无反馈")}</div>}
           </aside>
         </>
       )}

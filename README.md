@@ -12,21 +12,42 @@ publishes them. Model weights, private conversations, credentials, and full
 knowledge releases are kept outside the source repository.
 
 [中文说明](README.zh.md) · [English deployment guide](docs/deployment.en.md) ·
-[中文部署说明](docs/deployment.zh.md)
+[中文部署说明](docs/deployment.zh.md) · [Workflow guide](docs/workflows.en.md) ·
+[Changelog](CHANGELOG.md)
 
 ## What it provides
 
 | Workflow | Main capabilities |
 | --- | --- |
 | Transcript workbench | Ingest TXT/JSON/CSV/Markdown or pasted text, normalize turns, inspect speaker roles, analyze risk signals, run skill reviews, and package evidence-preserving artifacts. |
-| Knowledge extraction | Inspect a source, propose a task-specific schema, extract grounded records with provenance, validate candidates, and hand them to the governance queue. |
+| Interactive extraction | Inspect sources, propose and edit schemas, confirm sample/full runs, hand off to governance, and build and activate reviewed knowledge versions. |
 | Knowledge and retrieval | Accept compatible JSONL, build portable lexical or hybrid indexes, verify checksums, search, activate, roll back, and package resources. |
-| Skills and agent tasks | Install local skills, scan them, optimize metadata, roll back changes, and run deterministic text, source, extraction, and transcript tasks through one task contract. |
+| Skills and agent tasks | Model-directed tools, interactive questions and approvals, durable checkpoints, retries/cancellation, local skill installation, evolution drafts and rollback. |
+| Behavioral evaluation | Execute fixed bilingual cases with real retrieval and models; inspect citations, score explanations, baseline comparisons and human-reviewed version gates. |
+| Courses and progress | Define objectives, assign approved scenarios, link real practice and debriefs, record instructor reviews and track observations across attempts. |
 | Practice and review | Run support, simulation, expert review, contribution, and extraction services from the same workbench and skill/tool surface. |
 
 The browser workbench is served by the project itself. It exposes the main
-workbench plus support, simulation, and expert views under one UI process; the
-domain services are started locally when requested.
+workbench plus support, simulation, and expert views. All six business modules
+run inside one process and share one browser port; no separate domain servers
+are needed. The workspaces support Chinese/English switching while preserving
+source text and evidence quotations.
+
+## From source dialogue to reusable knowledge
+
+```mermaid
+flowchart LR
+  A[Text or dialogue files] --> B[Inspect and normalize]
+  B --> C[Interactive schema and extraction]
+  C --> D[Review and approve candidates]
+  D --> E[Build and evaluate a knowledge index]
+  E --> F[Support, practice and expert review]
+```
+
+Skills coordinate tools and pause for decisions when a task needs schema choices,
+source clarification or approval. Transcript analysis and review can also run
+directly. Model-generated knowledge and skill drafts stay reviewable; replacing
+an active index or an existing skill requires a reviewed behavior comparison.
 
 ## Quick start from source
 
@@ -50,14 +71,15 @@ theraskill-agent project init .
 cp configs/theraskill/providers.local.example.yaml \
   configs/theraskill/providers.local.yaml
 chmod 600 configs/theraskill/providers.local.yaml
+# Edit that file with your LLM and embedding model names, URLs and keys.
 theraskill-agent provider check --kind llm
 theraskill-agent provider check --kind embedding
-theraskill-agent ui --start-services
+theraskill-agent ui
 ```
 
 Open <http://127.0.0.1:5176/>. A wheel installation already contains built
 interfaces and does not require Node. See [Deployment](docs/deployment.en.md)
-for wheel installation, service management, ports, checks, and upgrades.
+for installation, startup, checks, and upgrades.
 
 ## Configure models directly
 
@@ -124,6 +146,21 @@ configuration. Changing the embedding model or dimensions requires a new
 index. See [Knowledge, indexes, and resource packages](docs/knowledge_and_indexes.en.md)
 for mappings, eligibility rules, manifests, installation, and rollback.
 
+## Retrieval follows the task
+
+Shared query understanding identifies language, concepts, task and risk cues.
+Advanced agent retrieval adds real LLM planning, then combines lexical, label,
+vector and required-family evidence within the selected skill's knowledge scope.
+User filters remain hard constraints during scope relaxation and backfill.
+
+Independent channels run in parallel. Index-versioned metadata caches avoid
+repeated corpus scans, and scoped FAISS searches read Flat indexes through
+read-only memory mapping. Cached metadata does not replace model planning.
+Timings, evidence roles and warnings are saved with the result. Broad queries
+and provider latency can still be slow; see the
+[retrieval validation record (Chinese)](docs/retrieval_optimization_20261018.zh.md)
+for measured cases and limits.
+
 ## Transcript and task examples
 
 ```bash
@@ -171,7 +208,7 @@ Useful references:
 python -m pip install -e '.[dev,retrieval]'
 python -m pytest -q -o addopts='' \
   tests/test_standalone_kernel.py tests/test_theraskill*.py \
-  tests/smoke_theraskill_install.py tests/test_theraskill_indexing.py \
+  tests/smoke_theraskill_install.py \
   --ignore=tests/test_theraskill_agent_regression.py
 npm run build
 python -m build

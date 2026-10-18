@@ -31,7 +31,6 @@ DEFAULT_DB = PHASE6_SQLITE_DB_PATH
 DEFAULT_MODEL_CONFIG = PROJECT_ROOT / "configs/theraskill/retrieval.yaml"
 DEFAULT_PROMPT = PROJECT_ROOT / "prompts/AdvancedRetrieval/retrieval_query_planner_zh_en.md"
 DEFAULT_OUTPUT = RETRIEVAL_QUERY_PLAN_V3_PATH
-INDEX_VALUE_INVENTORY_CACHE: dict[str, dict[str, set[str]]] = {}
 
 ALLOWED_SKILLS = {
     "emotional-support",
@@ -202,28 +201,9 @@ def extract_json_object(response: dict[str, Any]) -> dict[str, Any]:
     return json.loads(text)
 
 
-def list_values(con: sqlite3.Connection, column: str) -> set[str]:
-    rows = con.execute(f"select distinct {column} from retrieval_meta where {column} is not null").fetchall()
-    return {str(row[0]) for row in rows if row[0] is not None}
-
-
-def load_index_value_inventory(db: Path) -> dict[str, set[str]]:
-    cache_key = str(db.resolve())
-    if cache_key in INDEX_VALUE_INVENTORY_CACHE:
-        return INDEX_VALUE_INVENTORY_CACHE[cache_key]
-    con = sqlite3.connect(str(db))
-    try:
-        inventory = {
-            "dedup_family": list_values(con, "dedup_family"),
-            "risk_scope": list_values(con, "risk_scope"),
-            "default_route": list_values(con, "default_route"),
-            "primary_knowledge_type": list_values(con, "primary_knowledge_type"),
-            "primary_evidence_tier": list_values(con, "primary_evidence_tier"),
-        }
-        INDEX_VALUE_INVENTORY_CACHE[cache_key] = inventory
-        return inventory
-    finally:
-        con.close()
+def load_index_value_inventory(db: Path, *, cache_path=None, trace=None) -> dict[str, set[str]]:
+    from theraskill_agent.indexing.inventory import load_inventory
+    return load_inventory(db, cache_path=cache_path, trace=trace)
 
 
 def ensure_list(value: Any) -> list[Any]:
@@ -456,7 +436,11 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     db = Path(args.db)
     prompt_path = Path(args.prompt)
     config_path = Path(args.model_config)
-    inventory = load_index_value_inventory(db)
+    from theraskill_agent.indexing.diagnostics import RetrievalTimings
+    timings = RetrievalTimings()
+    inventory_trace = {}
+    inventory = timings.call('inventory', load_index_value_inventory, db,
+                             cache_path=getattr(args, 'inventory_cache', None), trace=inventory_trace)
     prompt, prompt_hash = read_prompt(prompt_path, args.skill, args.query, inventory)
     trace: dict[str, Any] = {
         "schema_version": "theraskill_retrieval_planner_trace_v1",
@@ -471,6 +455,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "issues": [],
         "warnings": [],
         "attempts": [],
+        "inventory_cache": inventory_trace,
         "inventory_sha256": hashlib.sha256(json.dumps({key: sorted(values) for key, values in inventory.items()}, sort_keys=True).encode()).hexdigest(),
         "request_prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
     }
@@ -480,7 +465,9 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         for attempt in range(1, attempts + 1):
             attempt_trace = {'attempt': attempt, 'json_valid': False, 'enum_valid': False}
             try:
-                response = chat_completion(config_path, prompt + feedback)
+                attempt_started = time.perf_counter()
+                response = timings.call('model', chat_completion, config_path, prompt + feedback)
+                attempt_trace['model_ms'] = round((time.perf_counter() - attempt_started) * 1000, 3)
                 raw_plan = extract_json_object(response)
                 attempt_trace['json_valid'] = True
                 plan, issues, warnings = validate_plan(raw_plan, args.skill, args.query, inventory)
@@ -510,6 +497,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         trace["fallback_issues"] = fallback_issues
         trace["enum_valid"] = not fallback_issues
         trace["warnings"].extend(fallback_warnings)
+    trace['timings'] = timings.snapshot()
     return {
         "schema_version": "theraskill_retrieval_plan_artifact_v1",
         "created_at": utc_now(),

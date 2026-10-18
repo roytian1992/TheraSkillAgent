@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from contextlib import closing
 from pathlib import Path
 from typing import Any
@@ -67,8 +68,7 @@ def rank_candidates(hits, understanding):
     return ranked
 
 
-def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit=80):
-    """Filter before recall; use a token index for Chinese when available."""
+def language_scoped_database(db_path, understanding):
     db_path = Path(db_path).expanduser().resolve()
     language_filters = (understanding.get('filters') or {}).get('primary_language') or (understanding.get('automatic_filters') or {}).get('primary_language') or []
     # English is a small partition in the reviewed release. Prefer its compact
@@ -83,9 +83,38 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
             columns = {row[1] for row in primary_db.execute('PRAGMA table_info(retrieval_meta)')}
         if 'primary_language' in columns:
             db_path = db_path.parent / 'retrieval_en.sqlite'
+    return db_path
+
+
+def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit=80, *, trace=None):
+    """Filter before recall; use a token index for Chinese when available."""
+    db_path = language_scoped_database(db_path, understanding)
     with closing(sqlite3.connect(f'{Path(db_path).resolve().as_uri()}?mode=ro', uri=True)) as db:
         db.execute('PRAGMA cache_size=-65536')
         db.row_factory = sqlite3.Row
+        fts_deadline = time.monotonic() + 6.0
+        if trace is not None:
+            trace.update(fts_budget_seconds=6.0, timed_out_queries=0, skipped_queries=0)
+        def recall(sql, values=()):
+            if ' MATCH ' not in sql.upper():
+                return db.execute(sql, values).fetchall()
+            now = time.monotonic()
+            if now >= fts_deadline:
+                if trace is not None:
+                    trace['skipped_queries'] += 1
+                return []
+            deadline = min(fts_deadline, now + 2.0)
+            db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+            try:
+                return db.execute(sql, values).fetchall()
+            except sqlite3.OperationalError as exc:
+                if str(exc).lower() != 'interrupted':
+                    raise
+                if trace is not None:
+                    trace['timed_out_queries'] += 1
+                return []
+            finally:
+                db.set_progress_handler(None, 0)
         clauses, params = compile_scope(db, understanding)
         where = ' AND '.join(clauses)
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -114,13 +143,15 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
             # a few thousand rows (for example English style records), while
             # an unfiltered style pool still correctly uses the normal FTS
             # path.
-            scoped_primary = db.execute(
-                f'SELECT m.* FROM {meta_table} m WHERE {where} AND m.dedup_family=?',
-                (*params, primary),
-            ).fetchall()
-            if len(scoped_primary) <= 50000 and 'retrieval_cjk_fts' in tables:
-                if primary_pool is None:
-                    primary_pool = {row['retrieval_id']: dict(row) for row in scoped_primary}
+            if primary_pool is None:
+                # Only distinguish a small scoped pool from a large one. Do
+                # not materialize millions of example rows to make that choice.
+                scoped_primary = recall(
+                    f'SELECT m.* FROM {meta_table} m WHERE {where} AND m.dedup_family=? LIMIT 50001',
+                    (*params, primary),
+                )
+                primary_pool = {row['retrieval_id']: dict(row) for row in scoped_primary}
+            if len(primary_pool) <= 50000 and 'retrieval_cjk_fts' in tables:
                 ids = list(primary_pool)
                 if not ids:
                     return []
@@ -133,38 +164,38 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
                     # string IDs inside SQLite can be slower than taking a
                     # bounded ranked page and applying the small family set in
                     # Python. Hydrate only the matching rowids afterwards.
-                    ranked = db.execute('''SELECT rowid,retrieval_id,bm25(retrieval_cjk_fts) AS score
+                    ranked = recall('''SELECT rowid,retrieval_id,bm25(retrieval_cjk_fts) AS score
                         FROM retrieval_cjk_fts WHERE retrieval_cjk_fts MATCH ? ORDER BY rank LIMIT ?''',
-                        (match, max(limit * 64, 512))).fetchall()
+                        (match, max(limit * 64, 512)))
                     allowed = set(ids)
                     ranked = [row for row in ranked if row['retrieval_id'] in allowed][:min(limit, 8)]
                     if not ranked:
                         return []
                     rowids = [row['rowid'] for row in ranked]
-                    text_by_id = {row['retrieval_id']: row['retrieval_text'] for row in db.execute(
+                    text_by_id = {row['retrieval_id']: row['retrieval_text'] for row in recall(
                         f'SELECT retrieval_id,retrieval_text FROM retrieval_fts WHERE rowid IN ({",".join("?" for _ in rowids)})', rowids
-                    ).fetchall()}
+                    )}
                     return [{**primary_pool[row['retrieval_id']], 'retrieval_text': text_by_id[row['retrieval_id']], 'score': row['score']}
                             for row in ranked if row['retrieval_id'] in text_by_id]
                 for start in range(0, len(ids), 500):
                     chunk = ids[start:start + 500]
                     placeholders = ','.join('?' for _ in chunk)
                     if cjk:
-                        rows = db.execute(f'''SELECT c.retrieval_id,f.retrieval_text,bm25(retrieval_cjk_fts) AS score
+                        rows = recall(f'''SELECT c.retrieval_id,f.retrieval_text,bm25(retrieval_cjk_fts) AS score
                             FROM retrieval_cjk_fts c JOIN retrieval_fts f
                               ON f.rowid=c.rowid AND f.retrieval_id=c.retrieval_id
                             WHERE retrieval_cjk_fts MATCH ? AND c.retrieval_id IN ({placeholders})
-                            ORDER BY c.rank LIMIT ?''', (match, *chunk, min(limit, 8))).fetchall()
+                            ORDER BY c.rank LIMIT ?''', (match, *chunk, min(limit, 8)))
                     elif text_table == 'retrieval_en_fts':
-                        rows = db.execute(f'''SELECT f.retrieval_id,f.retrieval_text,bm25(retrieval_en_fts) AS score
+                        rows = recall(f'''SELECT f.retrieval_id,f.retrieval_text,bm25(retrieval_en_fts) AS score
                             FROM retrieval_en_fts f
                             WHERE retrieval_en_fts MATCH ? AND f.retrieval_id IN ({placeholders})
-                            ORDER BY f.rank LIMIT ?''', (match, *chunk, min(limit, 8))).fetchall()
+                            ORDER BY f.rank LIMIT ?''', (match, *chunk, min(limit, 8)))
                     else:
-                        rows = db.execute(f'''SELECT f.retrieval_id,f.retrieval_text,bm25(retrieval_fts) AS score
+                        rows = recall(f'''SELECT f.retrieval_id,f.retrieval_text,bm25(retrieval_fts) AS score
                             FROM retrieval_fts f
                             WHERE retrieval_fts MATCH ? AND f.retrieval_id IN ({placeholders})
-                            ORDER BY f.rank LIMIT ?''', (match, *chunk, min(limit, 8))).fetchall()
+                            ORDER BY f.rank LIMIT ?''', (match, *chunk, min(limit, 8)))
                     matches.extend(rows)
                 matches.sort(key=lambda row: row['score'])
                 return [{**primary_pool[row['retrieval_id']], 'retrieval_text': row['retrieval_text'], 'score': row['score']}
@@ -173,36 +204,36 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
             order = f'{alias}.rank'
             if cjk:
                 joins += ' CROSS JOIN retrieval_fts f ON f.rowid=c.rowid AND f.retrieval_id=c.retrieval_id'
-            return db.execute(f'''SELECT m.*,f.retrieval_text,bm25({table}) AS score
+            return recall(f'''SELECT m.*,f.retrieval_text,bm25({table}) AS score
                 FROM {joins} WHERE {table} MATCH ? AND {where} AND m.dedup_family=?
-                ORDER BY {order} LIMIT ?''', (match, *params, primary, min(limit, 8))).fetchall()
+                ORDER BY {order} LIMIT ?''', (match, *params, primary, min(limit, 8)))
         if terms:
             if english_partition:
                 # Let FTS produce a small ranked page first, then hydrate and
                 # apply metadata filters by primary-key IDs. Joining the
                 # language partition to the multi-gigabyte metadata table
                 # before MATCH can make SQLite scan the network-mounted table.
-                fts_rows = db.execute('''SELECT retrieval_id,retrieval_text,bm25(retrieval_en_fts) AS score
+                fts_rows = recall('''SELECT retrieval_id,retrieval_text,bm25(retrieval_en_fts) AS score
                     FROM retrieval_en_fts WHERE retrieval_en_fts MATCH ? ORDER BY rank LIMIT ?''',
-                    (_match(terms[:80]), max(limit * 8, 80))).fetchall()
+                    (_match(terms[:80]), max(limit * 8, 80)))
                 metadata = {}
                 ids = [row['retrieval_id'] for row in fts_rows]
                 if ids:
                     for start in range(0, len(ids), 500):
                         chunk = ids[start:start + 500]
-                        metadata.update({row['retrieval_id']: dict(row) for row in db.execute(
+                        metadata.update({row['retrieval_id']: dict(row) for row in recall(
                             f'SELECT * FROM {meta_table} WHERE retrieval_id IN ({",".join("?" for _ in chunk)})', chunk
-                        ).fetchall()})
+                        )})
                 rows = []
                 for row in fts_rows:
                     item = metadata.get(row['retrieval_id'])
                     if item and matches_scope({**item, 'retrieval_text': row['retrieval_text']}, understanding):
                         rows.append({**item, 'retrieval_text': row['retrieval_text'], 'score': row['score']})
             else:
-                rows = db.execute(f'''SELECT m.*,f.retrieval_text,bm25({text_table}) AS score
+                rows = recall(f'''SELECT m.*,f.retrieval_text,bm25({text_table}) AS score
                     FROM {text_table} f JOIN retrieval_meta m ON m.retrieval_id=f.retrieval_id
                     WHERE {text_table} MATCH ? AND {where} ORDER BY f.rank LIMIT ?''',
-                    (_match(terms[:80]), *params, limit)).fetchall()
+                    (_match(terms[:80]), *params, limit))
             channels.append(('bm25', rows))
             if primary and not any(row['dedup_family'] == primary for row in rows):
                 # Scope inside recall: otherwise a large style corpus can fill
@@ -223,22 +254,22 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
             # hydrate only those rows. Doing the text join before ORDER BY rank
             # makes SQLite touch the multi-gigabyte response FTS table for every
             # posting on a network mount.
-            cjk_rows = db.execute('''SELECT rowid,retrieval_id,bm25(retrieval_cjk_fts) AS score
+            cjk_rows = recall('''SELECT rowid,retrieval_id,bm25(retrieval_cjk_fts) AS score
                 FROM retrieval_cjk_fts WHERE retrieval_cjk_fts MATCH ? ORDER BY rank LIMIT ?''',
-                (_match(indexed_cjk), limit)).fetchall()
+                (_match(indexed_cjk), limit))
             rows = []
             ids = [row['retrieval_id'] for row in cjk_rows]
             metadata = {}
             text_by_id = {}
             if ids:
                 placeholders = ','.join('?' for _ in ids)
-                metadata = {row['retrieval_id']: dict(row) for row in db.execute(
+                metadata = {row['retrieval_id']: dict(row) for row in recall(
                     f'SELECT * FROM retrieval_meta WHERE retrieval_id IN ({placeholders})', ids
-                ).fetchall()}
+                )}
                 rowids = [row['rowid'] for row in cjk_rows]
-                text_by_id = {row['retrieval_id']: row['retrieval_text'] for row in db.execute(
+                text_by_id = {row['retrieval_id']: row['retrieval_text'] for row in recall(
                     f'SELECT retrieval_id,retrieval_text FROM retrieval_fts WHERE rowid IN ({",".join("?" for _ in rowids)})', rowids
-                ).fetchall()}
+                )}
             for row in cjk_rows:
                 item = metadata.get(row['retrieval_id'])
                 text = text_by_id.get(row['retrieval_id'])
@@ -252,10 +283,10 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
             # Historical artifacts lack the segmented token index. This path
             # trades latency for compatibility; rebuilding enables indexed recall.
             like = ' OR '.join('f.retrieval_text LIKE ?' for _ in cjk[:20])
-            rows = db.execute(f'''SELECT m.*,f.retrieval_text,0.0 AS score
+            rows = recall(f'''SELECT m.*,f.retrieval_text,0.0 AS score
                 FROM retrieval_fts f JOIN retrieval_meta m USING(retrieval_id)
                 WHERE {where} AND ({like}) ORDER BY m.retrieval_id LIMIT ?''',
-                (*params, *(f'%{term}%' for term in cjk[:20]), limit)).fetchall()
+                (*params, *(f'%{term}%' for term in cjk[:20]), limit))
             channels.append(('legacy_cjk_substring', rows))
         merged = {}
         for name, rows in channels:

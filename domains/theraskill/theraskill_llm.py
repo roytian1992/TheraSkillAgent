@@ -486,45 +486,60 @@ class OpenAICompatibleClient:
         if use_json_response:
             request_payload["response_format"] = {"type": "json_object"}
 
-        data = json.dumps(request_payload, ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=data,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        last_error: Optional[str] = None
-        for attempt in range(self.retry_attempts + 1):
-            try:
-                with self.opener.open(request, timeout=self.timeout_seconds) as response:
-                    response_data = json.loads(response.read().decode("utf-8"))
-                choice = response_data["choices"][0]
-                if choice.get('finish_reason') == 'length':
-                    raise ModelOutputError(
-                        'model output reached its token limit; increase max_output_tokens '
-                        'or adjust the provider thinking/reasoning settings'
-                    )
-                content = choice['message'].get('content')
-                if not isinstance(content, str) or not content.strip():
-                    raise ModelOutputError(
-                        f"model returned no visible text (finish_reason={choice.get('finish_reason')!r})"
-                    )
-                return content
-            except ModelOutputError:
-                # A completed HTTP request with truncated output is not a
-                # transport failure. Repeating it unchanged wastes the budget.
-                raise
-            except urllib.error.HTTPError as exc:
-                body = exc.read().decode("utf-8", errors="replace")
-                last_error = f"HTTP {exc.code}: {body[:1000]}"
-            except Exception as exc:  # noqa: BLE001
-                last_error = f"{type(exc).__name__}: {exc}"
-            if attempt < self.retry_attempts:
+        # Recovery belongs to the common provider boundary. Regenerate a whole
+        # result after truncation: concatenating JSON fragments can silently
+        # change records or execute incomplete tool arguments.
+        self.output_recovery = []
+        output_error = None
+        for recovery in range(3):
+            data = json.dumps(request_payload, ensure_ascii=False).encode("utf-8")
+            request = urllib.request.Request(
+                f"{self.base_url}/chat/completions", data=data,
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                method="POST",
+            )
+            response_data = None
+            for attempt in range(self.retry_attempts + 1):
+                try:
+                    with self.opener.open(request, timeout=self.timeout_seconds) as response:
+                        response_data = json.loads(response.read().decode("utf-8"))
+                    break
+                except urllib.error.HTTPError as exc:
+                    body = exc.read().decode("utf-8", errors="replace")
+                    error = f"HTTP {exc.code}: {body[:1000]}"
+                    if exc.code not in {408, 409, 425, 429} and exc.code < 500:
+                        raise RuntimeError(error) from exc
+                except Exception as exc:  # noqa: BLE001
+                    error = f"{type(exc).__name__}: {exc}"
+                if attempt == self.retry_attempts:
+                    raise RuntimeError(error)
                 time.sleep(1.5 * (attempt + 1))
-        raise RuntimeError(last_error or "unknown chat completion failure")
+            choice = response_data["choices"][0]
+            message = choice.get('message') or {}
+            content = message.get('content')
+            truncated = choice.get('finish_reason') == 'length'
+            empty = not isinstance(content, str) or not content.strip()
+            if not truncated and not empty:
+                return content
+            reason = 'truncated' if truncated else 'empty_response'
+            output_error = (
+                'model output remained incomplete after automatic recovery; '
+                'the task result was not accepted. The model service may require a larger output limit.'
+            )
+            if recovery == 2:
+                break
+            current_budget = request_payload.get('max_tokens')
+            if truncated or message.get('reasoning_content'):
+                budget = max(8192, int(current_budget or 4096) * 2)
+                # Keep an explicitly larger configured budget; never grow it
+                # further. Otherwise bound automatic growth at 32k tokens.
+                budget = min(budget, max(32768, int(current_budget or 0)))
+                if truncated and current_budget == budget:
+                    break
+                request_payload['max_tokens'] = budget
+            self.output_recovery.append({'reason': reason, 'attempt': recovery + 1,
+                                         'max_tokens': request_payload.get('max_tokens')})
+        raise ModelOutputError(output_error or 'model returned incomplete output')
 
 
 class OpenAICompatibleEmbeddingClient:

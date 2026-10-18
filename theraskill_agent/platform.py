@@ -51,7 +51,7 @@ class TheraSkillPlatform:
             "first_party": self.first_party,
             "capabilities": list(self.capabilities()),
             "services": {
-                name: {"module": str(spec["module"]), "port": int(spec["port"])}
+                name: {"module": str(spec["module"]), "transport": "inprocess", "api_path": f"/api/{name}"}
                 for name, spec in specs.items()
             },
             "providers": self.provider_snapshot(),

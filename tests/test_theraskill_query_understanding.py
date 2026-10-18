@@ -275,3 +275,55 @@ def test_planner_gets_real_index_inventory_and_retries_validation(tmp_path, monk
     monkeypatch.setattr(planner, 'chat_completion', lambda *args: {'choices': [{'message': {'content': '{'}}]})
     with pytest.raises(ValueError):
         planner.build_plan(args)
+
+
+def test_expensive_fts_query_is_interrupted_and_connection_remains_usable(monkeypatch):
+    pytest.importorskip('numpy')
+    from types import SimpleNamespace
+    from domains.theraskill.hybrid_retrieval import TheraSkillHybridRetriever
+    adapter=object.__new__(TheraSkillHybridRetriever)
+    adapter.project_root=Path(__file__).parents[1]
+    module=adapter._load_retriever()
+    ticks=iter([0.0,3.0])
+    monkeypatch.setattr(module,'time',SimpleNamespace(monotonic=lambda:next(ticks,3.0)))
+    with sqlite3.connect(':memory:') as connection:
+        connection.row_factory=sqlite3.Row
+        rows,timed_out=module.bounded_fts_rows(connection,
+            'WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<100000000) SELECT sum(x) FROM n',[])
+        assert timed_out and rows == []
+        assert connection.execute('SELECT 1').fetchone()[0] == 1
+
+
+def test_required_family_timeout_fallback_keeps_explicit_scope(tmp_path,monkeypatch):
+    pytest.importorskip('numpy')
+    from domains.theraskill.hybrid_retrieval import TheraSkillHybridRetriever
+    from theraskill_agent.indexing.builder import DB
+    adapter=object.__new__(TheraSkillHybridRetriever)
+    adapter.project_root=Path(__file__).parents[1]
+    module=adapter._load_retriever()
+    output=tmp_path/'index';build_index(DEMO,output)
+    understanding=understand_query('核对原文证据',skill='therapy-response-reviewer',filters={'language':'zh'})
+    plan={'target_families':{'required':['method_rubric','therapy_process']},
+          'metadata_filters':{},'_query_understanding':understanding}
+    monkeypatch.setattr(module,'bounded_fts_rows',lambda *args,**kwargs:([],True))
+    trace={}
+    hits=module.fetch_required_family_candidates(output/DB,plan,'核对原文证据',10,trace=trace)
+    assert hits
+    assert len(module.filter_candidates(output/DB,hits,understanding)) == len(hits)
+    assert trace['fts_timed_out'] and trace['timeout_seconds'] == 2.0 and trace['used_scoped_fallback']
+    assert trace['family_counts'] == {'method_rubric': 1, 'therapy_process': 1}
+
+
+def test_lexical_budget_retains_completed_channels(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    import theraskill_agent.indexing.search as search
+    from theraskill_agent.indexing.builder import DB
+    output=tmp_path/'index';build_index(DEMO,output)
+    understanding=understand_query('uncertainty 核对原文证据',skill='emotional-support')
+    ticks=iter([0.0,4.0])
+    monkeypatch.setattr(search,'time',SimpleNamespace(monotonic=lambda:next(ticks,10.0)))
+    trace={}
+    hits=search.lexical_candidates(output/DB,understanding,trace=trace)
+    assert hits
+    assert trace['skipped_queries'] > 0
+    assert all(search.matches_scope(hit,understanding) for hit in hits)

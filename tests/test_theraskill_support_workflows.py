@@ -141,3 +141,48 @@ def test_support_api_exposes_safety_resources_plan_and_check_in(tmp_path: Path) 
     )
     assert check_in.status_code == 200
     assert check_in.json()["safety"]["check_in_status"] == "safe"
+
+
+def test_safety_screen_is_visible_before_generation_and_survives_failure(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    session = service.create_session(owner_id="user-1")
+    submitted = service.submit_message(session.session_id, text="我现在想自杀，身边没人，我现在不安全。", owner_id="user-1", idempotency_key="urgent")
+    assert submitted.session.generation.status == "pending"
+    assert submitted.session.safety.attention_level == "urgent"
+    assert len(submitted.session.messages) == 1
+    service.engine = None
+    service.finalize_response(session.session_id, job_id=submitted.job_id)
+    result = service.get_public(session.session_id, owner_id="user-1")
+    assert result.generation.status == "failed"
+    assert result.safety.attention_level == "urgent"
+
+
+def test_check_in_during_generation_is_not_lost(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    class ConcurrentEngine(_RiskEngine):
+        def generate(self, record, job_id):
+            service.record_check_in(record.public.session_id, owner_id="user-1", safe_now=False)
+            return super().generate(record, job_id)
+    service.engine = ConcurrentEngine()
+    session = service.create_session(owner_id="user-1")
+    submitted = service.submit_message(session.session_id, text="我现在想自杀。", owner_id="user-1", idempotency_key="urgent")
+    service.finalize_response(session.session_id, job_id=submitted.job_id)
+    result = service.get_public(session.session_id, owner_id="user-1")
+    assert result.generation.status == "idle"
+    assert result.safety.check_in_status == "needs_support"
+    assert "check_in_not_safe" in result.safety.signal_codes
+
+
+def test_retry_restores_expert_workflow_without_adding_another_user_turn(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    class Broken:
+        def generate(self, record, job_id):
+            raise RuntimeError('synthetic outage')
+    service.engine = Broken()
+    session = service.create_session(owner_id='user-1')
+    submitted = service.submit_message(session.session_id,text='Review a response.',owner_id='user-1',idempotency_key='first')
+    service.finalize_response(session.session_id,job_id=submitted.job_id)
+    service.retry_response(session.session_id,owner_id='user-1',workflow='response_review',output_language='en')
+    record = service.repository.get(session.session_id)
+    assert record.workflow == 'response_review' and record.output_language == 'en'
+    assert len(record.public.messages) == 1 and record.public.generation.status == 'pending'

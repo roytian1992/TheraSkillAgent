@@ -1,4 +1,5 @@
 from __future__ import annotations
+from types import SimpleNamespace
 
 from domains.theraskill.theraskill_support.engine import LLMSupportEngine
 from domains.theraskill.theraskill_support.safety import screen_safety_risk
@@ -32,7 +33,7 @@ def test_support_route_cannot_downgrade_deterministic_safety(monkeypatch) -> Non
     engine.routing_prompt = "route"
     engine.max_runtime_prompt_tokens = 12000
 
-    decision, _latency = engine._route(None, "我想自杀", None, [])
+    decision, _latency = engine._route(SimpleNamespace(workflow="support", output_language="auto"), "我想自杀", None, [])
 
     assert decision.primary_skill == "risk-triage"
     assert decision.risk_level == "moderate"
@@ -49,7 +50,7 @@ def test_support_route_has_deterministic_fallback_when_llm_fails(monkeypatch) ->
     engine.routing_prompt = "route"
     engine.max_runtime_prompt_tokens = 12000
 
-    decision, _latency = engine._route(None, "我现在就要结束自己的生命", None, [])
+    decision, _latency = engine._route(SimpleNamespace(workflow="support", output_language="auto"), "我现在就要结束自己的生命", None, [])
 
     assert decision.primary_skill == "risk-triage"
     assert decision.risk_level == "imminent"
@@ -78,3 +79,27 @@ def test_public_evidence_summary_exposes_source_and_boundary() -> None:
         "updated_at": "2026-10-01",
         "inference": "模型根据参考依据生成支持性回应；不等同于诊断或治疗结论。",
     }]
+
+
+def test_explicit_review_workflow_is_not_rerouted_by_quoted_risk(monkeypatch) -> None:
+    def unexpected(*args, **kwargs):
+        raise AssertionError('Explicit workflow does not require another intent-classification call')
+    monkeypatch.setattr('domains.theraskill.theraskill_llm.chat_json_with_repair', unexpected)
+    engine = LLMSupportEngine.__new__(LLMSupportEngine)
+    record = SimpleNamespace(workflow='response_review', output_language='en')
+    decision, latency = engine._route(record, 'Review this quoted patient: I want to die.', None, [])
+    assert decision.primary_skill == 'therapy-response-reviewer'
+    assert decision.task_type == 'response_review'
+    assert decision.detected_language == 'en'
+    assert decision.routing_source == 'explicit_workflow' and latency == 0
+
+
+def test_evidence_summary_keeps_traceable_source_and_readable_boundaries() -> None:
+    result = LLMSupportEngine._public_evidence_summary({'items': [{
+        'canonical_label': 'Validation', 'allowed_use': ['support', 'review'],
+        'forbidden_use': ['diagnosis'], 'primary_dataset': 'synthetic-test',
+        'release_unit_id': 'unit-test', 'text_preview': 'Source excerpt.',
+    }]})[0]
+    assert result['source_id'] == 'unit-test' and result['dataset'] == 'synthetic-test'
+    assert result['excerpt'] == 'Source excerpt.'
+    assert result['used_for'] == 'support; review' and result['boundary'] == 'diagnosis'

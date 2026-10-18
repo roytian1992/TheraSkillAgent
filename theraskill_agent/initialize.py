@@ -13,6 +13,7 @@ def initialize_project(destination: str | Path) -> dict:
         "examples/knowledge/demo.jsonl": "examples/knowledge/demo.jsonl",
         "config.yaml": "configs/project.example.yaml",
         "configs/theraskill/providers.yaml": "configs/theraskill/providers.yaml",
+        "configs/theraskill/providers.local.example.yaml": "configs/theraskill/providers.local.example.yaml",
         "configs/theraskill/retrieval.yaml": "configs/theraskill/retrieval.yaml",
     }
     for target, source in templates.items():

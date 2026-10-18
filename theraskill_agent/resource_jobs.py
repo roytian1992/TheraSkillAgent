@@ -1,11 +1,12 @@
 """Durable resource job records; interruption is explicit and builds can resume."""
 from __future__ import annotations
 import os
+import hashlib
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from .paths import data_root, state_root
-from .indexing.common import read_json, write_json, safe_id
+from .indexing.common import read_json, write_json, safe_id, exclusive
 from .indexing import build_index, plan_index, retrieve_index, verify_index
 from .indexing.builder import BuildCancelled
 from . import resources
@@ -74,7 +75,7 @@ def run_operation(operation, parameters, *, progress=None, cancel=None):
             filters=p.get('filters'),
         )
     if operation == 'activate':
-        return resources.activate_index(p['index'], knowledge=p.get('knowledge'), scratch_root=p.get('scratch_root'))
+        return resources.activate_index(p['index'], knowledge=p.get('knowledge'), scratch_root=p.get('scratch_root'), report_id=p.get('report_id'))
     if operation == 'rollback':
         return resources.rollback_index()
     if operation == 'install':
@@ -90,15 +91,21 @@ def run_operation(operation, parameters, *, progress=None, cancel=None):
     raise ValueError('unknown resource operation')
 
 
-def submit_job(operation, parameters):
+def submit_job(operation, parameters, *, request_id=None):
     if operation not in {'plan', 'build', 'verify', 'install', 'activate', 'rollback', 'search'}:
         raise ValueError('unknown resource operation')
-    job_id = 'resource_' + uuid.uuid4().hex
+    job_id = 'resource_' + (hashlib.sha256(request_id.encode()).hexdigest()[:32] if request_id else uuid.uuid4().hex)
     record = {'id': job_id, 'operation': operation, 'parameters': parameters, 'status': 'queued', 'pid': os.getpid()}
     event = threading.Event()
-    with _LOCK:
-        _EVENTS[job_id] = event
-    write_json(_path(job_id), record)
+    with exclusive(state_root() / '.resource-submit.lock'):
+        if request_id and _path(job_id).is_file():
+            existing = get_job(job_id)
+            if existing['operation'] != operation or existing['parameters'] != parameters:
+                raise ValueError('Resource request ID was already used with different inputs')
+            return existing
+        with _LOCK:
+            _EVENTS[job_id] = event
+        write_json(_path(job_id), record)
     def worker():
         try:
             if event.is_set():

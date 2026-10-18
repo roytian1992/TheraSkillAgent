@@ -1,23 +1,14 @@
-# TheraSkillAgent platform profile.
-# Runtime artifacts are always resolved below the project data directory.
+# All business modules run in the application process by default.
 name: theraskill
 artifact_root: data/theraskill
-runtime:
-  host: 127.0.0.1
-  services:
-    simulation: 8876
-    support: 8878
-    expert: 8879
-    contribution: 8881
-    extraction: 8891
 services:
   support:
-    base_url: http://127.0.0.1:8878
+    base_url: inprocess://support
   simulation:
-    base_url: http://127.0.0.1:8876
+    base_url: inprocess://simulation
   response_review:
-    base_url: http://127.0.0.1:8879
+    base_url: inprocess://expert
   contribution:
-    base_url: http://127.0.0.1:8881
+    base_url: inprocess://contribution
   extraction:
-    base_url: http://127.0.0.1:8891
+    base_url: inprocess://extraction

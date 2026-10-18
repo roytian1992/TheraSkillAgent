@@ -30,7 +30,7 @@ from .contracts import (
     TranscriptTurn,
 )
 from .compatibility import build_reviewer_runtime_report
-from .engines import PatientEngine, ReviewerEngine, TherapistEngine
+from .engines import PatientEngine, ReviewerEngine, ReviewResult, TherapistEngine
 from .lifecycle import transition_session
 from .persona_compiler import (
     effective_disclosure_nodes,
@@ -422,6 +422,10 @@ class SimulationSessionService:
                 **({
                     "source_session_id": source_session_id,
                     "source_snapshot_id": source_snapshot.snapshot_id,
+                    "review_source_incomplete_state": bool(source_snapshot.session.metadata.get("review_source_incomplete_state")) or any(
+                        (source_snapshot.session.metadata.get(name) or {}).get("status") in {"pending", "failed"}
+                        for name in ("patient_state_update", "therapist_memory_update")
+                    ),
                 } if source_snapshot is not None else {}),
             },
         )
@@ -630,7 +634,10 @@ class SimulationSessionService:
                 update={"metadata": {**completed_session.metadata, "review_generation": {"status": "pending"}}}
             )
             snapshot = self._snapshot(
-                session, public, None, None, events[-1].sequence
+                session, public,
+                source_snapshot.private_patient_state if source_snapshot else None,
+                source_snapshot.private_therapist_state if source_snapshot else None,
+                events[-1].sequence
             )
             self.repository.create(snapshot, events)
             self.repository.enqueue_review_job(resolved_id)
@@ -1697,7 +1704,7 @@ class SimulationSessionService:
     def complete_session(
         self, session_id: str, *, defer_review: bool = False
     ) -> SessionSnapshot:
-        self._assert_deferred_updates_ready(session_id)
+        self._assert_deferred_updates_ready(session_id, allow_failed=True)
         snapshot = self.repository.get_latest_snapshot(session_id)
         runtime_trace = snapshot.session.metadata.get("latest_runtime_trace") or {}
         reviewer = ((runtime_trace.get("reviewer_result") or {}).get("result") or {})
@@ -1706,6 +1713,8 @@ class SimulationSessionService:
         completed = self._change_status(
             session_id, SessionStatus.COMPLETED, EventType.SESSION_COMPLETED
         )
+        if self._review_precondition(completed) is not None:
+            return self.review_session(session_id)
         external_review = None
         if (
             defer_review
@@ -1888,7 +1897,7 @@ class SimulationSessionService:
         )
 
     def terminate_session(self, session_id: str, *, reason: str) -> SessionSnapshot:
-        self._assert_deferred_updates_ready(session_id)
+        self._assert_deferred_updates_ready(session_id, allow_failed=True)
         return self._change_status(
             session_id,
             SessionStatus.TERMINATED,
@@ -1896,22 +1905,74 @@ class SimulationSessionService:
             reason=reason,
         )
 
-    def _assert_deferred_updates_ready(self, session_id: str) -> None:
+    def _assert_deferred_updates_ready(self, session_id: str, *, allow_failed: bool = False) -> None:
         snapshot = self.repository.get_latest_snapshot(session_id)
         update = snapshot.session.metadata.get("patient_state_update") or {}
         if update.get("status") == "pending":
             raise SessionOperationError("patient state update is still running")
-        if update.get("status") == "failed":
+        if update.get("status") == "failed" and not allow_failed:
             raise SessionOperationError("patient state update failed; session cannot continue")
         therapist_update = snapshot.session.metadata.get("therapist_memory_update") or {}
         if therapist_update.get("status") == "pending":
             raise SessionOperationError("therapist memory update is still running")
-        if therapist_update.get("status") == "failed":
+        if therapist_update.get("status") == "failed" and not allow_failed:
             raise SessionOperationError("therapist memory update failed; session cannot continue")
 
+    @staticmethod
+    def _review_precondition(snapshot: SessionSnapshot) -> ReviewPublicView | None:
+        roles = {turn.role for turn in snapshot.public_view.transcript if turn.text.strip()}
+        incomplete = bool(snapshot.session.metadata.get("review_source_incomplete_state")) or any(
+            (snapshot.session.metadata.get(name) or {}).get("status") in {"failed", "pending"}
+            for name in ("patient_state_update", "therapist_memory_update")
+        )
+        if {"patient", "therapist"} <= roles and not incomplete:
+            return None
+        return ReviewPublicView(
+            status="not_evaluable",
+            gate_status="incomplete_state" if incomplete else "insufficient_evidence",
+            summary={"transcript_turn_count": len(snapshot.public_view.transcript)},
+            findings=[{
+                "code": "incomplete_state" if incomplete else "insufficient_evidence",
+                "message": "State or memory update is incomplete. Retry the failed update before assessment."
+                if incomplete else "A substantive patient turn and therapist turn are required for assessment.",
+            }],
+        )
+
+    def retry_deferred_update(self, session_id: str) -> dict[str, str]:
+        snapshot = self.repository.get_latest_snapshot(session_id)
+        if snapshot.session.status not in {SessionStatus.ACTIVE, SessionStatus.PAUSED}:
+            raise SessionOperationError("resume or continue an active session before retrying its update")
+        for key, pending_key, failed_key, event_type in (
+            ("patient_state_update", "state_update_pending", "state_update_failed", EventType.PATIENT_STATE_UPDATED),
+            ("therapist_memory_update", "therapist_memory_update_pending", "therapist_memory_update_failed", EventType.THERAPIST_MEMORY_UPDATED),
+        ):
+            update = snapshot.session.metadata.get(key) or {}
+            if update.get("status") == "pending":
+                raise SessionOperationError("state update is already running")
+            if update.get("status") != "failed":
+                continue
+            now = utc_now()
+            next_update = {**update, "status": "pending", "error": None}
+            session = snapshot.session.model_copy(update={"updated_at": now, "metadata": {**snapshot.session.metadata, key: next_update}})
+            public = snapshot.public_view.model_copy(update={"updated_at": now, "progress": {**snapshot.public_view.progress, pending_key: 1, failed_key: 0}})
+            event = self._event(session_id, snapshot.through_event_sequence + 1, event_type, ActorRole.SYSTEM,
+                                payload={"status": "retry_requested", "update_id": update["update_id"]})
+            restored = self._snapshot(session, public, snapshot.private_patient_state, snapshot.private_therapist_state, event.sequence)
+            self.repository.commit(restored, [event], expected_prior_sequence=snapshot.through_event_sequence)
+            return {"kind": key, "update_id": update["update_id"]}
+        raise SessionOperationError("no failed update to retry")
+
+    def retry_review(self, session_id: str) -> SessionSnapshot:
+        snapshot = self.repository.get_latest_snapshot(session_id)
+        if snapshot.session.status not in {SessionStatus.COMPLETED, SessionStatus.TERMINATED, SessionStatus.FAILED}:
+            raise SessionOperationError("session must be terminal before review")
+        if self._review_precondition(snapshot) is not None:
+            return self.review_session(session_id)
+        if snapshot.public_view.review and snapshot.public_view.review.status == "pending":
+            return snapshot
+        return self._mark_review_pending(snapshot)
+
     def review_session(self, session_id: str) -> SessionSnapshot:
-        if self.reviewer_engine is None:
-            raise SessionOperationError("reviewer engine is not configured")
         snapshot = self.repository.get_latest_snapshot(session_id)
         if SessionStatus(snapshot.session.status) not in {
             SessionStatus.COMPLETED,
@@ -1919,7 +1980,13 @@ class SimulationSessionService:
             SessionStatus.FAILED,
         }:
             raise SessionOperationError("session must be terminal before review")
-        result = self.reviewer_engine.review(snapshot)
+        precondition = self._review_precondition(snapshot)
+        if precondition is not None:
+            result = ReviewResult(public_review=precondition)
+        else:
+            if self.reviewer_engine is None:
+                raise SessionOperationError("reviewer engine is not configured")
+            result = self.reviewer_engine.review(snapshot)
         now = utc_now()
         public = snapshot.public_view.model_copy(
             update={"review": result.public_review, "updated_at": now}
@@ -2016,6 +2083,8 @@ class SimulationSessionService:
             SessionStatus.FAILED,
         }:
             raise SessionOperationError("feedback is accepted after the session is terminal")
+        if (rating is not None or dimension_ratings) and self._review_precondition(snapshot) is not None:
+            raise SessionOperationError("this session is not evaluable; submit a comment without training ratings")
         feedback = SessionFeedback(
             feedback_id=feedback_id or f"feedback_{uuid.uuid4().hex}",
             session_id=session_id,

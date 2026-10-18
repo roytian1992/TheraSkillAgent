@@ -57,7 +57,9 @@ def search_managed_knowledge(query: str, *, skill: str, limit: int, filters: dic
     return {"query": query, "release_id": manifest["index_id"], "index_id": manifest["index_id"], "knowledge_sha256": manifest["input"]["knowledge_sha256"],
             "retrieval_mode": mode, "skill": skill, "matches": matches, "count": len(matches),
             "query_understanding": understanding, "filters": understanding['filters'],
-            "warnings": warnings, "diagnostics": {"planner_status": (bundle.get("planner_trace") or {}).get("planner_status"),
+            "warnings": list(dict.fromkeys([*warnings, *(bundle.get('warnings') or [])])), "diagnostics": {"planner_status": (bundle.get("planner_trace") or {}).get("planner_status"),
+                                                   "timings": bundle.get('timings') or {},
+                                                   "planner_timings": (bundle.get('planner_trace') or {}).get('timings') or {},
                                                    "policy_checks": bundle.get("policy_checks") or {},
                                                    "quality_checks": bundle.get("quality_checks") or {},
                                                    "channel_counts": bundle.get("channel_counts") or {}}}
@@ -115,8 +117,10 @@ def search_knowledge(
                 "count": len(matches),
                 "query_understanding": understanding,
                 "filters": understanding['filters'],
-                "warnings": understanding['warnings'],
+                "warnings": list(dict.fromkeys([*understanding['warnings'], *(bundle.get('warnings') or [])])),
                 "diagnostics": {
+                    "timings": bundle.get('timings') or {},
+                    "planner_timings": (bundle.get('planner_trace') or {}).get('timings') or {},
                     "planner_status": (bundle.get("planner_trace") or {}).get(
                         "planner_status"
                     ),

@@ -48,7 +48,7 @@ def list_resources():
     return result
 
 
-def activate_index(index, *, knowledge=None, scratch_root=None):
+def activate_index(index, *, knowledge=None, scratch_root=None, report_id=None):
     root = data_root().resolve()
     path = index_path(index).resolve()
     if not path.is_relative_to(root / 'indexes'):
@@ -66,6 +66,10 @@ def activate_index(index, *, knowledge=None, scratch_root=None):
         if current.is_file():
             prior = read_json(current)
             if prior != selection:
+                if not report_id:
+                    raise ValueError('Changing an active index requires a reviewed behavior comparison report')
+                from .behavior_eval import verify_gate
+                verify_gate(report_id, {'index_id': manifest['index_id'], 'knowledge_sha256': manifest['input']['knowledge_sha256']})
                 write_json(root / 'previous-index.json', prior)
         write_json(current, selection)
     return selection

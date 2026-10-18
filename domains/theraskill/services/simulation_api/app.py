@@ -81,7 +81,7 @@ class SimulationAPISettings(BaseModel):
     api_token: str | None = None
     contribution_api_url: str | None = Field(
         default_factory=lambda: os.environ.get(
-            "THERASKILL_CONTRIBUTION_API_URL", "http://127.0.0.1:8881"
+            "THERASKILL_CONTRIBUTION_API_URL", "inprocess://contribution"
         )
     )
     contribution_api_token: str = Field(
@@ -94,7 +94,7 @@ class SimulationAPISettings(BaseModel):
     review_worker_poll_seconds: float = Field(default=0.5, ge=0.05, le=30.0)
     review_job_stale_seconds: float = Field(default=900.0, ge=30.0, le=86400.0)
     patient_max_prompt_tokens: int = Field(default=12000, ge=2000, le=24000)
-    patient_max_output_tokens: int = Field(default=900, ge=256, le=4096)
+    patient_max_output_tokens: int | None = Field(default=None, ge=256, le=32768)
     patient_parse_retries: int = Field(default=1, ge=0, le=3)
     patient_fast_mode: bool = True
     generated_scenario_registry_path: Path = Field(
@@ -202,6 +202,8 @@ class TrainingCourseRequest(BaseModel):
     scenario_ids: list[str] = Field(default_factory=list)
     difficulty_path: list[str] = Field(default_factory=list)
     completion_review_gate: str = "pass"
+    learning_objectives: list[dict[str, str]] = Field(default_factory=list)
+    require_instructor_review: bool = True
 
 
 class ResponseComparisonRequest(BaseModel):
@@ -315,68 +317,53 @@ def create_app(
             api_token=resolved.contribution_api_token,
         )
 
-    def execute_batch_payload(batch_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def execute_batch_payload(batch_id: str, payload: dict[str, Any], report_progress=None) -> dict[str, Any]:
         request = ScenarioGenerationBatchRequest.model_validate(payload)
         if resolved_scenario_generator is None:
             raise RuntimeError("online scenario generator is unavailable")
+        # The registry is the checkpoint: do not regenerate already saved items
+        # after a provider failure or a restart between persistence and progress.
+        by_index = {int(row["batch_index"]): row for row in generated_rows()
+                    if row.get("batch_id") == batch_id and row.get("batch_index")}
+        persisted = [by_index[i] for i in sorted(by_index)]
 
-        def generate_batch_sync() -> list[dict[str, Any]]:
-            batch_method = getattr(resolved_scenario_generator, "generate_batch", None)
-            if callable(batch_method):
-                return list(batch_method(request))
-            rows: list[dict[str, Any]] = []
-            for index in range(request.count):
-                batch_constraint = (
-                    f"课程批次第 {index + 1}/{request.count} 个场景，请改变触发情境或来访者目标，避免同批重复。"
-                    if str(request.language).lower() != "en"
-                    else f"Scenario {index + 1}/{request.count} in a course batch; vary the trigger or client goal to avoid duplicates."
-                )
-                rows.append(resolved_scenario_generator.generate(ScenarioGenerationRequest(
-                    brief=request.brief,
-                    scenario_family=request.scenario_family,
-                    difficulty_band=request.difficulty_band,
-                    risk_band=request.risk_band,
-                    language=request.language,
-                    scenario_tags=request.scenario_tags,
-                    constraints=f"{request.constraints.strip()}\n{batch_constraint}".strip(),
-                )))
-            return rows
+        def result_payload() -> dict[str, Any]:
+            quality_counts = {"pass": 0, "warn": 0, "fail": 0}
+            for row in persisted:
+                status = str((row.get("quality_report") or {}).get("status") or "warn")
+                quality_counts[status] = quality_counts.get(status, 0) + 1
+            return {
+                "schema_version": "theraskill_online_scenario_batch_v1", "batch_id": batch_id,
+                "count": len(persisted), "scenarios": [scenario_public_digest(row) for row in persisted],
+                "quality_summary": quality_counts,
+                "course_draft": {"title": request.course_title, "description": request.course_description,
+                                 "skill_tags": request.skill_tags,
+                                 "scenario_ids": [str(row["scenario_id"]) for row in persisted],
+                                 "batch_id": batch_id, "review_required": True},
+            }
 
-        generated_rows_payload = generate_batch_sync()
-        persisted: list[dict[str, Any]] = []
-        for index, generated in enumerate(generated_rows_payload):
-            row = dict(generated["scenario"])
-            row.update({
-                "language": row.get("language") or request.language,
-                "batch_id": batch_id,
-                "batch_index": index + 1,
-                "batch_size": len(generated_rows_payload),
-                "review_status": "draft",
-                "review_history": [],
-            })
-            row["quality_report"] = build_quality_report(row, generated_rows())
-            persisted.append(registry.register_generated(row))
-        quality_counts = {"pass": 0, "warn": 0, "fail": 0}
-        for row in persisted:
-            status = str((row.get("quality_report") or {}).get("status") or "warn")
-            quality_counts[status] = quality_counts.get(status, 0) + 1
-        return {
-            "schema_version": "theraskill_online_scenario_batch_v1",
-            "batch_id": batch_id,
-            "count": len(persisted),
-            "scenarios": [scenario_public_digest(row) for row in persisted],
-            "quality_summary": quality_counts,
-            "course_draft": {
-                "title": request.course_title,
-                "description": request.course_description,
-                "skill_tags": request.skill_tags,
-                "scenario_ids": [str(row.get("scenario_id")) for row in persisted],
-                "batch_id": batch_id,
-                "review_required": True,
-            },
-        }
+        for index in range(1, request.count + 1):
+            if index not in by_index:
+                variation = (f"Scenario {index}/{request.count} in a course batch; vary the trigger or client goal to avoid duplicates."
+                             if str(request.language) == "en" else f"课程批次第 {index}/{request.count} 个场景，请改变触发情境或来访者目标，避免同批重复。")
+                generated = resolved_scenario_generator.generate(ScenarioGenerationRequest(
+                    brief=request.brief, scenario_family=request.scenario_family,
+                    difficulty_band=request.difficulty_band, risk_band=request.risk_band,
+                    language=request.language, scenario_tags=request.scenario_tags,
+                    constraints=f"{request.constraints.strip()}\n{variation}".strip(),
+                ))
+                row = dict(generated["scenario"])
+                row.update({"language": row.get("language") or request.language,
+                            "batch_id": batch_id, "batch_index": index, "batch_size": request.count,
+                            "review_status": "draft", "review_history": []})
+                row["quality_report"] = build_quality_report(row, generated_rows())
+                by_index[index] = registry.register_generated(row)
+                persisted = [by_index[i] for i in sorted(by_index)]
+            if report_progress:
+                report_progress(progress={"processed": len(persisted), "total": request.count}, result=result_payload())
+        return result_payload()
 
-    batch_job_store = ScenarioBatchJobStore(resolved.generated_batch_work_root, execute_batch_payload)
+    batch_job_store = ScenarioBatchJobStore(resolved.generated_batch_work_root, execute_batch_payload, runner_reports_progress=True)
     async def review_worker() -> None:
         while True:
             try:
@@ -553,19 +540,27 @@ def create_app(
 
     @app.exception_handler(SessionNotFoundError)
     @app.exception_handler(ScenarioNotFoundError)
-    async def not_found_handler(_request, exc: KeyError) -> JSONResponse:
+    def not_found_handler(_request, exc: KeyError) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
 
     @app.exception_handler(SessionConflictError)
-    async def conflict_handler(_request, exc: SessionConflictError) -> JSONResponse:
+    def conflict_handler(_request, exc: SessionConflictError) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @app.exception_handler(SessionOperationError)
-    async def operation_handler(_request, exc: SessionOperationError) -> JSONResponse:
+    def operation_handler(_request, exc: SessionOperationError) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
+    from domains.theraskill.theraskill_llm import ModelOutputError
+    from domains.theraskill.theraskill_simulation.engines import SimulationEngineError
+
+    @app.exception_handler(ModelOutputError)
+    @app.exception_handler(SimulationEngineError)
+    def model_output_handler(_request, exc: ModelOutputError) -> JSONResponse:
+        return JSONResponse(status_code=502, content={"detail": str(exc), "code": "model_output_invalid", "retryable": True})
+
     @app.get("/health")
-    async def health() -> dict[str, Any]:
+    def health() -> dict[str, Any]:
         return {
             "status": "ok",
             "service": "theraskill-simulation",
@@ -573,11 +568,11 @@ def create_app(
         }
 
     @app.get("/metrics")
-    async def metrics_endpoint() -> dict[str, Any]:
+    def metrics_endpoint() -> dict[str, Any]:
         return metrics.snapshot()
 
     @app.get("/version")
-    async def version() -> dict[str, Any]:
+    def version() -> dict[str, Any]:
         return {
             "api_version": app.version,
             "session_schema": "theraskill_simulation_session_v1",
@@ -585,7 +580,7 @@ def create_app(
         }
 
     @app.get("/runtime-config")
-    async def runtime_config(
+    def runtime_config(
         role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
         if role not in {ActorRole.RESEARCHER, ActorRole.SYSTEM}:
@@ -601,7 +596,7 @@ def create_app(
         }
 
     @app.get("/scenarios")
-    async def list_scenarios(
+    def list_scenarios(
         _role: ActorRole = Depends(caller_role),
         family: str | None = None,
         risk_band: str | None = None,
@@ -636,7 +631,7 @@ def create_app(
         }
 
     @app.get("/scenarios/generated")
-    async def list_generated_scenarios(
+    def list_generated_scenarios(
         role: ActorRole = Depends(caller_role),
         limit: int = Query(default=50, ge=1, le=200),
         review_status: str | None = None,
@@ -708,7 +703,7 @@ def create_app(
             raise HTTPException(status_code=502, detail=f"batch scenario generation failed: {exc}") from exc
 
     @app.post("/scenarios/generate-batch/jobs", status_code=202)
-    async def create_scenario_batch_job(
+    def create_scenario_batch_job(
         request: ScenarioGenerationBatchRequest,
         role: ActorRole = Depends(caller_role),
         x_simulation_user: str = Header(default="local-user"),
@@ -719,8 +714,14 @@ def create_app(
             raise HTTPException(status_code=503, detail="online scenario generator is unavailable")
         return batch_job_store.create(request.model_dump(mode="json"), x_simulation_user.strip() or "local-user")
 
+    @app.get("/scenarios/generate-batch/jobs")
+    def list_scenario_batch_jobs(role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
+        if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
+            raise HTTPException(status_code=403, detail="batch jobs require instructor or researcher role")
+        return {"jobs": batch_job_store.list()}
+
     @app.get("/scenarios/generate-batch/jobs/{job_id}")
-    async def get_scenario_batch_job(job_id: str, role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
+    def get_scenario_batch_job(job_id: str, role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
         if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
             raise HTTPException(status_code=403, detail="batch scenario generation requires instructor or researcher role")
         job = batch_job_store.get(job_id)
@@ -729,7 +730,7 @@ def create_app(
         return job
 
     @app.post("/scenarios/generate-batch/jobs/{job_id}/retry")
-    async def retry_scenario_batch_job(job_id: str, role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
+    def retry_scenario_batch_job(job_id: str, role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
         if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
             raise HTTPException(status_code=403, detail="batch scenario generation requires instructor or researcher role")
         try:
@@ -741,7 +742,7 @@ def create_app(
         return job
 
     @app.patch("/scenarios/generated/{scenario_id}")
-    async def update_generated_scenario(
+    def update_generated_scenario(
         scenario_id: str,
         request: ScenarioDraftUpdateRequest,
         role: ActorRole = Depends(caller_role),
@@ -774,7 +775,7 @@ def create_app(
         }
 
     @app.post("/scenarios/generated/{scenario_id}/review")
-    async def review_generated_scenario(
+    def review_generated_scenario(
         scenario_id: str,
         request: ScenarioDraftReviewRequest,
         role: ActorRole = Depends(caller_role),
@@ -806,7 +807,7 @@ def create_app(
         }
 
     @app.post("/sessions", status_code=201)
-    async def create_session(
+    def create_session(
         request: CreateSessionRequest,
         actor: tuple[str, ActorRole] = Depends(caller_identity),
         idempotency_key: str = Header(default="", alias="Idempotency-Key"),
@@ -839,7 +840,7 @@ def create_app(
         return snapshot.public_view.model_dump(mode="json")
 
     @app.get("/sessions")
-    async def list_sessions(
+    def list_sessions(
         _role: ActorRole = Depends(caller_role),
         limit: int = Query(default=100, ge=1, le=500),
     ) -> dict[str, Any]:
@@ -847,14 +848,14 @@ def create_app(
         return {"count": len(sessions), "sessions": sessions}
 
     @app.get("/sessions/{session_id}")
-    async def get_session(
+    def get_session(
         session_id: str,
         role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
         return service.export_session(session_id, scope=scope_for_role(role, session_id))
 
     @app.delete("/sessions/{session_id}")
-    async def delete_session(
+    def delete_session(
         session_id: str,
         _role: ActorRole = Depends(caller_role),
     ) -> Response:
@@ -862,7 +863,7 @@ def create_app(
         return Response(status_code=204)
 
     @app.get("/sessions/{session_id}/annotations")
-    async def list_annotations(
+    def list_annotations(
         session_id: str,
         _role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
@@ -871,7 +872,7 @@ def create_app(
         return {"count": len(rows), "annotations": [row.model_dump(mode="json") for row in rows]}
 
     @app.post("/sessions/{session_id}/annotations", status_code=201)
-    async def add_annotation(
+    def add_annotation(
         session_id: str,
         request: TurnAnnotationRequest,
         actor: tuple[str, ActorRole] = Depends(caller_identity),
@@ -951,7 +952,7 @@ def create_app(
         return annotation.model_dump(mode="json")
 
     @app.post("/sessions/{session_id}/turns/{turn_id}/flag", status_code=201)
-    async def flag_turn(
+    def flag_turn(
         session_id: str,
         turn_id: str,
         request: TurnFlagRequest,
@@ -1023,7 +1024,7 @@ def create_app(
             raise contribution_error(exc) from exc
 
     @app.get("/assignments")
-    async def list_assignments(
+    def list_assignments(
         role: ActorRole = Depends(caller_role),
         assignee: str | None = None,
     ) -> dict[str, Any]:
@@ -1035,8 +1036,13 @@ def create_app(
             rows = training_repository.list_assignments(assignee=assignee)
         return {"count": len(rows), "assignments": [row.model_dump(mode="json") for row in rows]}
 
+    from domains.theraskill.theraskill_simulation.learning import LearningService
+    from domains.theraskill.theraskill_simulation.learning_api import create_learning_router
+    learning = LearningService(training_repository, service)
+    app.include_router(create_learning_router(learning, service, caller_role))
+
     @app.get("/courses")
-    async def list_courses(
+    def list_courses(
         role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
         if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
@@ -1045,7 +1051,7 @@ def create_app(
         return {"count": len(rows), "courses": [row.model_dump(mode="json") for row in rows]}
 
     @app.post("/courses", status_code=201)
-    async def add_course(
+    def add_course(
         request: TrainingCourseRequest,
         role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
@@ -1065,6 +1071,9 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"unknown scenarios: {missing}")
         if unapproved:
             raise HTTPException(status_code=422, detail=f"generated scenarios require approval before course creation: {unapproved}")
+        objective_ids = [str(o.get("id") or "").strip() for o in request.learning_objectives]
+        if request.learning_objectives and (not all(objective_ids) or len(set(objective_ids)) != len(objective_ids) or any(not str(o.get("description") or "").strip() for o in request.learning_objectives)):
+            raise HTTPException(422, "Learning objectives need unique IDs and descriptions")
         course = TrainingCourse(
             course_id=f"course_{uuid.uuid4().hex}",
             title=request.title.strip(),
@@ -1073,12 +1082,14 @@ def create_app(
             scenario_ids=list(dict.fromkeys(request.scenario_ids)),
             difficulty_path=[band.strip() for band in request.difficulty_path if band.strip()],
             completion_review_gate=request.completion_review_gate.strip() or "pass",
+            learning_objectives=request.learning_objectives,
+            require_instructor_review=request.require_instructor_review,
         )
         training_repository.add_course(course)
         return course.model_dump(mode="json")
 
     @app.delete("/courses/{course_id}")
-    async def delete_course(
+    def delete_course(
         course_id: str,
         role: ActorRole = Depends(caller_role),
     ) -> Response:
@@ -1089,7 +1100,7 @@ def create_app(
         return Response(status_code=204)
 
     @app.get("/teaching/curriculum")
-    async def teaching_curriculum(
+    def teaching_curriculum(
         role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
         if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
@@ -1108,13 +1119,17 @@ def create_app(
         }
 
     @app.get("/teaching/recommendations")
-    async def teaching_recommendations(
+    def teaching_recommendations(
         assignee: str | None = None,
         role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
         if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
             raise HTTPException(status_code=403, detail="instructor or researcher role is required")
-        feedback = service.list_feedback(limit=2000)
+        # A learner's recommendations may only use that learner's linked attempts.
+        linked = {item['session_id'] for assignment in training_repository.list_assignments(assignee=assignee)
+                  for item in learning.attempts(assignment.assignment_id)} if assignee else None
+        feedback = [item for item in service.list_feedback(limit=2000)
+                    if linked is None or item.get('session_id') in linked]
         totals: dict[str, list[float]] = {}
         for item in feedback:
             for dimension, value in (item.get("dimension_ratings") or {}).items():
@@ -1151,7 +1166,7 @@ def create_app(
         }
 
     @app.get("/teaching/overview")
-    async def teaching_overview(
+    def teaching_overview(
         role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
         """Return one bounded view of the instructor teaching loop."""
@@ -1207,7 +1222,7 @@ def create_app(
         }
 
     @app.post("/assignments", status_code=201)
-    async def add_assignment(
+    def add_assignment(
         request: TrainingAssignmentRequest,
         role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
@@ -1221,6 +1236,16 @@ def create_app(
                 missing.append(scenario_id)
         if missing:
             raise HTTPException(status_code=404, detail=f"unknown scenarios: {missing}")
+        if request.course_id:
+            course = training_repository.get_course(request.course_id)
+            if not course:
+                raise HTTPException(404, "Course not found")
+            if not set(request.scenario_ids).issubset(set(course.scenario_ids)):
+                raise HTTPException(422, "Assignment scenarios must belong to the course")
+        for scenario_id in request.scenario_ids:
+            row = registry.get(scenario_id)
+            if row.get("generated") and row.get("review_status") != "approved":
+                raise HTTPException(422, "Generated scenarios need approval before assignment")
         assignment = TrainingAssignment(
             assignment_id=f"assignment_{uuid.uuid4().hex}",
             title=request.title.strip(),
@@ -1236,7 +1261,7 @@ def create_app(
         return assignment.model_dump(mode="json")
 
     @app.delete("/assignments/{assignment_id}")
-    async def delete_assignment(
+    def delete_assignment(
         assignment_id: str,
         role: ActorRole = Depends(caller_role),
     ) -> Response:
@@ -1247,7 +1272,7 @@ def create_app(
         return Response(status_code=204)
 
     @app.get("/sessions/{session_id}/comparisons")
-    async def list_comparisons(
+    def list_comparisons(
         session_id: str,
         _role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
@@ -1256,7 +1281,7 @@ def create_app(
         return {"count": len(rows), "comparisons": [row.model_dump(mode="json") for row in rows]}
 
     @app.post("/sessions/{session_id}/comparisons", status_code=201)
-    async def create_comparison(
+    def create_comparison(
         session_id: str,
         request: ResponseComparisonRequest,
         role: ActorRole = Depends(caller_role),
@@ -1315,7 +1340,7 @@ def create_app(
                 status_code=403,
                 detail="request actor must match X-Simulation-Role",
             )
-        result = service.submit_turn(
+        result = await asyncio.to_thread(service.submit_turn,
             session_id,
             text=request.text,
             actor=request.actor,
@@ -1347,7 +1372,7 @@ def create_app(
             raise HTTPException(status_code=403, detail="dual-agent research requires researcher role")
         if not idempotency_key.strip():
             raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
-        return service.run_dual_cycle(
+        return await asyncio.to_thread(service.run_dual_cycle,
             session_id,
             idempotency_key=idempotency_key,
             initial_therapist_utterance=request.initial_therapist_utterance,
@@ -1363,19 +1388,19 @@ def create_app(
             raise HTTPException(status_code=403, detail="patient opening requires trainee role")
         if not idempotency_key.strip():
             raise HTTPException(status_code=400, detail="Idempotency-Key header is required")
-        return service.generate_patient_opening(
+        return await asyncio.to_thread(service.generate_patient_opening,
             session_id, idempotency_key=idempotency_key
         )
 
     @app.post("/sessions/{session_id}/pause")
-    async def pause_session(
+    def pause_session(
         session_id: str,
         _role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
         return service.pause_session(session_id).public_view.model_dump(mode="json")
 
     @app.post("/sessions/{session_id}/resume")
-    async def resume_session(
+    def resume_session(
         session_id: str,
         _role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
@@ -1386,18 +1411,31 @@ def create_app(
         session_id: str,
         _role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
-        snapshot = service.complete_session(session_id, defer_review=True)
+        snapshot = await asyncio.to_thread(service.complete_session, session_id, defer_review=True)
         return snapshot.public_view.model_dump(mode="json")
+
+    @app.post("/sessions/{session_id}/updates/retry", status_code=202)
+    def retry_deferred_update(session_id: str, background_tasks: BackgroundTasks,
+                                    _role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
+        update = service.retry_deferred_update(session_id)
+        finalize = service.finalize_patient_turn if update["kind"] == "patient_state_update" else service.finalize_therapist_turn
+        background_tasks.add_task(finalize, session_id, deferred_update_id=update["update_id"])
+        return service.get_snapshot(session_id).public_view.model_dump(mode="json")
+
+    @app.post("/sessions/{session_id}/review/retry", status_code=202)
+    def retry_review(session_id: str, _role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
+        return service.retry_review(session_id).public_view.model_dump(mode="json")
 
     @app.post("/sessions/{session_id}/review")
     async def review_session(
         session_id: str,
         _role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
-        return service.review_session(session_id).public_view.model_dump(mode="json")
+        snapshot = await asyncio.to_thread(service.review_session, session_id)
+        return snapshot.public_view.model_dump(mode="json")
 
     @app.post("/sessions/{session_id}/terminate")
-    async def terminate_session(
+    def terminate_session(
         session_id: str,
         request: TerminateSessionRequest,
         _role: ActorRole = Depends(caller_role),
@@ -1407,7 +1445,7 @@ def create_app(
         ).public_view.model_dump(mode="json")
 
     @app.get("/sessions/{session_id}/export")
-    async def export_session(
+    def export_session(
         session_id: str,
         role: ActorRole = Depends(caller_role),
         scope: ExportScope | None = None,
@@ -1420,7 +1458,7 @@ def create_app(
         return service.export_session(session_id, scope=requested_scope)
 
     @app.get("/sessions/{session_id}/reviewer-runtime-report")
-    async def reviewer_runtime_report(
+    def reviewer_runtime_report(
         session_id: str,
         role: ActorRole = Depends(caller_role),
     ) -> dict[str, Any]:
@@ -1429,7 +1467,7 @@ def create_app(
         return service.export_reviewer_runtime_report(session_id)
 
     @app.post("/sessions/{session_id}/feedback", status_code=201)
-    async def submit_feedback(
+    def submit_feedback(
         session_id: str,
         request: SessionFeedbackRequest,
         actor: tuple[str, ActorRole] = Depends(caller_identity),
@@ -1516,7 +1554,7 @@ def create_app(
         return feedback
 
     @app.get("/feedback")
-    async def list_feedback(
+    def list_feedback(
         role: ActorRole = Depends(caller_role),
         session_id: str | None = None,
         limit: int = Query(default=500, ge=1, le=2000),
@@ -1527,7 +1565,7 @@ def create_app(
         return {"count": len(rows), "feedback": rows}
 
     @app.get("/contributions")
-    async def list_user_contributions(
+    def list_user_contributions(
         actor: tuple[str, ActorRole] = Depends(caller_identity),
         limit: int = Query(default=100, ge=1, le=500),
     ) -> dict[str, Any]:
@@ -1540,7 +1578,7 @@ def create_app(
             raise contribution_error(exc) from exc
 
     @app.delete("/contributions/{contribution_id}")
-    async def withdraw_user_contribution(
+    def withdraw_user_contribution(
         contribution_id: str,
         actor: tuple[str, ActorRole] = Depends(caller_identity),
     ) -> dict[str, Any]:

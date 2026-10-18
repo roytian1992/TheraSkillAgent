@@ -110,7 +110,7 @@ class TheraSkillMemoryProvider(MemoryProvider):
 
     def is_available(self) -> bool:
         return bool(
-            os.environ.get("THERASKILL_CONTRIBUTION_API_URL", "http://127.0.0.1:8881").strip()
+            os.environ.get("THERASKILL_CONTRIBUTION_API_URL", "inprocess://contribution").strip()
         )
 
     def get_config_schema(self) -> list[dict[str, Any]]:
@@ -118,7 +118,7 @@ class TheraSkillMemoryProvider(MemoryProvider):
             {
                 "key": "contribution_api_url",
                 "description": "Internal TheraSkill contribution API URL.",
-                "default": "http://127.0.0.1:8881",
+                "default": "inprocess://contribution",
                 "env_var": "THERASKILL_CONTRIBUTION_API_URL",
             },
             {
@@ -139,7 +139,7 @@ class TheraSkillMemoryProvider(MemoryProvider):
         ).strip()
         if self._client is None:
             base_url = os.environ.get(
-                "THERASKILL_CONTRIBUTION_API_URL", "http://127.0.0.1:8881"
+                "THERASKILL_CONTRIBUTION_API_URL", "inprocess://contribution"
             ).strip()
             token = os.environ.get("THERASKILL_CONTRIBUTION_API_TOKEN", "")
             self._client = HTTPContributionClient(base_url, api_token=token)

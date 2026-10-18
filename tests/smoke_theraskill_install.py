@@ -61,9 +61,11 @@ def main():
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            profile = {"active": {"llm": "fixture"}, "profiles": {"fixture": {
-                "name": "fixture-model", "base_url": f"http://127.0.0.1:{server.server_port}/v1", "retry_attempts": 0,
-            }}}
+            profile = {
+                "active": {"llm": "fixture", "embedding": "fixture-embedding"},
+                "llm": {"model": "fixture-model", "base_url": f"http://127.0.0.1:{server.server_port}/v1", "retry_attempts": 0},
+                "embedding": {"model": "fixture-embedding", "base_url": f"http://127.0.0.1:{server.server_port}/v1"},
+            }
             (root / "configs/theraskill/providers.yaml").write_text(yaml.safe_dump(profile))
             result = AgentRuntime(root).run({"kind": "text.normalize", "text": "  one   two  "})
             assert result.output["text"] == "one two"

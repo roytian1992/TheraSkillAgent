@@ -1,28 +1,14 @@
-# Copy this file to providers.local.yaml and fill the values below.
-# providers.local.yaml is ignored by Git and is loaded automatically.
-# The model names, URLs and credentials are intentionally local settings.
-
+# Copy to providers.local.yaml. Set model names, URLs and keys independently.
+# The local file is ignored by Git and loaded automatically.
 active:
   llm: local_llm
   embedding: local_embedding
-
 llm:
   model: your-llm-model
   base_url: https://your-llm-service/v1
   api_key: ""
-  temperature: 0.0
-  max_output_tokens: 4096
-  timeout_seconds: 600
-  retry_attempts: 2
-  response_format_json: true
-  ssl_verify: true
-
 embedding:
   model: your-embedding-model
   base_url: https://your-embedding-service/v1
   endpoint: https://your-embedding-service/v1/embeddings
   api_key: ""
-  timeout_seconds: 120
-  retry_attempts: 2
-  batch_size: 32
-  ssl_verify: true

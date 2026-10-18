@@ -653,11 +653,13 @@ class KnowledgeRelease(StrictModel):
     manifest_sha256: str | None = None
     created_by: str
     created_at: datetime = Field(default_factory=utc_now)
+    behavior_report_id: str | None = None
     promoted_at: datetime | None = None
     rolled_back_at: datetime | None = None
 
 
 class ReleasePromotionRequest(StrictModel):
+    behavior_report_id: str = Field(min_length=1, max_length=160)
     release_id: str = Field(min_length=1)
     expected_manifest_sha256: str = Field(min_length=64, max_length=64)
 

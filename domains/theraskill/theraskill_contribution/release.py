@@ -405,11 +405,19 @@ class KnowledgeReleaseService:
         *,
         actor_subject_id: str,
         actor_role: str,
+        behavior_report_id: str | None = None,
     ) -> KnowledgeRelease:
         release = self.repository.get_knowledge_release(release_id)
         if release.status != "preview":
             raise CandidateWorkflowError("only a preview release can be promoted")
         self._verify_preview(release, expected_manifest_sha256)
+        if not behavior_report_id:
+            raise CandidateWorkflowError("Promotion requires a reviewed behavioral baseline comparison")
+        from theraskill_agent.behavior_eval import verify_gate
+        try:
+            verify_gate(behavior_report_id, {"release_id": release.release_id, "release_manifest_sha256": release.manifest_sha256})
+        except (ValueError, OSError, KeyError) as exc:
+            raise CandidateWorkflowError(f"Behavior gate blocked: {exc}") from exc
         candidates = [self.repository.get_knowledge_candidate(candidate_id) for candidate_id in release.candidate_ids]
         if any(candidate.status != CandidateStatus.RELEASE_CANDIDATE for candidate in candidates):
             raise CandidateWorkflowError("release candidates changed after preview")
@@ -417,12 +425,13 @@ class KnowledgeReleaseService:
         if not canary or not all(item["passed"] for item in canary):
             raise CandidateWorkflowError("pre-promotion overlay canary failed")
         now = utc_now()
-        promoted = release.model_copy(update={"status": "promoted", "promoted_at": now})
+        promoted = release.model_copy(update={"status": "promoted", "promoted_at": now, "behavior_report_id": behavior_report_id})
         current_path = self.slots_dir / "current.json"
         previous_path = self.slots_dir / "previous.json"
         slot = {
             "schema_version": "theraskill_knowledge_release_slot_v1",
             "release_id": release.release_id,
+            "behavior_report_id": behavior_report_id,
             "manifest_path": release.manifest_path,
             "manifest_sha256": release.manifest_sha256,
             "overlay_index_path": release.overlay_index_path,

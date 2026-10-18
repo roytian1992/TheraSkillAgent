@@ -60,7 +60,7 @@ class SupportAPISettings(BaseModel):
     api_token: str | None = None
     contribution_api_url: str | None = Field(
         default_factory=lambda: os.environ.get(
-            "THERASKILL_CONTRIBUTION_API_URL", "http://127.0.0.1:8881"
+            "THERASKILL_CONTRIBUTION_API_URL", "inprocess://contribution"
         )
     )
     contribution_api_token: str = Field(
@@ -74,11 +74,20 @@ class SupportAPISettings(BaseModel):
 class CreateSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str | None = None
+    workflow: Literal["support", "response_review", "synthetic_construction"] = "support"
+    output_language: Literal["auto", "zh", "en"] = "auto"
 
 
 class SubmitMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    output_language: Literal["auto", "zh", "en"] | None = None
     text: str = Field(min_length=1, max_length=12000)
+
+
+class RetryResponseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    workflow: Literal["support", "response_review", "synthetic_construction"] | None = None
+    output_language: Literal["auto", "zh", "en"] | None = None
 
 
 class ContributionConsentRequest(BaseModel):
@@ -262,23 +271,23 @@ def create_app(
         return x_support_user.strip() or "local-user", x_support_role
 
     @app.exception_handler(SupportSessionNotFoundError)
-    async def not_found_handler(_request, exc: SupportSessionNotFoundError) -> JSONResponse:
+    def not_found_handler(_request, exc: SupportSessionNotFoundError) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
 
     @app.exception_handler(SupportSessionConflictError)
-    async def conflict_handler(_request, exc: SupportSessionConflictError) -> JSONResponse:
+    def conflict_handler(_request, exc: SupportSessionConflictError) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @app.exception_handler(SupportOperationError)
-    async def operation_handler(_request, exc: SupportOperationError) -> JSONResponse:
+    def operation_handler(_request, exc: SupportOperationError) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @app.get("/health")
-    async def health() -> dict[str, Any]:
+    def health() -> dict[str, Any]:
         return {"status": "ok", "service": "theraskill-support", "version": app.version}
 
     @app.get("/safety/resources")
-    async def safety_resources(
+    def safety_resources(
         region: str = Query(default="default", min_length=1, max_length=100),
         _actor: tuple[str, str] = Depends(identity),
     ) -> dict[str, Any]:
@@ -290,11 +299,11 @@ def create_app(
         }
 
     @app.get("/metrics")
-    async def metrics_endpoint() -> dict[str, Any]:
+    def metrics_endpoint() -> dict[str, Any]:
         return metrics.snapshot()
 
     @app.get("/runtime-config")
-    async def runtime_config(
+    def runtime_config(
         actor: tuple[str, str] = Depends(identity),
     ) -> dict[str, Any]:
         _owner, role = actor
@@ -308,17 +317,18 @@ def create_app(
         }
 
     @app.post("/sessions", status_code=201)
-    async def create_session(
+    def create_session(
         request: CreateSessionRequest,
         actor: tuple[str, str] = Depends(identity),
     ) -> dict[str, Any]:
         owner, _role = actor
         return service.create_session(
-            owner_id=owner, session_id=request.session_id
+            owner_id=owner, session_id=request.session_id,
+            workflow=request.workflow, output_language=request.output_language,
         ).model_dump(mode="json")
 
     @app.get("/sessions")
-    async def list_sessions(
+    def list_sessions(
         actor: tuple[str, str] = Depends(identity),
         limit: int = Query(default=100, ge=1, le=500),
     ) -> dict[str, Any]:
@@ -327,7 +337,7 @@ def create_app(
         return {"count": len(sessions), "sessions": [row.model_dump(mode="json") for row in sessions]}
 
     @app.get("/sessions/{session_id}")
-    async def get_session(
+    def get_session(
         session_id: str,
         actor: tuple[str, str] = Depends(identity),
     ) -> dict[str, Any]:
@@ -335,7 +345,7 @@ def create_app(
         return service.get_public(session_id, owner_id=owner).model_dump(mode="json")
 
     @app.post("/sessions/{session_id}/messages", status_code=202)
-    async def submit_message(
+    def submit_message(
         session_id: str,
         request: SubmitMessageRequest,
         background_tasks: BackgroundTasks,
@@ -352,6 +362,7 @@ def create_app(
             text=request.text,
             owner_id=owner,
             idempotency_key=idempotency_key,
+            output_language=request.output_language,
         )
         if result.response_pending:
             background_tasks.add_task(
@@ -369,7 +380,7 @@ def create_app(
         return HTTPException(status_code=status, detail=f"Contribution Hub: {exc}")
 
     @app.post("/sessions/{session_id}/messages/{message_id}/feedback", status_code=201)
-    async def submit_response_feedback(
+    def submit_response_feedback(
         session_id: str,
         message_id: str,
         request: SupportFeedbackRequest,
@@ -478,7 +489,7 @@ def create_app(
         return captured
 
     @app.get("/contributions")
-    async def list_user_contributions(
+    def list_user_contributions(
         actor: tuple[str, str] = Depends(identity),
         limit: int = Query(default=100, ge=1, le=500),
     ) -> dict[str, Any]:
@@ -493,7 +504,7 @@ def create_app(
             raise contribution_error(exc) from exc
 
     @app.delete("/contributions/{contribution_id}")
-    async def withdraw_user_contribution(
+    def withdraw_user_contribution(
         contribution_id: str,
         actor: tuple[str, str] = Depends(identity),
     ) -> dict[str, Any]:
@@ -506,7 +517,7 @@ def create_app(
             raise contribution_error(exc) from exc
 
     @app.post("/memory/proposals", status_code=201)
-    async def propose_domain_memory(
+    def propose_domain_memory(
         request: SupportMemoryProposalRequest,
         actor: tuple[str, str] = Depends(identity),
     ) -> dict[str, Any]:
@@ -526,7 +537,7 @@ def create_app(
             raise contribution_error(exc) from exc
 
     @app.get("/memory")
-    async def list_domain_memory(
+    def list_domain_memory(
         actor: tuple[str, str] = Depends(identity),
     ) -> dict[str, Any]:
         owner, actor_role = actor
@@ -541,7 +552,7 @@ def create_app(
             raise contribution_error(exc) from exc
 
     @app.post("/memory/{memory_id}/approve")
-    async def approve_domain_memory(
+    def approve_domain_memory(
         memory_id: str,
         ttl_days: int | None = Query(default=None, ge=1, le=365),
         actor: tuple[str, str] = Depends(identity),
@@ -560,7 +571,7 @@ def create_app(
             raise contribution_error(exc) from exc
 
     @app.patch("/memory/{memory_id}")
-    async def update_domain_memory(
+    def update_domain_memory(
         memory_id: str,
         request: SupportMemoryUpdateRequest,
         actor: tuple[str, str] = Depends(identity),
@@ -581,7 +592,7 @@ def create_app(
             raise contribution_error(exc) from exc
 
     @app.delete("/memory/{memory_id}")
-    async def delete_domain_memory(
+    def delete_domain_memory(
         memory_id: str,
         actor: tuple[str, str] = Depends(identity),
     ) -> dict[str, Any]:
@@ -596,18 +607,21 @@ def create_app(
             raise contribution_error(exc) from exc
 
     @app.post("/sessions/{session_id}/retry", status_code=202)
-    async def retry_response(
+    def retry_response(
         session_id: str,
         background_tasks: BackgroundTasks,
+        request: RetryResponseRequest | None = None,
         actor: tuple[str, str] = Depends(identity),
     ) -> dict[str, Any]:
         owner, _role = actor
-        public, job_id = service.retry_response(session_id, owner_id=owner)
+        public, job_id = service.retry_response(session_id, owner_id=owner,
+            workflow=request.workflow if request else None,
+            output_language=request.output_language if request else None)
         background_tasks.add_task(service.finalize_response, session_id, job_id=job_id)
         return {"session": public.model_dump(mode="json"), "job_id": job_id, "response_pending": True}
 
     @app.patch("/sessions/{session_id}/plan")
-    async def update_plan(
+    def update_plan(
         session_id: str,
         request: SupportPlanRequest,
         actor: tuple[str, str] = Depends(identity),
@@ -624,7 +638,7 @@ def create_app(
         ).model_dump(mode="json")
 
     @app.post("/sessions/{session_id}/safety/action")
-    async def safety_action(
+    def safety_action(
         session_id: str,
         request: SafetyActionRequest,
         actor: tuple[str, str] = Depends(identity),
@@ -637,7 +651,7 @@ def create_app(
         ).model_dump(mode="json")
 
     @app.post("/sessions/{session_id}/safety/check-in")
-    async def safety_check_in(
+    def safety_check_in(
         session_id: str,
         request: SafetyCheckInRequest,
         actor: tuple[str, str] = Depends(identity),
@@ -653,7 +667,7 @@ def create_app(
         ).model_dump(mode="json")
 
     @app.post("/sessions/{session_id}/complete")
-    async def complete_session(
+    def complete_session(
         session_id: str,
         actor: tuple[str, str] = Depends(identity),
     ) -> dict[str, Any]:
@@ -661,7 +675,7 @@ def create_app(
         return service.complete_session(session_id, owner_id=owner).model_dump(mode="json")
 
     @app.delete("/sessions/{session_id}")
-    async def delete_session(
+    def delete_session(
         session_id: str,
         actor: tuple[str, str] = Depends(identity),
     ) -> Response:
@@ -670,7 +684,7 @@ def create_app(
         return Response(status_code=204)
 
     @app.get("/sessions/{session_id}/export")
-    async def export_session(
+    def export_session(
         session_id: str,
         scope: str = Query(default="public", pattern="^(public|researcher)$"),
         actor: tuple[str, str] = Depends(identity),

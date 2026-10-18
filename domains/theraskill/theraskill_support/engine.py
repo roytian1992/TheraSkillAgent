@@ -100,11 +100,25 @@ class LLMSupportEngine:
     ) -> tuple[RoutingDecision, int]:
         from domains.theraskill.theraskill_llm import chat_json_with_repair
 
+        # An explicit workspace contract takes precedence over intent guessing.
+        # Query understanding and grounded generation still use the real model.
+        workflow_skills = {
+            "response_review": "therapy-response-reviewer",
+            "synthetic_construction": "synthetic-dialogue-builder",
+        }
+        if record.workflow in workflow_skills:
+            return RoutingDecision(
+                primary_skill=workflow_skills[record.workflow], task_type=record.workflow,
+                detected_language=record.output_language, risk_level="none_observed",
+                requires_immediate_safety_attention=False, routing_source="explicit_workflow",
+                retrieval_query=latest_text, user_intent_summary=record.workflow,
+            ), 0
         safety = screen_safety_risk(latest_text)
         payload = {
             "conversation_summary": conversation_summary,
             "recent_messages": recent_messages,
             "latest_user_message": latest_text,
+            "output_language": record.output_language,
             "deterministic_safety_screen": {
                 "risk_level": safety.risk_level,
                 "requires_immediate_attention": safety.requires_immediate_attention,
@@ -315,8 +329,10 @@ class LLMSupportEngine:
             if key in seen:
                 continue
             seen.add(key)
-            allowed_use = str(item.get("allowed_use") or "")
-            forbidden_use = str(item.get("forbidden_use") or "")
+            allowed = item.get("allowed_use") or ""
+            allowed_use = "; ".join(map(str, allowed)) if isinstance(allowed, list) else str(allowed)
+            forbidden = item.get("forbidden_use") or ""
+            forbidden_use = "; ".join(map(str, forbidden)) if isinstance(forbidden, list) else str(forbidden)
             source_type = str(
                 item.get("primary_knowledge_type")
                 or item.get("knowledge_type")
@@ -324,6 +340,11 @@ class LLMSupportEngine:
                 or "knowledge_unit"
             )
             updated_at = str(item.get("updated_at") or item.get("source_updated_at") or "")
+            source_fields = {name: str(value) for name, value in {
+                "source_id": item.get("release_unit_id") or item.get("retrieval_id"),
+                "dataset": item.get("primary_dataset"),
+                "excerpt": item.get("text_preview"),
+            }.items() if value}
             summaries.append({
                 "label": label[:100],
                 "role": role[:80],
@@ -333,6 +354,7 @@ class LLMSupportEngine:
                 "boundary": forbidden_use[:240],
                 "updated_at": updated_at[:80],
                 "inference": "模型根据参考依据生成支持性回应；不等同于诊断或治疗结论。",
+                **source_fields,
             })
         return summaries
 
@@ -352,6 +374,7 @@ class LLMSupportEngine:
 
         payload = {
             "routing": routing.model_dump(mode="json"),
+            "output_language": record.output_language,
             "skill_guidance": self._skill_context(routing.primary_skill),
             "conversation_summary": summary,
             "recent_messages": recent,
@@ -475,6 +498,8 @@ class LLMSupportEngine:
                 "policy_checks": bundle.get("policy_checks") or {},
                 "quality_checks": bundle.get("quality_checks") or {},
                 "channel_counts": bundle.get("channel_counts") or {},
+                "timings": bundle.get("timings") or {},
+                "planner_timings": (bundle.get("planner_trace") or {}).get("timings") or {},
             },
             model_config_id=self.model_name,
             prompt_release_id="support_routing_response_v2",

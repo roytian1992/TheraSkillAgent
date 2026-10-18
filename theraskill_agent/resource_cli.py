@@ -37,6 +37,7 @@ def add_commands(sub):
     sources.add_argument('--archive'); sources.add_argument('--catalog')
     install.add_argument('--package'); install.add_argument('--sha256')
     activate = commands.add_parser('activate'); activate.add_argument('--index', required=True); activate.add_argument('--knowledge')
+    activate.add_argument('--behavior-report', help='reviewed behavior comparison report ID; required when changing an existing selection')
     activate.add_argument('--scratch-directory', dest='scratch_root', help='optional fast temporary storage for full SQLite verification')
     pack = commands.add_parser('pack'); pack.add_argument('--source', required=True); pack.add_argument('--output', required=True)
     pack.add_argument('--id', required=True); pack.add_argument('--kind', choices=['knowledge', 'index'], required=True)
@@ -69,7 +70,7 @@ def run_command(args):
     if action == 'list':
         return resources.list_resources()
     if action == 'activate':
-        return resources.activate_index(args.index, knowledge=args.knowledge, scratch_root=args.scratch_root)
+        return resources.activate_index(args.index, knowledge=args.knowledge, scratch_root=args.scratch_root, report_id=args.behavior_report)
     if action == 'rollback':
         return resources.rollback_index()
     if action == 'pack':

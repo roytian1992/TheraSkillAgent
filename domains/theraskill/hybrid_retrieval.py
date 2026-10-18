@@ -129,9 +129,6 @@ class TheraSkillHybridRetriever:
             )
         self.paths.cache_root.mkdir(parents=True, exist_ok=True)
         self._module = self._load_retriever()
-        self._locks = {
-            skill: threading.Lock() for skill in THERASKILL_RETRIEVAL_SKILLS
-        }
 
     def _load_retriever(self):
         advanced_dir = self.project_root / "scripts" / "AdvancedRetrieval"
@@ -202,8 +199,7 @@ class TheraSkillHybridRetriever:
         try:
             args = self._module.parse_args(argv)
             args.query_understanding = understanding
-            with self._locks[skill]:
-                bundle = self._module.build_bundle(args)
+            bundle = self._module.build_bundle(args)
             bundle["query_understanding"] = understanding
             return bundle
         except HybridRetrievalError:

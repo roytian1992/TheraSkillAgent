@@ -229,9 +229,12 @@ class SQLiteSessionRepository:
             ).fetchone() is None:
                 raise SessionNotFoundError(session_id)
             existing = connection.execute(
-                "SELECT job_id FROM review_jobs WHERE session_id=?", (session_id,)
+                "SELECT job_id, status FROM review_jobs WHERE session_id=?", (session_id,)
             ).fetchone()
             if existing:
+                if existing["status"] in {"failed", "complete"}:
+                    connection.execute("UPDATE review_jobs SET status='pending', error=NULL, updated_at=? WHERE job_id=?",
+                                       (now, existing["job_id"]))
                 return str(existing["job_id"])
             connection.execute(
                 "INSERT INTO review_jobs VALUES (?, ?, ?, ?, ?, ?, ?)",

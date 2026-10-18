@@ -64,7 +64,9 @@ def test_domain_transports_build_inside_hermes_home(tmp_path, monkeypatch):
     route_counts = [len(app.routes) for app in (support, simulation, expert, contribution, extraction)]
     assert route_counts[0] >= 27  # safety handoff, check-in, plan, and resource routes
     assert route_counts[1] >= 36  # dual-agent research cycle route
-    assert route_counts[2:4] == [36, 50]
+    assert route_counts[2] >= 37
+    assert route_counts[3] >= 50
+    assert '/jobs/{job_id}/retry' in {route.path for route in expert.routes}
     assert route_counts[4] >= 5
 
 

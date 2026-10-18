@@ -27,6 +27,7 @@ from .contracts import (
     utc_now,
 )
 from .engine import SupportEngine
+from .safety import screen_safety_risk
 from .repository import SQLiteSupportRepository, SupportSessionNotFoundError
 
 
@@ -91,7 +92,8 @@ class SupportSessionService:
         )
 
     def create_session(
-        self, *, owner_id: str = "local-user", session_id: str | None = None
+        self, *, owner_id: str = "local-user", session_id: str | None = None,
+        workflow: str = "support", output_language: str = "auto",
     ) -> SupportPublicSession:
         now = utc_now()
         public = SupportPublicSession(
@@ -102,6 +104,8 @@ class SupportSessionService:
         record = SupportSessionRecord(
             public=public,
             owner_id=owner_id,
+            workflow=workflow,
+            output_language=output_language,
             knowledge_release_id=self.knowledge_release_id,
         )
         self.repository.create(
@@ -132,6 +136,7 @@ class SupportSessionService:
         text: str,
         owner_id: str,
         idempotency_key: str,
+        output_language: str | None = None,
     ) -> SubmitMessageResult:
         existing_job_id = self.repository.idempotent_job_id(
             session_id, idempotency_key
@@ -153,6 +158,8 @@ class SupportSessionService:
         clean_text = " ".join(text.split())
         if not clean_text:
             raise ValueError("message text cannot be empty")
+        if output_language is not None and output_language not in {"auto", "zh", "en"}:
+            raise ValueError("Unsupported output language")
         now = utc_now()
         message = SupportMessage(
             message_id=f"support_message_{uuid.uuid4().hex}",
@@ -168,6 +175,26 @@ class SupportSessionService:
             created_at=now,
             updated_at=now,
         )
+        # Publish the existing fast screen before slow routing/retrieval starts.
+        # This is a safety UI signal, not a substitute for model generation.
+        screen = screen_safety_risk(clean_text if record.workflow == "support" else "")
+        safety = record.public.safety
+        level = self._attention_for_risk(screen.risk_level, screen.requires_immediate_attention)
+        if level != SafetyAttentionLevel.NONE:
+            attention_rank = {SafetyAttentionLevel.NONE: 0, SafetyAttentionLevel.ATTENTION: 1,
+                              SafetyAttentionLevel.URGENT: 2}
+            if attention_rank[level] < attention_rank[safety.attention_level]:
+                level = safety.attention_level
+                risk_level = safety.source_risk_level
+            else:
+                risk_level = screen.risk_level
+            safety = safety.model_copy(update={
+                "attention_level": level,
+                "source_risk_level": risk_level,
+                "signal_codes": list(dict.fromkeys([*safety.signal_codes, *screen.signal_codes])),
+                "handoff_status": SafetyHandoffStatus.OFFERED,
+                "updated_at": now,
+            })
         public = record.public.model_copy(
             update={
                 "messages": record.public.messages + [message],
@@ -175,6 +202,7 @@ class SupportSessionService:
                     status=GenerationStatus.PENDING,
                     job_id=job.job_id,
                 ),
+                "safety": safety,
                 "updated_at": now,
             }
         )
@@ -186,6 +214,7 @@ class SupportSessionService:
         next_record = record.model_copy(
             update={
                 "public": public,
+                "output_language": output_language or record.output_language,
                 "revision": record.revision + 1,
                 "turn_traces": record.turn_traces + [trace],
             }
@@ -230,6 +259,21 @@ class SupportSessionService:
             self._mark_failed(record, job, f"{type(exc).__name__}: {exc}")
             return
 
+        # Check-ins and safety actions may be saved while generation is running.
+        record = self.repository.get(session_id)
+        if record.public.generation.job_id != job_id or record.public.generation.status != GenerationStatus.PENDING:
+            return
+        routed_safety = self._safety_from_routing(result.routing)
+        current_safety = record.public.safety
+        attention_rank = {"none": 0, "attention": 1, "urgent": 2}
+        if attention_rank[str(current_safety.attention_level)] >= attention_rank[str(routed_safety.attention_level)]:
+            routed_safety = current_safety
+        elif current_safety.check_in_at or current_safety.last_action_at:
+            routed_safety = current_safety.model_copy(update={
+                "attention_level": routed_safety.attention_level,
+                "source_risk_level": routed_safety.source_risk_level,
+                "signal_codes": list(dict.fromkeys([*current_safety.signal_codes, *routed_safety.signal_codes])),
+            })
         now = utc_now()
         assistant = SupportMessage(
             message_id=f"support_message_{uuid.uuid4().hex}",
@@ -257,7 +301,7 @@ class SupportSessionService:
                 "title": title,
                 "messages": record.public.messages + [assistant],
                 "generation": GenerationState(status=GenerationStatus.IDLE),
-                "safety": self._safety_from_routing(result.routing),
+                "safety": routed_safety,
                 "updated_at": now,
             }
         )
@@ -450,6 +494,9 @@ class SupportSessionService:
     def _mark_failed(
         self, record: SupportSessionRecord, job: SupportTurnJob, error: str
     ) -> None:
+        record = self.repository.get(record.public.session_id)
+        if record.public.generation.job_id != job.job_id:
+            return
         now = utc_now()
         public = record.public.model_copy(
             update={
@@ -514,7 +561,8 @@ class SupportSessionService:
         return recovered
 
     def retry_response(
-        self, session_id: str, *, owner_id: str
+        self, session_id: str, *, owner_id: str,
+        workflow: str | None = None, output_language: str | None = None,
     ) -> tuple[SupportPublicSession, str]:
         record = self.repository.get(session_id)
         self._assert_owner(record, owner_id)
@@ -532,7 +580,9 @@ class SupportSessionService:
             }
         )
         next_record = record.model_copy(
-            update={"public": public, "revision": record.revision + 1}
+            update={"public": public, "revision": record.revision + 1,
+                    "workflow": workflow or record.workflow,
+                    "output_language": output_language or record.output_language}
         )
         next_job = job.model_copy(
             update={

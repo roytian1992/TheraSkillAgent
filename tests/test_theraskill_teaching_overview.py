@@ -230,3 +230,58 @@ def test_generated_draft_governance_edit_review_and_batch(tmp_path: Path) -> Non
     assert batch.json()["schema_version"] == "theraskill_online_scenario_batch_v1"
     assert batch.json()["count"] == 2
     assert batch.json()["course_draft"]["review_required"] is True
+
+
+def test_durable_batch_retry_keeps_completed_items_without_regeneration(tmp_path: Path) -> None:
+    import time
+    class Generator:
+        calls = 0
+        def generate(self, request):
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError('synthetic provider interruption on item 2')
+            return {'scenario': {
+                'scenario_id': f'checkpoint_{self.calls}', 'scenario_family': request.scenario_family,
+                'case_id': f'case_{self.calls}', 'case_family': 'synthetic',
+                'difficulty_band': request.difficulty_band, 'risk_band': request.risk_band,
+                'scenario_brief': f'Synthetic item {self.calls}: {request.brief}',
+                'scenario_tags': ['synthetic'], 'recommended_turn_budget': 3,
+                'split_labels': {'formal_split': 'generated'}, 'generated': True, 'synthetic': True,
+            }, 'case_bundle': {}}
+    generator = Generator()
+    settings = SimulationAPISettings(database_path=tmp_path/'sessions.sqlite', scenario_registry_path=tmp_path/'scenarios.jsonl',
+        generated_scenario_registry_path=tmp_path/'generated.jsonl', generated_batch_work_root=tmp_path/'jobs', initialize_llm_engine=False)
+    app = create_app(settings, scenario_generator=generator)
+    headers = {'X-Simulation-Role': 'researcher'}
+    def wait(client, jid):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            result = client.get('/scenarios/generate-batch/jobs/'+jid, headers=headers).json()
+            if result['status'] not in {'queued','running'}:return result
+            time.sleep(.01)
+        raise AssertionError('Batch did not finish')
+    with TestClient(app) as client:
+        response = client.post('/scenarios/generate-batch/jobs', headers=headers,
+            json={'brief':'Synthetic course about empathy and clarification', 'count':2, 'course_title':'QA course'})
+        assert response.status_code == 202
+        jid=response.json()['job_id'];partial=wait(client,jid)
+        assert partial['status']=='partial' and partial['progress']['processed']==1
+        first_id=partial['result']['scenarios'][0]['scenario_id']
+        assert client.post('/scenarios/generate-batch/jobs/'+jid+'/retry',headers=headers).status_code==200
+        completed=wait(client,jid)
+        assert completed['status']=='completed'
+        assert completed['result']['count']==2 and generator.calls==3
+        assert completed['result']['scenarios'][0]['scenario_id']==first_id
+        rows=client.get('/scenarios/generated',headers=headers).json()['scenarios']
+        assert len([r for r in rows if r.get('batch_id')==jid])==2
+
+
+def test_scenario_generator_respects_the_configured_output_budget(tmp_path: Path, monkeypatch) -> None:
+    import domains.theraskill.theraskill_llm as llm
+    from domains.theraskill.theraskill_simulation.scenario_generation import LLMScenarioGenerator
+    seen = []
+    monkeypatch.setattr(llm, 'load_yaml', lambda _: {})
+    monkeypatch.setattr(llm, 'merged_model_config', lambda *_: {'max_output_tokens': 8192})
+    monkeypatch.setattr(llm, 'OpenAICompatibleClient', lambda config: seen.append(config))
+    LLMScenarioGenerator(project_root=Path(__file__).parents[1],extraction_config=tmp_path/'extraction.yaml',model_config=tmp_path/'model.yaml',output_root=tmp_path/'out')
+    assert seen[0]['max_output_tokens'] == 8192

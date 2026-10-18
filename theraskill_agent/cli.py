@@ -72,8 +72,12 @@ def _status(manager: SkillManager) -> dict[str, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="theraskill-agent", description="TheraSkillAgent local skill and text toolkit")
+    parser.add_argument("--project", metavar="DIRECTORY", help="use this writable project directory")
     parser.add_argument("--config", help="local YAML configuration (skill roots and user directory)")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    from .task_cli import add_parser as add_task_parser
+    add_task_parser(sub)
 
     status = sub.add_parser("status", help="show local project, skill and provider metadata")
     status.add_argument("--json", action="store_true", help="kept for consistent machine-readable output")
@@ -81,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     ui = sub.add_parser("ui", help="serve the built workspaces without Node.js")
     ui.add_argument("--host", default="127.0.0.1")
     ui.add_argument("--port", type=int, default=5176)
-    ui.add_argument("--start-services", action="store_true", help="also start the domain services")
+    ui.add_argument("--start-services", action="store_true", help=argparse.SUPPRESS)
 
     skill = sub.add_parser("skill", help="discover, install and improve skills")
     skill_sub = skill.add_subparsers(dest="skill_command", required=True)
@@ -94,6 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("source")
     install.add_argument("--name")
     install.add_argument("--overwrite", action="store_true")
+    install.add_argument("--behavior-report", help="reviewed behavior comparison report ID required for replacement")
     optimize = skill_sub.add_parser("optimize", help="score a skill and optionally add missing metadata")
     optimize.add_argument("target")
     optimize.add_argument("--write", action="store_true", help="write generated name/description frontmatter")
@@ -128,6 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--mode", choices=["plan", "model"], default="plan", help="review mode for transcript.review")
     run.add_argument("--skill", action="append", dest="skills", help="skill to run for transcript.review; repeatable")
     run.add_argument("--max-turns", type=int, help="cap transcript turns sent to model review")
+    run.add_argument("--output-language", choices=["zh", "en"])
 
     source = sub.add_parser("source", help="inspect and sample extraction inputs")
     source_sub = source.add_subparsers(dest="source_command", required=True)
@@ -169,6 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
             command.add_argument("--mode", choices=["plan", "model"], default="plan")
             command.add_argument("--skill", action="append", dest="skills")
             command.add_argument("--max-turns", type=int)
+            command.add_argument("--output-language", choices=["zh", "en"])
 
     service = sub.add_parser("service", help="manage project-local domain services")
     service_sub = service.add_subparsers(dest="service_command", required=True)
@@ -189,20 +196,24 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.project:
+        import os
+        os.environ["THERASKILL_AGENT_ROOT"] = str(Path(args.project).expanduser().resolve())
     manager = _manager_from_config(args.config)
     try:
         if args.command in {"knowledge", "index"}:
             from .resource_cli import run_command
             _json(run_command(args))
             return 0
+        if args.command == "task":
+            from .task_cli import run as run_interactive_task
+            _json(run_interactive_task(args))
+            return 0
         if args.command == "ui":
             import uvicorn
             from .webapp import create_app
 
             app = create_app()
-            if args.start_services:
-                from domains.theraskill.launcher import start
-                start()
             uvicorn.run(app, host=args.host, port=args.port)
             return 0
         if args.command == "status":
@@ -215,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
             elif args.skill_command == "inspect":
                 _json(manager.inspect(args.target).to_dict())
             elif args.skill_command == "install":
-                _json(manager.install_local(args.source, name=args.name, overwrite=args.overwrite).to_dict())
+                _json(manager.install_local(args.source, name=args.name, overwrite=args.overwrite, report_id=args.behavior_report).to_dict())
             elif args.skill_command == "optimize":
                 _json(manager.optimize(args.target, write=args.write).to_dict())
             elif args.skill_command == "lock":
@@ -233,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
                 _json(extract_sections(value))
             return 0
         if args.command == "run":
-            task = AgentTask(kind=args.task, text=args.goal or args.text, input_path=args.path, parameters={"max_chars": args.max_chars, "overlap": args.overlap, "target": args.target, "write": args.write, "limit": args.limit, "output_dir": args.output_dir, "exclude_raw": args.exclude_raw, "mode": args.mode, "skills": args.skills, "max_turns": args.max_turns})
+            task = AgentTask(kind=args.task, text=args.goal or args.text, input_path=args.path, parameters={"max_chars": args.max_chars, "overlap": args.overlap, "target": args.target, "write": args.write, "limit": args.limit, "output_dir": args.output_dir, "exclude_raw": args.exclude_raw, "mode": args.mode, "skills": args.skills, "max_turns": args.max_turns, "output_language": args.output_language})
             result = AgentRuntime(manager=manager).run(task)
             _json(result.to_dict())
             return 0 if result.status == "succeeded" else 2
@@ -283,10 +294,10 @@ def main(argv: list[str] | None = None) -> int:
 
                 analysis = analyze_transcript(document)
                 if args.mode == "model":
-                    review = run_skill_reviews(document, analysis, skills=args.skills, max_turns=args.max_turns)
+                    review = run_skill_reviews(document, analysis, skills=args.skills, max_turns=args.max_turns, output_language=args.output_language)
                     payload = {"document": document.to_dict(include_raw=False), "analysis": analysis, "reviews": review}
                 else:
-                    payload = {"document": document.to_dict(include_raw=False), "analysis": analysis, "review_plan": build_review_plan(document, analysis, skills=args.skills, max_turns=args.max_turns)}
+                    payload = {"document": document.to_dict(include_raw=False), "analysis": analysis, "review_plan": build_review_plan(document, analysis, skills=args.skills, max_turns=args.max_turns, output_language=args.output_language)}
             else:
                 analysis = analyze_transcript(document)
                 if args.transcript_command == "analyze":

@@ -2,10 +2,7 @@ extraction:
   version: "theraskill_extraction_v0.1"
   schema_version: "therapeutic_process_rule_v0.2_no_aspect"
   model:
-    # Provider and model are resolved from configs/theraskill/providers.yaml.
-    temperature: 0.0
-    max_output_tokens: 4096
-    retry_attempts: 1
+    # Model, connection and request controls come from providers.yaml/local.yaml.
     parse_retry_attempts: 2
     quality_retry_attempts: 3
     batch_size: 1

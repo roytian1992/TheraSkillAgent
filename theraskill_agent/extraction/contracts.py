@@ -124,6 +124,10 @@ class ExtractionPlan:
     def from_mapping(cls, payload: Mapping[str, Any]) -> "ExtractionPlan":
         if not isinstance(payload, Mapping):
             raise PlanError("extraction plan must be an object")
+        for field_name in ("evidence_fields", "quality_rules", "operations"):
+            value = payload.get(field_name)
+            if value is not None and (not isinstance(value, (list, tuple)) or any(not isinstance(item, str) for item in value)):
+                raise PlanError(f"{field_name} must be a list of strings")
         return cls(
             goal=payload.get("goal", ""),
             target_schema=payload.get("target_schema") or {},

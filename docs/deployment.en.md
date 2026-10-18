@@ -25,6 +25,10 @@ python -m pip install -e '.[retrieval]'
 The retrieval extra adds NumPy and `faiss-cpu`. A lexical index needs neither a
 model service nor this extra.
 
+The retrieval extra requires `faiss-cpu>=1.13.2` to read this project's Flat
+indexes through read-only memory mapping. Scoped searches select eligible vectors
+before nearest-neighbor selection. This does not add base installation dependencies.
+
 ## Source deployment
 
 ```bash
@@ -57,8 +61,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install /path/to/theraskill_agent-0.4.0-py3-none-any.whl
 
-theraskill-agent project init /path/to/TheraSkillAgent
-export THERASKILL_AGENT_ROOT=/path/to/TheraSkillAgent
+theraskill-agent project init ~/TheraSkillAgent
 theraskill-agent status --json
 ```
 
@@ -70,13 +73,16 @@ python -m pip install \
   '/path/to/theraskill_agent-0.4.0-py3-none-any.whl[retrieval]'
 ```
 
-Keep `THERASKILL_AGENT_ROOT` set for every shell, service unit, or job that
-uses the project. Mutable data should live in this project directory instead of
-inside `site-packages`.
+Wheel installations use `~/TheraSkillAgent` by default; source installations
+use the checkout. To select another workspace, use
+`theraskill-agent --project /your/workspace ui` (the same flag works with other
+commands). No environment variable is required. Mutable data stays outside
+`site-packages`.
 
 ## Configure the LLM and embedding services
 
-TheraSkillAgent accepts one direct configuration shape. Copy the local template
+TheraSkillAgent accepts one direct configuration shape. In the writable project
+directory (`cd ~/TheraSkillAgent` for a wheel), copy the local template
 and set the two blocks independently:
 
 ```bash
@@ -131,39 +137,37 @@ theraskill-agent provider check --kind embedding --live
 
 ## Start and stop the workbench
 
-Start the UI and the local domain services together:
+Start the complete application:
 
 ```bash
-theraskill-agent ui --start-services
+theraskill-agent ui
 ```
 
-Open <http://127.0.0.1:5176/>. The UI process serves the main workbench and the
-support, simulation, and expert views. It proxies only to the named local
-services; it does not accept arbitrary upstream URLs.
-
-The default service ports are:
-
-| Service | Port |
-| --- | ---: |
-| Simulation | 8876 |
-| Support | 8878 |
-| Expert/review | 8879 |
-| Contribution | 8881 |
-| Extraction | 8891 |
-| Transcript | 8892 |
-
-Inspect or stop domain services with:
+Open <http://127.0.0.1:5176/>. The workbench, built browser views, and all six
+business modules run in **one process with one listening port**. Simulation,
+support, expert review, governance, extraction, and transcripts communicate
+in process. Their background workers start and stop with the application.
 
 ```bash
-theraskill-agent service status
-theraskill-agent service stop
+theraskill-agent ui --port 8080
+curl http://127.0.0.1:5176/health
+curl http://127.0.0.1:5176/api/overview
 ```
 
-The UI `--port` option changes only the browser workbench port. Service ports
-can be changed with `THERASKILL_<SERVICE>_PORT` project settings. The default
-bind address is `127.0.0.1`; put an
-authenticated reverse proxy in front of it before exposing a deployment to
-other machines.
+Use Ctrl-C to stop the foreground application. The LLM and embedding endpoints
+are configured independently; local model servers or remote APIs remain external
+to this application.
+
+When upgrading an older deployment, finish or cancel active jobs, exit its UI,
+and run `theraskill-agent service stop` once to stop its separate domain servers.
+Then start `theraskill-agent ui`. Ports 8876, 8878, 8879, 8881, 8891 and 8892 are
+no longer deployment dependencies. The old `--start-services` flag is accepted
+as an alias and does not spawn domain processes. The `service` command remains
+available for explicit separate-process debugging.
+
+The default bind address is `127.0.0.1`. Configure access control when sharing
+the application across machines. Restart this one application after changing
+code or model configuration.
 
 ## Verify the installation
 
@@ -216,17 +220,40 @@ theraskill-agent knowledge rollback
 See [knowledge and indexes](knowledge_and_indexes.en.md) for the JSONL contract,
 field mappings, eligibility rules, manifests, and package checks.
 
+## Retrieval performance and diagnostics
+
+The application automatically overlaps independent retrieval channels and reuses
+index-versioned metadata inventories and scope caches. New builds include
+`metadata_inventory.json`. An older index prepares a runtime cache on first use;
+that first request can be slower, while later processes reuse the cache. This
+cache contains metadata values, not model plans. Normal advanced requests still
+call the configured LLM. No extra service, port or cache configuration is needed.
+
+Expert and support job provenance exposes `retrieval_summary.timings`,
+`planner_timings` and `warnings`. The referenced bundle also records
+`planner_trace.inventory_cache`. Parallel stage durations overlap and must not
+be added together as total latency. Broad Chinese queries may still reach a
+lexical channel's execution budget; the warning records this and completed
+channels remain available. Provider and network latency also affect request time.
+See the [retrieval validation record (Chinese)](retrieval_optimization_20261018.zh.md)
+for measured cases, comparison limits and reproduction commands.
+
 ## Model output troubleshooting
 
-A token limit may include reasoning as well as visible output. A response with
-`finish_reason: length` now fails explicitly instead of accepting a partial
-reply. Increase `llm.max_output_tokens`, or configure the provider's supported
-`llm.reasoning_effort` / `llm.thinking` options in the same direct provider block.
-For example, DeepSeek documents `thinking: {type: disabled}` and reasoning effort
-levels; these are optional settings, and defaults are not changed by the app.
-See [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/).
-Support generation also validates a nonempty `response_text` and retries an
-invalid JSON schema once. Neither recovery path substitutes a canned response.
+Normal setup only requires model names, URLs, and keys. The shared model client
+attempts up to two recoveries for truncated or empty responses. A truncation
+regenerates the complete result with a larger output budget, automatically growing
+up to 32768 tokens. An explicitly larger configured budget is preserved and is
+not increased further. Partial JSON is never concatenated or accepted as success.
+Network and rate-limit retries are separately bounded; authentication and invalid
+parameter errors fail directly.
+
+If the service's own limits or reasoning budget still prevent a complete response,
+optionally add `max_output_tokens` and supported `thinking` / `reasoning_effort`
+settings to the existing `llm` block. The application does not identify models by
+name or automatically disable reasoning. Support responses retain a nonempty
+`response_text` check and one schema regeneration attempt. Restart the application
+after changing configuration, then resume a failed task from the UI.
 
 ## Data and upgrade policy
 
@@ -247,8 +274,35 @@ For a source release, run the focused test suite and rebuild the UI:
 python -m pip install -e '.[dev,retrieval]'
 python -m pytest -q -o addopts='' \
   tests/test_standalone_kernel.py tests/test_theraskill*.py \
-  tests/smoke_theraskill_install.py tests/test_theraskill_indexing.py \
+  tests/smoke_theraskill_install.py \
   --ignore=tests/test_theraskill_agent_regression.py
 npm run build
 python -m build
 ```
+
+## Verify workflows and recover jobs
+
+A health check confirms connectivity. After deployment, also exercise transcript review and ZIP download, a small extraction run, a valid training session and its review, an expert response review, and a course batch. The task center and workspace histories reopen saved work. Batch and extraction jobs can retry unfinished items; simulation state updates and reviews have separate retry actions. Sessions without both dialogue roles, or with incomplete state updates, are not evaluable and cannot receive training ratings.
+
+Keep `llm.max_output_tokens`, `llm.retry_attempts`, and optional `llm.thinking` in the local provider block. Scenario generation and patient engines follow the configured budget by default. The shared extraction template no longer overrides it with 4096. Some services count reasoning against the same budget; verify real workflows before choosing a budget or reasoning settings. Only use fields supported by your service, for example:
+
+```yaml
+llm:
+  # Add these alongside your existing model/base_url/api_key settings.
+  max_output_tokens: 8192
+  retry_attempts: 2
+  thinking:
+    type: disabled
+```
+
+There is no model-name condition or automatic reasoning change for other providers. Truncated output and upstream disconnects produce explicit failures with recovery actions. Restart the single application after changing these settings so existing model clients are refreshed. Preserve results from different settings separately. See the [local UX improvement record](ux_improvements_20261018.zh.md) for the bounded live checks and their limitations.
+
+## Interactive workflows and reviewed upgrades
+
+See the [workflow guide](workflows.en.md) for durable skill execution, extraction-to-index governance, behavioral baselines and course practice. These routes share the existing workbench; no new port or runtime dependency is required. Back up `data/theraskill/tasks`, `data/theraskill/evaluations`, course/session databases and `skills/local` alongside existing data.
+
+A first index can initialize an empty installation. Replacing an active index or an existing skill requires a reviewed behavior comparison report; pass `--behavior-report REPORT_ID` to `knowledge activate` or `skill install --overwrite`. Knowledge preview promotion requires the same gate in the expert UI. Old reports are invalid after changes to evaluated artifacts, model settings or the evaluator. Keep historical reports and create a new evaluation.
+
+## Deployment validation
+
+See the [deployment simplification record (Chinese)](deployment_simplification_20261018.zh.md) for the single-process migration, model recovery checks, isolated installation smoke test and real browser results.

@@ -55,6 +55,29 @@ up to two real-model validation attempts by default (CLI
 hashes are recorded. If planning still fails, the runtime reports its existing
 policy-aware lexical fallback. Invalid plans are not treated as successful plans.
 
+New lexical builds collect these values during ingestion and include a portable
+`metadata_inventory.json`. Reused lexical indexes copy this sidecar. Older
+indexes prepare a versioned runtime `planner_inventory.json` with one streaming
+pass; later processes reuse it without changing the published index. Invalid
+caches are regenerated. Cached metadata does not replace real LLM planning.
+
+Independent advanced channels run in a bounded thread pool, with local lexical
+recall overlapping LLM planning. Candidate scope IDs are materialized once per
+request, and small scopes are cached by the index fingerprint and complete filter.
+Explicit English scopes share the existing English partition across lexical,
+label and required-family channels. Query language alone does not impose a filter.
+Required-family backfill balances missing families so abundant QA examples cannot
+crowd method rubrics out of the candidate limit. Explicit filters and skill
+boundaries remain enforced; this quality fix can change result ranking.
+
+The optional retrieval extra uses `faiss-cpu>=1.13.2` for read-only Flat index
+mapping and `IDSelectorArray` for direct scoped vector selection. Compact ID/row
+maps reduce metadata overhead. An unfiltered global exact search may still read
+large vector ranges. Bundles expose `timings`, planner cache sources and model
+timing; support/expert provenance and knowledge-search diagnostics preserve them
+with budget warnings. Parallel stage times overlap and cannot be summed into
+total latency. See the [validation record (Chinese)](retrieval_optimization_20261018.zh.md).
+
 An explicitly selected skill owns the route. Without one, understanding returns
 a suggested skill for inspection. Keyword matches do not silently replace an
 explicit workflow. Risk cues are retrieval signals, not clinical risk decisions.

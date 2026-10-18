@@ -70,6 +70,9 @@ def runtime_environment() -> dict[str, str]:
         env.update(load_env())
     except Exception:
         pass
+    # Only the explicit separate-process launcher uses this environment.
+    for name, spec in service_specs().items():
+        env.setdefault(f"THERASKILL_{name.upper()}_API_URL", f"http://127.0.0.1:{spec['port']}")
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = str(CODE_ROOT) if not existing else f"{CODE_ROOT}{os.pathsep}{existing}"
     return env

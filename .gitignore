@@ -4,11 +4,13 @@
 *.sqlite-shm
 __pycache__/
 .pytest_cache/
+.pytest-cache/
 .mypy_cache/
 .ruff_cache/
 .venv/
 venv/
 node_modules/
+node_modules
 dist/
 data/**
 !data/**/.gitkeep
@@ -45,6 +47,8 @@ build/
 *.key
 skills/local/
 config.yaml
+.update_check
+/SOUL.md
 
 # Historical host integrations retained locally during migration, not published.
 /agent/

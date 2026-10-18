@@ -1,3 +1,4 @@
+import { tr, useTranslationSubscription } from '../../shared/i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
@@ -52,16 +53,18 @@ function downloadJson(filename: string, value: unknown) {
 
 function readableRole(role: string) {
   const labels: Record<string, string> = {
-    process_guidance: '过程参考',
-    therapy_process_pattern: '互动模式',
-    psychoeducation_or_support_guidance: '支持参考',
-    method_rubric: '方法参考',
-    risk_boundary: '边界参考',
+    process_guidance: tr('过程参考'),
+    therapy_process_pattern: tr('互动模式'),
+    psychoeducation_or_support_guidance: tr('支持参考'),
+    method_rubric: tr('方法参考'),
+    risk_boundary: tr('边界参考'),
   }
-  return labels[role] || '参考依据'
+  return labels[role] || tr('参考依据')
 }
 
 function StructuredContent({ value }: { value: Record<string, unknown> }) {
+  useTranslationSubscription()
+
   const entries = Object.entries(value).filter(([, item]) => item !== null && item !== '')
   if (!entries.length) return null
   return (
@@ -98,6 +101,8 @@ function FeedbackControls({ sessionId, messageId, onError, onSubmitted }: {
   onError: (message: string) => void
   onSubmitted: () => void
 }) {
+  useTranslationSubscription()
+
   const [helpful, setHelpful] = useState<boolean | null>(null)
   const [reasons, setReasons] = useState<string[]>([])
   const [comment, setComment] = useState('')
@@ -138,12 +143,12 @@ function FeedbackControls({ sessionId, messageId, onError, onSubmitted }: {
     }
   }
 
-  if (submitted) return <div className="feedback-recorded"><Check size={13} />已记录</div>
+  if (submitted) return <div className="feedback-recorded"><Check size={13} />{tr("已记录")}</div>
   return (
     <div className="response-feedback">
       <div className="feedback-trigger">
-        <button className={helpful === true ? 'selected' : ''} onClick={() => choose(true)} title="有帮助"><ThumbsUp size={14} /></button>
-        <button className={helpful === false ? 'selected' : ''} onClick={() => choose(false)} title="没帮助"><ThumbsDown size={14} /></button>
+        <button className={helpful === true ? 'selected' : ''} onClick={() => choose(true)} title={tr("有帮助")}><ThumbsUp size={14} /></button>
+        <button className={helpful === false ? 'selected' : ''} onClick={() => choose(false)} title={tr("没帮助")}><ThumbsDown size={14} /></button>
       </div>
       {helpful !== null && (
         <div className="feedback-form">
@@ -152,20 +157,19 @@ function FeedbackControls({ sessionId, messageId, onError, onSubmitted }: {
               {feedbackReasons.map(([value, label]) => (
                 <label key={value}>
                   <input type="checkbox" checked={reasons.includes(value)} onChange={() => toggleReason(value)} />
-                  <span>{label}</span>
+                  <span>{tr(label)}</span>
                 </label>
               ))}
             </div>
           )}
-          <textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="补充说明（可选）" rows={2} maxLength={2000} />
+          <textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder={tr("补充说明（可选）")} rows={2} maxLength={2000} />
           <div className="consent-options">
-            <label><input type="checkbox" checked={consent.content_review} onChange={(event) => setConsentValue('content_review', event.target.checked)} />允许内容评审</label>
-            <label><input type="checkbox" checked={consent.research_use} onChange={(event) => setConsentValue('research_use', event.target.checked)} />允许研究使用</label>
-            <label><input type="checkbox" checked={consent.knowledge_derivation} onChange={(event) => setConsentValue('knowledge_derivation', event.target.checked)} />允许形成知识候选</label>
+            <label><input type="checkbox" checked={consent.content_review} onChange={(event) => setConsentValue('content_review', event.target.checked)} />{tr("允许内容评审")}</label>
+            <label><input type="checkbox" checked={consent.research_use} onChange={(event) => setConsentValue('research_use', event.target.checked)} />{tr("允许研究使用")}</label>
+            <label><input type="checkbox" checked={consent.knowledge_derivation} onChange={(event) => setConsentValue('knowledge_derivation', event.target.checked)} />{tr("允许形成知识候选")}</label>
           </div>
           <button className="feedback-submit" onClick={submit} disabled={submitting}>
-            {submitting ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}提交
-          </button>
+            {submitting ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}{tr("提交")}</button>
         </div>
       )}
     </div>
@@ -178,26 +182,30 @@ function Message({ message, sessionId, onError, onFeedbackSubmitted }: {
   onError: (message: string) => void
   onFeedbackSubmitted: () => void
 }) {
+  useTranslationSubscription()
+
   const isUser = message.role === 'user'
   return (
     <article
       className={`message ${isUser ? 'user-message' : 'assistant-message'}`}
       data-presentation-mode={message.presentation_mode}
     >
-      <div className="message-meta">{isUser ? '你' : 'TheraSkill'}</div>
+      <div className="message-meta">{isUser ? tr('你') : 'TheraSkill'}</div>
       <div className="message-body">
         <p>{message.text}</p>
         {!isUser && <StructuredContent value={message.structured_content} />}
         {!isUser && message.evidence_summary.length > 0 && (
           <details className="evidence-details">
-            <summary><BookOpen size={15} />参考依据</summary>
+            <summary><BookOpen size={15} />{tr("参考依据")}</summary>
             <div className="evidence-list">
               {message.evidence_summary.map((item, index) => (
                 <div className="evidence-row" key={`${item.label}-${index}`}>
                   <div>
                     <span>{item.label.replaceAll('_', ' ')}</span>
-                    {item.used_for && <small className="evidence-row-detail">用途：{item.used_for}</small>}
-                    {item.boundary && <small className="evidence-row-detail">边界：{item.boundary}</small>}
+                    {item.excerpt && <blockquote style={{whiteSpace:'pre-wrap'}}>{item.excerpt}</blockquote>}
+                    {(item.dataset || item.source_id) && <small className="evidence-row-detail">{item.dataset} · {item.source_id}</small>}
+                    {item.used_for && <small className="evidence-row-detail">{tr("用途：")}{item.used_for}</small>}
+                    {item.boundary && <small className="evidence-row-detail">{tr("边界：")}{item.boundary}</small>}
                     {item.inference && <small className="evidence-row-detail">{item.inference}</small>}
                   </div>
                   <small>{readableRole(item.role)}{item.source_type ? ` · ${item.source_type}` : ''}</small>
@@ -224,9 +232,16 @@ function SafetyAndPlanCard({ session, onSession, onError }: {
   onSession: (session: SupportSession) => void
   onError: (message: string) => void
 }) {
+  useTranslationSubscription()
+
   const [goal, setGoal] = useState('')
   const [actionItem, setActionItem] = useState('')
   const [saving, setSaving] = useState(false)
+  const { locale } = useLocale()
+  const t = (zh: string, en: string) => locale === 'zh' ? zh : en
+  const [editingPlan, setEditingPlan] = useState(false)
+  const [editedGoals, setEditedGoals] = useState('')
+  const [editedActions, setEditedActions] = useState('')
   const safety = session.safety
   const hasSafety = safety.attention_level !== 'none'
   const savePlan = async () => {
@@ -268,25 +283,28 @@ function SafetyAndPlanCard({ session, onSession, onError }: {
     <section className={`support-plan-card ${hasSafety ? `safety-${safety.attention_level}` : ''}`}>
       {hasSafety && (
         <div className="safety-action-panel">
-          <strong>{safety.attention_level === 'urgent' ? '现在需要优先确认安全' : '这段对话出现了需要关注的安全信号'}</strong>
-          <p>请根据你的实际情况联系身边可信任的人、当地专业服务或当地急救资源。系统不会临时编造联系方式。</p>
+          <strong>{safety.attention_level === 'urgent' ? tr('现在需要优先确认安全') : tr('这段对话出现了需要关注的安全信号')}</strong>
+          <p>{tr("请根据你的实际情况联系身边可信任的人、当地专业服务或当地急救资源。这些按钮用于记录你的选择，不会代你拨号或联系他人。")}</p>
+          {safety.last_action && <p role="status">{t('已记录你的联系选择：', 'Your contact choice is recorded: ')}{safety.last_action}</p>}{safety.check_in_status !== 'not_requested' && <p role="status">{t('安全确认状态：', 'Check-in status: ')}{safety.check_in_status}</p>}
           <div className="safety-action-row">
-            <button onClick={() => void safetyAction('trusted_person')} disabled={saving}>联系可信任的人</button>
-            <button onClick={() => void safetyAction('professional')} disabled={saving}>联系专业人员</button>
-            <button onClick={() => void safetyAction('local_emergency')} disabled={saving}>当地紧急服务</button>
-            <button onClick={() => void checkIn(true)} disabled={saving}>我现在安全</button>
-            <button onClick={() => void checkIn(false)} disabled={saving}>我现在仍不安全</button>
+            <button onClick={() => void safetyAction('trusted_person')} disabled={saving}>{tr("联系可信任的人")}</button>
+            <button onClick={() => void safetyAction('professional')} disabled={saving}>{tr("联系专业人员")}</button>
+            <button onClick={() => void safetyAction('local_emergency')} disabled={saving}>{tr("当地紧急服务")}</button>
+            <button onClick={() => void checkIn(true)} disabled={saving}>{tr("我现在安全")}</button>
+            <button onClick={() => void checkIn(false)} disabled={saving}>{tr("我现在仍不安全")}</button>
           </div>
         </div>
       )}
       <details>
-        <summary>我的目标与下一步</summary>
+        <summary>{t('我的目标与下一步', 'My goals and next steps')}</summary>
+        <button onClick={() => { setEditedGoals(session.plan.goals.map(item=>item.text).join('\n')); setEditedActions(session.plan.action_items.join('\n')); setEditingPlan(!editingPlan) }}>{t('编辑已有目标与行动', 'Edit saved goals and actions')}</button>
+        {editingPlan && <div className="support-plan-inputs"><label>{t('目标，每行一项', 'Goals, one per line')}<textarea value={editedGoals} onChange={event=>setEditedGoals(event.target.value)} /></label><label>{t('行动，每行一项', 'Actions, one per line')}<textarea value={editedActions} onChange={event=>setEditedActions(event.target.value)} /></label><button disabled={saving} onClick={async()=>{setSaving(true);try{onSession(await updatePlan(session.session_id,{goals:editedGoals.split('\n').filter(x=>x.trim()),action_items:editedActions.split('\n').filter(x=>x.trim())}));setEditingPlan(false)}catch(error){onError(String(error))}finally{setSaving(false)}}}>{t('保存修改', 'Save changes')}</button></div>}
         {session.plan.goals.length > 0 && <ul>{session.plan.goals.map((item) => <li key={item.goal_id}>{item.text}</li>)}</ul>}
         {session.plan.action_items.length > 0 && <ul>{session.plan.action_items.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul>}
         <div className="support-plan-inputs">
-          <input value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="添加一个我想关注的目标" maxLength={500} />
-          <input value={actionItem} onChange={(event) => setActionItem(event.target.value)} placeholder="添加一个下一步行动" maxLength={500} />
-          <button onClick={() => void savePlan()} disabled={saving || (!goal.trim() && !actionItem.trim())}>保存</button>
+          <input value={goal} onChange={(event) => setGoal(event.target.value)} placeholder={tr("添加一个我想关注的目标")} maxLength={500} />
+          <input value={actionItem} onChange={(event) => setActionItem(event.target.value)} placeholder={tr("添加一个下一步行动")} maxLength={500} />
+          <button onClick={() => void savePlan()} disabled={saving || (!goal.trim() && !actionItem.trim())}>{tr("保存")}</button>
         </div>
       </details>
     </section>
@@ -294,6 +312,8 @@ function SafetyAndPlanCard({ session, onSession, onError }: {
 }
 
 export default function App() {
+  useTranslationSubscription()
+
   const { locale, toggleLocale } = useLocale()
   const [sessions, setSessions] = useState<SupportSession[]>([])
   const [session, setSession] = useState<SupportSession | null>(null)
@@ -427,7 +447,7 @@ export default function App() {
   }
 
   const remove = async (target: SupportSession) => {
-    if (!window.confirm('删除这段对话？')) return
+    if (!window.confirm(tr('删除这段对话？'))) return
     try {
       await deleteSession(target.session_id)
       const rows = await refreshList()
@@ -476,49 +496,49 @@ export default function App() {
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="brand-row">
           <div className="brand-mark"><MessageCircle size={20} /></div>
-          <div><strong>TheraSkill</strong><span>Support</span></div>
-          <button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)} title="关闭会话列表"><X size={18} /></button>
+          <div><a href="/">{tr("← TheraSkillAgent")}</a><span>{tr("Support")}</span></div>
+          <button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)} title={tr("关闭会话列表")}><X size={18} /></button>
         </div>
-        <button className="new-session" onClick={startNew} disabled={busy}><Plus size={17} />新对话</button>
-        <nav className="session-list" aria-label="会话历史">
+        <button className="new-session" onClick={startNew} disabled={busy}><Plus size={17} />{tr("新对话")}</button>
+        <nav className="session-list" aria-label={tr("会话历史")}>
           {orderedSessions.map((row) => (
             <div className={`session-row ${session?.session_id === row.session_id ? 'active' : ''}`} key={row.session_id}>
               <button className="session-select" onClick={() => { setSession(row); if (window.innerWidth < 760) setSidebarOpen(false) }}>
-                <span>{row.title}</span>
-                <small>{row.status === 'completed' ? '已结束' : row.generation.status === 'pending' ? '生成中' : '进行中'}</small>
+                <span>{['新对话','New conversation'].includes(row.title)?tr('新对话'):row.title}</span>
+                <small>{row.status === 'completed' ? tr('已结束') : row.generation.status === 'pending' ? tr('生成中') : tr('进行中')}</small>
               </button>
-              <button className="row-action" onClick={() => remove(row)} title="删除对话" disabled={row.generation.status === 'pending'}><Trash2 size={15} /></button>
+              <button className="row-action" onClick={() => remove(row)} title={tr("删除对话")} disabled={row.generation.status === 'pending'}><Trash2 size={15} /></button>
             </div>
           ))}
         </nav>
-        <div className="connection-state"><span className={connected ? 'online' : 'offline'} />{connected ? '服务已连接' : '服务未连接'}</div>
+        <div className="connection-state"><span className={connected ? 'online' : 'offline'} />{connected ? tr('服务已连接') : tr('服务未连接')}</div>
       </aside>
 
-      {sidebarOpen && <button className="sidebar-scrim mobile-only" onClick={() => setSidebarOpen(false)} aria-label="关闭侧栏" />}
+      {sidebarOpen && <button className="sidebar-scrim mobile-only" onClick={() => setSidebarOpen(false)} aria-label={tr("关闭侧栏")} />}
 
       <section className="workspace">
         <header className="workspace-header">
-          <button className="icon-button mobile-only" onClick={() => setSidebarOpen(true)} title="打开会话列表"><Menu size={19} /></button>
+          <button className="icon-button mobile-only" onClick={() => setSidebarOpen(true)} title={tr("打开会话列表")}><Menu size={19} /></button>
           <div className="session-heading">
-            <h1>{session?.title || 'TheraSkill Support'}</h1>
-            <span>{session?.status === 'completed' ? '已结束' : pending ? '正在回应' : '进行中'}</span>
+            <h1>{session?.title ? (['新对话','New conversation'].includes(session.title)?tr('新对话'):session.title) : 'TheraSkill Support'}</h1>
+            <span>{session?.status === 'completed' ? tr('已结束') : pending ? tr('正在回应') : tr('进行中')}</span>
           </div>
           <div className="header-actions">
-            <button className="language-toggle" onClick={toggleLocale} title={locale === 'zh' ? '切换到英文' : 'Switch to Chinese'} aria-label={locale === 'zh' ? '切换到英文' : 'Switch to Chinese'}>{locale === 'zh' ? 'EN' : '中文'}</button>
-            <button className="icon-button" onClick={() => setMemoryOpen(true)} title="我的记忆"><BookMarked size={18} /></button>
-            <button className="icon-button" onClick={openContributions} title="我的反馈"><ListChecks size={18} /></button>
-            <button className="icon-button" onClick={exportCurrent} title="导出对话" disabled={!session}><Download size={18} /></button>
-            {active && <button className="icon-button stop" onClick={finish} title="结束对话" disabled={busy || pending}><Square size={17} /></button>}
+            <button className="language-toggle" onClick={toggleLocale} title={locale === 'zh' ? tr('切换到英文') : 'Switch to Chinese'} aria-label={locale === 'zh' ? tr('切换到英文') : 'Switch to Chinese'}>{locale === 'zh' ? 'EN' : '中文'}</button>
+            <button className="icon-button" onClick={() => setMemoryOpen(true)} title={tr("我的记忆")}><BookMarked size={18} /></button>
+            <button className="icon-button" onClick={openContributions} title={tr("我的反馈")}><ListChecks size={18} /></button>
+            <button className="icon-button" onClick={exportCurrent} title={tr("导出对话")} disabled={!session}><Download size={18} /></button>
+            {active && <button className="icon-button stop" onClick={finish} title={tr("结束对话")} disabled={busy || pending}><Square size={17} /></button>}
           </div>
         </header>
 
-        {error && <div className="error-banner"><AlertCircle size={17} /><span>{error}</span><button onClick={() => setError('')} title="关闭错误"><X size={15} /></button></div>}
+        {error && <div className="error-banner"><AlertCircle size={17} /><span>{error}</span><button onClick={() => setError('')} title={tr("关闭错误")}><X size={15} /></button></div>}
 
         {session && <SafetyAndPlanCard session={session} onSession={setSession} onError={setError} />}
 
         <div className="conversation">
           {!session?.messages.length && (
-            <div className="empty-state"><MessageCircle size={30} /><h2>今天想聊些什么？</h2></div>
+            <div className="empty-state"><MessageCircle size={30} /><h2>{tr("今天想聊些什么？")}</h2></div>
           )}
           {session?.messages.map((message) => (
             <Message
@@ -531,19 +551,19 @@ export default function App() {
           ))}
           {pending && (
             <article className="message assistant-message pending-message">
-              <div className="message-meta">TheraSkill</div>
-              <div className="message-body"><span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" /></div>
+              <div className="message-meta">TheraSkillAgent</div>
+              <div className="message-body"><span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" /><p>{locale === 'zh' ? tr('正在理解问题、检索依据并生成回应。任务在后台继续，稍后可从会话历史找回。') : 'Understanding your message, retrieving evidence and preparing a response. The job continues in the background; you can return through conversation history.'}</p></div>
             </article>
           )}
           {failed && (
-            <div className="generation-failed"><AlertCircle size={18} /><span>回应生成失败</span><button onClick={retry}><RefreshCw size={15} />重试</button></div>
+            <div className="generation-failed"><AlertCircle size={18} /><span>{tr("回应生成失败")}</span><button onClick={retry}><RefreshCw size={15} />{tr("重试")}</button></div>
           )}
           <div ref={transcriptEnd} />
         </div>
 
         <footer className="composer-wrap">
           {session?.status === 'completed' ? (
-            <div className="completed-state"><Check size={17} />这段对话已结束<button onClick={startNew}>开始新对话</button></div>
+            <div className="completed-state"><Check size={17} />{tr("这段对话已结束")}<button onClick={startNew}>{tr("开始新对话")}</button></div>
           ) : (
             <div className="composer">
               <textarea
@@ -555,20 +575,20 @@ export default function App() {
                     void send()
                   }
                 }}
-                placeholder="输入你想说的内容"
+                placeholder={tr("输入你想说的内容")}
                 rows={2}
                 disabled={pending}
               />
-              <button className="send-button" onClick={send} disabled={!draft.trim() || pending} title="发送"><Send size={19} /></button>
+              <button className="send-button" onClick={send} disabled={!draft.trim() || pending} title={tr("发送")}><Send size={19} /></button>
             </div>
           )}
         </footer>
       </section>
       {contributionOpen && (
         <>
-          <button className="drawer-scrim" onClick={() => setContributionOpen(false)} aria-label="关闭我的反馈" />
+          <button className="drawer-scrim" onClick={() => setContributionOpen(false)} aria-label={tr("关闭我的反馈")} />
           <aside className="contribution-drawer">
-            <header><h2>我的反馈</h2><button className="icon-button" onClick={() => setContributionOpen(false)} title="关闭"><X size={17} /></button></header>
+            <header><h2>{tr("我的反馈")}</h2><button className="icon-button" onClick={() => setContributionOpen(false)} title={tr("关闭")}><X size={17} /></button></header>
             {contributionLoading ? (
               <div className="drawer-loading"><LoaderCircle className="spin" size={18} /></div>
             ) : contributions.length ? (
@@ -578,14 +598,14 @@ export default function App() {
                     <div><strong>{item.contribution_type}</strong><span>{new Date(item.created_at).toLocaleString()}</span></div>
                     <small>{item.origin.product} · {item.target.target_type}</small>
                     {item.privacy_status === 'deletion_requested' ? (
-                      <span className="withdrawn-label">已申请删除</span>
+                      <span className="withdrawn-label">{tr("已申请删除")}</span>
                     ) : (
-                      <button onClick={() => withdraw(item.contribution_id)}><Trash2 size={14} />撤回</button>
+                      <button onClick={() => withdraw(item.contribution_id)}><Trash2 size={14} />{tr("撤回")}</button>
                     )}
                   </article>
                 ))}
               </div>
-            ) : <div className="drawer-empty">暂无反馈</div>}
+            ) : <div className="drawer-empty">{tr("暂无反馈")}</div>}
           </aside>
         </>
       )}

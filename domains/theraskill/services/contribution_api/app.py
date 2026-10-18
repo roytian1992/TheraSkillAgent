@@ -616,6 +616,7 @@ def create_app(
             return release_service.promote(
                 request.release_id,
                 request.expected_manifest_sha256,
+                behavior_report_id=request.behavior_report_id,
                 actor_subject_id=actor.subject_id,
                 actor_role=actor.role,
             )

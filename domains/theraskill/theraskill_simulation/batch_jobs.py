@@ -16,10 +16,11 @@ def _now() -> str:
 
 
 class ScenarioBatchJobStore:
-    def __init__(self, root: str | Path, runner: Callable[[str, dict[str, Any]], dict[str, Any]], *, max_workers: int = 1) -> None:
+    def __init__(self, root: str | Path, runner: Callable[[str, dict[str, Any]], dict[str, Any]], *, max_workers: int = 1, runner_reports_progress: bool = False) -> None:
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.runner = runner
+        self.runner_reports_progress = runner_reports_progress
         self._lock = threading.RLock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="theraskill-scenario-batch")
         self._jobs: dict[str, dict[str, Any]] = {}
@@ -31,7 +32,9 @@ class ScenarioBatchJobStore:
     def _save(self, job: dict[str, Any]) -> None:
         path = self._path(str(job["job_id"]))
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(job, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(job, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(path)
 
     def _recover(self) -> None:
         for path in self.root.glob("*/job.json"):
@@ -80,6 +83,10 @@ class ScenarioBatchJobStore:
         with self._lock:
             return dict(self._jobs[job_id]) if job_id in self._jobs else None
 
+    def list(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict(job) for job in sorted(self._jobs.values(), key=lambda j: j["created_at"], reverse=True)[:limit]]
+
     def retry(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -99,10 +106,12 @@ class ScenarioBatchJobStore:
         try:
             self._update(job_id, status="running", started_at=_now())
             payload = dict(self._jobs[job_id].get("request") or {})
-            result = self.runner(job_id, payload)
+            result = (self.runner(job_id, payload, lambda **updates: self._update(job_id, **updates))
+                      if self.runner_reports_progress else self.runner(job_id, payload))
             self._update(job_id, status="completed", progress={"processed": int(result.get("count") or 0), "total": int(payload.get("count") or 0)}, result=result, finished_at=_now())
         except Exception as exc:  # noqa: BLE001
-            self._update(job_id, status="failed", error=f"{type(exc).__name__}: {exc}", finished_at=_now())
+            status = "partial" if int((self._jobs[job_id].get("progress") or {}).get("processed") or 0) else "failed"
+            self._update(job_id, status=status, error=f"{type(exc).__name__}: {exc}", finished_at=_now())
 
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)

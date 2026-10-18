@@ -37,7 +37,7 @@ export async function listSessions(): Promise<SupportSession[]> {
 }
 
 export async function createSession(): Promise<SupportSession> {
-  return request('/sessions', { method: 'POST', body: JSON.stringify({}) })
+  return request('/sessions', { method: 'POST', body: JSON.stringify({output_language: window.localStorage.getItem('theraskill-locale') === 'en' ? 'en' : 'zh'}) })
 }
 
 export async function getSession(sessionId: string): Promise<SupportSession> {
@@ -51,7 +51,7 @@ export async function submitMessage(
   return request(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST',
     headers: { 'Idempotency-Key': crypto.randomUUID() },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, output_language: window.localStorage.getItem('theraskill-locale') === 'en' ? 'en' : 'zh' }),
   })
 }
 

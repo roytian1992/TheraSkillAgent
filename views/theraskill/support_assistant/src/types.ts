@@ -3,6 +3,9 @@ export type SessionStatus = 'active' | 'completed'
 export type MessageRole = 'user' | 'assistant'
 
 export interface EvidenceSummary {
+  source_id?: string
+  dataset?: string
+  excerpt?: string
   label: string
   role: string
   source_type?: string
