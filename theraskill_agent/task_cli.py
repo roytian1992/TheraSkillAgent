@@ -9,7 +9,7 @@ from .task_runtime import TaskEngine
 def add_parser(sub):
     parser=sub.add_parser('task',help='run, inspect and resume interactive skill workflows')
     commands=parser.add_subparsers(dest='task_command',required=True)
-    create=commands.add_parser('create');create.add_argument('kind',choices=['skill','extraction','evaluation','skill_evolution'])
+    create=commands.add_parser('create');create.add_argument('kind',choices=['skill','extraction','evaluation','retrieval_evaluation','skill_evolution'])
     create.add_argument('--goal',required=True);create.add_argument('--language',choices=['zh','en'],default='zh')
     create.add_argument('--inputs',default='{}',help='JSON inputs or @path.json')
     commands.add_parser('list')

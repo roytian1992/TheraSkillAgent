@@ -13,6 +13,56 @@ class Operation(BaseModel):
     parameters: dict = Field(default_factory=dict)
 
 
+class ProviderCheck(BaseModel):
+    kind: str
+
+
+@router.get('/readiness')
+def readiness():
+    from .provider_smoke import check_provider
+    from .resources import active_index
+    from .skill_readiness import check_skill
+    from .skills import SkillManager
+    from domains.theraskill.runtime import simulation_root
+    from .source_adapters import text_policy
+    checks={}
+    for kind in ['llm','embedding']:
+        try:checks[kind]=check_provider(kind)
+        except (ValueError,OSError) as exc:checks[kind]={'status':'error','error':str(exc)}
+    try:
+        selected=active_index()
+        checks['index']={'ready':bool(selected),'id':selected[1]['index_id'] if selected else None}
+    except (ValueError,OSError) as exc:checks['index']={'ready':False,'error':str(exc)}
+    checks['simulation']={'ready':(simulation_root()/'scenarios/scenario_registry.jsonl').is_file()}
+    checks['skills']=[check_skill(s.name) for s in SkillManager().list_skills()]
+    checks['text_policy']=text_policy()
+    return checks
+
+
+@router.post('/providers/check')
+def provider_check(body:ProviderCheck):
+    from .provider_smoke import check_provider
+    try:return check_provider(body.kind,live=True)
+    except ValueError as exc:raise HTTPException(422,str(exc)) from None
+
+
+@router.post('/upload-package',status_code=202)
+async def upload_package(request:Request):
+    path=data_root()/'imports'/(uuid.uuid4().hex+'.zip')
+    path.parent.mkdir(parents=True,exist_ok=True)
+    size=0
+    try:
+        with path.open('xb') as output:
+            async for chunk in request.stream():
+                size+=len(chunk)
+                if size>16*1024**3:raise HTTPException(413,'Resource ZIP upload limit is 16 GiB; use the CLI for larger files')
+                output.write(chunk)
+        return resource_jobs.submit_job('install',{'archive':str(path)})
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+
 @router.get('')
 def list_resources():
     return {**resources.list_resources(), 'jobs': resource_jobs.list_jobs()}
@@ -71,6 +121,9 @@ async def upload(request: Request):
         # Do not block the event loop during JSONL validation.
         from starlette.concurrency import run_in_threadpool
         plan = await run_in_threadpool(plan_index, path)
+        from .indexing.common import write_json
+        write_json(path.with_suffix('.manifest.json'),{'path':str(path),'id':path.stem,
+            'manifest':{'knowledge_sha256':plan['knowledge_sha256'],'counts':plan['counts']}})
         return {'knowledge': str(path), 'plan': plan}
     except ValueError as exc:
         path.unlink(missing_ok=True)

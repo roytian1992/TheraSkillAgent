@@ -70,6 +70,17 @@ SKILL_KNOWLEDGE_ROUTES: dict[str, dict[str, Any]] = {
     },
 }
 
+# Minimum evidence coverage for each business purpose. Explicit user filters
+# remain hard constraints; unavailable families are reported, never invented.
+MINIMUM_EVIDENCE_FAMILIES = {
+    'emotional-support': ['therapy_process', 'style_response'],
+    'risk-triage': ['clinical_risk_assessment'],
+    'cognitive-reframing-support': ['method_rubric', 'qa_psychoeducation'],
+    'rebt-belief-work-support': ['method_rubric'],
+    'synthetic-dialogue-builder': ['synthetic_construction', 'therapy_process'],
+    'therapy-response-reviewer': ['therapy_process', 'method_rubric'],
+}
+
 _FILTER_ALIASES = {
     "family": "dedup_family",
     "families": "dedup_family",

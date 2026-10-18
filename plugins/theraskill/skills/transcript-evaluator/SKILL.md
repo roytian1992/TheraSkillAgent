@@ -1,7 +1,11 @@
 ---
 name: transcript-evaluator
-description: Coordinate evidence-grounded risk, therapeutic-process and dialogue-quality evaluation for normalized transcripts.
+description: Coordinate evidence-grounded risk, therapeutic-process and dialogue-quality
+  evaluation for normalized transcripts.
 version: 0.1.0
+runtime:
+  required_tools:
+  - theraskill_transcript
 ---
 
 # Transcript Evaluator

@@ -1,6 +1,9 @@
 ---
 name: knowledge-index-manager
 description: 导入独立知识包，规划和构建可配置的检索索引，并验证、启用和回滚。
+runtime:
+  required_tools:
+  - theraskill_resources
 ---
 
 # Knowledge Index Manager

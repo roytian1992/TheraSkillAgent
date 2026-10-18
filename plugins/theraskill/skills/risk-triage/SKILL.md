@@ -1,6 +1,10 @@
 ---
 name: risk-triage
-description: "识别自伤、自杀、危险和严重危机边界，执行谨慎的非诊断性分流。"
+description: 识别自伤、自杀、危险和严重危机边界，执行谨慎的非诊断性分流。
+runtime:
+  required_tools:
+  - theraskill_context
+  - theraskill_knowledge_search
 ---
 
 # Risk Triage

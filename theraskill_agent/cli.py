@@ -105,6 +105,8 @@ def build_parser() -> argparse.ArgumentParser:
     skill_sub.add_parser("lock", help="show the local skill lock snapshot")
     rollback = skill_sub.add_parser("rollback", help="restore the latest backup of a user skill")
     rollback.add_argument("target")
+    readiness = skill_sub.add_parser('check', help='check tools and dependencies before running a skill')
+    readiness.add_argument('target')
 
     text = sub.add_parser("text", help="deterministic text processing")
     text_sub = text.add_subparsers(dest="text_command", required=True)
@@ -233,6 +235,9 @@ def main(argv: list[str] | None = None) -> int:
                 _json(manager.lock_snapshot())
             elif args.skill_command == "rollback":
                 _json(manager.rollback(args.target).to_dict())
+            elif args.skill_command == 'check':
+                from .skill_readiness import check_skill
+                _json(check_skill(args.target, manager=manager))
             return 0
         if args.command == "text":
             value = _read_input(args.path)

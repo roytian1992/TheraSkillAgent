@@ -13,17 +13,17 @@ knowledge releases are kept outside the source repository.
 
 [中文说明](README.zh.md) · [English deployment guide](docs/deployment.en.md) ·
 [中文部署说明](docs/deployment.zh.md) · [Workflow guide](docs/workflows.en.md) ·
-[Changelog](CHANGELOG.md)
+[Resource ZIP installation](docs/resource_installation.en.md) · [Changelog](CHANGELOG.md)
 
 ## What it provides
 
 | Workflow | Main capabilities |
 | --- | --- |
-| Transcript workbench | Ingest TXT/JSON/CSV/Markdown or pasted text, normalize turns, inspect speaker roles, analyze risk signals, run skill reviews, and package evidence-preserving artifacts. |
+| Transcript workbench | Ingest TXT/JSON/CSV/Markdown/SRT/VTT or pasted text, normalize turns, inspect speaker roles, analyze risk signals, run skill reviews, and package evidence-preserving artifacts. |
 | Interactive extraction | Inspect sources, propose and edit schemas, confirm sample/full runs, hand off to governance, and build and activate reviewed knowledge versions. |
 | Knowledge and retrieval | Accept compatible JSONL, build portable lexical or hybrid indexes, verify checksums, search, activate, roll back, and package resources. |
 | Skills and agent tasks | Model-directed tools, interactive questions and approvals, durable checkpoints, retries/cancellation, local skill installation, evolution drafts and rollback. |
-| Behavioral evaluation | Execute fixed bilingual cases with real retrieval and models; inspect citations, score explanations, baseline comparisons and human-reviewed version gates. |
+| Behavioral evaluation | Run the production task engine on 12 editable bilingual cases, including tool calls and clarification; inspect citations, score explanations, baseline comparisons and human-reviewed version gates. |
 | Courses and progress | Define objectives, assign approved scenarios, link real practice and debriefs, record instructor reviews and track observations across attempts. |
 | Practice and review | Run support, simulation, expert review, contribution, and extraction services from the same workbench and skill/tool surface. |
 
@@ -80,6 +80,17 @@ theraskill-agent ui
 Open <http://127.0.0.1:5176/>. A wheel installation already contains built
 interfaces and does not require Node. See [Deployment](docs/deployment.en.md)
 for installation, startup, checks, and upgrades.
+
+## Install the full resources
+
+The maintainer supplies **TheraSkillAgent-resources-phase6-20261019.zip** separately.
+It includes a 0.5.0 application wheel, allowing installation without Node.
+Extract that outer ZIP, follow its README, then install the two inner resource packages using its local catalog.
+The resource folder includes checksums and provenance; it contains 2,196,286 knowledge
+records and simulation assets, without model weights or prebuilt vector indexes.
+See the [step-by-step resource installation guide](docs/resource_installation.en.md)
+for CLI commands, browser uploads, disk requirements and building your own index.
+No public download link is published yet.
 
 ## Configure models directly
 
@@ -161,6 +172,11 @@ and provider latency can still be slow; see the
 [retrieval validation record (Chinese)](docs/retrieval_optimization_20261018.zh.md)
 for measured cases and limits.
 
+The evaluation workspace also tests the production retrieval pipeline with 13
+editable cases, concurrency controls and optional human relevance judgments.
+Unjudged Recall/nDCG remain unavailable. Known gaps, including the lack of English
+synthetic-construction records, are reported without relaxing explicit filters.
+
 ## Transcript and task examples
 
 ```bash
@@ -174,7 +190,7 @@ theraskill-agent transcript analyze dialogue.txt
 theraskill-agent transcript review dialogue.txt --mode plan \
   --skill transcript-quality-reviewer
 theraskill-agent transcript review dialogue.txt --mode model \
-  --skill transcript-quality-reviewer --max-turns 200
+  --skill transcript-quality-reviewer
 ```
 
 The browser workbench exposes the same operations and provides approval points
@@ -189,9 +205,9 @@ synthetic examples. Full extracted knowledge, prebuilt indexes, persona and
 scenario collections, model weights, raw research data, credentials, sessions,
 logs, and runtime state are separate resources.
 
-`releases/catalog.json` records whether optional packages are available. The
-current source distribution does not publish the full knowledge or simulation
-collections. Do not treat the demo records as clinical guidance or a validated
+`releases/catalog.json` records whether public downloads are available. Full
+knowledge and simulation collections are supplied in separate ZIPs for manual
+distribution; their local catalog supports installation without a public URL. Do not treat the demo records as clinical guidance or a validated
 knowledge base.
 
 Useful references:

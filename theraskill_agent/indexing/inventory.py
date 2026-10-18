@@ -31,6 +31,9 @@ def index_fingerprint(db):
 def save_inventory(db, values, destination):
     write_json(destination, {'schema_version': 1, 'index': index_fingerprint(db),
                              'portable_signature': portable_signature(db),
+                             'portable_signatures':{name:portable_signature(Path(db).parent/name)
+                                 for name in ['phase6_retrieval_fts.sqlite','metadata_v2.sqlite']
+                                 if (Path(db).parent/name).is_file()},
                              'values': {key: sorted(values[key]) for key in COLUMNS}})
 
 
@@ -55,7 +58,9 @@ def load_inventory(db, *, cache_path=None, trace=None):
         if key in _CACHE:
             report('memory')
             return {k: set(v) for k, v in _CACHE[key].items()}
-        for path in (db.parent / 'metadata_inventory.json', cache_path):
+        from ..paths import data_root
+        shared_cache=data_root()/'cache/metadata-inventories'/(key+'.json')
+        for path in (db.parent / 'metadata_inventory.json', shared_cache, cache_path):
             if not path:
                 continue
             try:
@@ -65,7 +70,8 @@ def load_inventory(db, *, cache_path=None, trace=None):
                 valid_index = record.get('index') == fingerprint
                 if bundled and record.get('portable_signature'):
                     current = portable_signature(db)
-                    valid_index = not current['wal_bytes'] and record['portable_signature'] == current
+                    expected=record.get('portable_signatures',{}).get(db.name,record['portable_signature'])
+                    valid_index = not current['wal_bytes'] and expected == current
                 if record.get('schema_version') != 1 or not valid_index:
                     continue
                 if set(values) != set(COLUMNS) or any(not isinstance(v, list) or any(not isinstance(x, str) for x in v) for v in values.values()):
@@ -80,14 +86,17 @@ def load_inventory(db, *, cache_path=None, trace=None):
             # One streaming pass replaces five full scans of the large metadata
             # table. DISTINCT keeps repeated combinations inside SQLite.
             with closing(sqlite3.connect(f'{db.as_uri()}?mode=ro', uri=True)) as con:
-                for row in con.execute(f"SELECT DISTINCT {','.join(COLUMNS)} FROM retrieval_meta"):
+                tables={row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                table='retrieval_meta' if 'retrieval_meta' in tables else 'metadata_v2'
+                for row in con.execute(f"SELECT DISTINCT {','.join(COLUMNS)} FROM {table}"):
                     for column, value in zip(COLUMNS, row):
                         if value is not None:
                             inventory[column].add(str(value))
             report('database')
-            if cache_path and index_fingerprint(db) == fingerprint:
+            if index_fingerprint(db) == fingerprint:
                 try:
-                    save_inventory(db, inventory, cache_path)
+                    save_inventory(db, inventory, shared_cache)
+                    if cache_path:save_inventory(db, inventory, cache_path)
                 except OSError:
                     pass  # Read-only cache storage must not prevent retrieval.
         if len(_CACHE) >= 8:

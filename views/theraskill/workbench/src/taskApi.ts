@@ -1,5 +1,5 @@
-export async function api(path: string, body?: any) {
-  const response = await fetch(path, body === undefined ? {} : {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+export async function api(path: string, body?: any, headers: Record<string,string> = {}) {
+  const response = await fetch(path, body === undefined ? {headers} : {method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body)})
   const value = await response.json()
   if (!response.ok) throw new Error(typeof value.detail === 'string' ? value.detail : JSON.stringify(value.detail || value))
   return value

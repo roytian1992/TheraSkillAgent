@@ -189,3 +189,5 @@ cancel/resume, package installation, verification, query tests, activation and
 rollback through the existing `/api/resources` service. No additional port is
 needed. Large sources can be supplied by local path. The `theraskill_resources`
 tool and `knowledge-index-manager` skill use the same job implementation.
+
+Simulation assets can also be packaged with `knowledge pack --kind simulation`; a `.zip` output uses ZIP64. See [Resource installation](resource_installation.en.md). Workbench search uses production retrieval; CLI `index search --runtime` selects that same path. Default CLI search remains a model-free index diagnostic. Required-family anchors survive final result selection, and missing families remain explicit warnings without violating source filters.

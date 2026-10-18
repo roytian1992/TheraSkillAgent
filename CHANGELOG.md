@@ -1,6 +1,36 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-10-19
+
+- Behavioral evaluation now drives the production TaskEngine, tools, saved states
+  and clarification turns. Twelve bilingual cases check all required evidence
+  families and preserve actual traces; runtime changes invalidate old approvals.
+- Long TXT/Markdown/SRT/VTT extraction preserves raw offsets and configurable
+  overlap. Source samples span the file, and review windows cover all turns by
+  default with explicit coverage and failure reports.
+- Production retrieval evaluation adds 13 editable cases, concurrency and repeat
+  controls, warnings, latency measurements and optional human relevance judgments.
+  Required-family evidence survives final selection, selective scope statistics
+  avoid broad metadata scans, and CJK exact matches survive fallback timeouts.
+- The UI adds readiness checks, live connection tests, resource/report selectors,
+  visual schema/case editors, skill ZIP preflight and resource ZIP installation.
+- Skills declare runtime tools/dependencies. Missing requirements stop before a
+  model call; approved Python scripts have contained paths and complete output
+  logs. Context-budget pauses preserve history and can resume with a larger budget.
+- Separate knowledge and simulation ZIP64 packages include integrity inventories,
+  source provenance and bilingual installation instructions. The manual user kit
+  also includes an application wheel, so users do not need Node. Public download
+  URLs remain unpublished until the maintainer uploads the resources.
+
+Validation: clean source **230 passed, 6 skipped** (separate simulation material),
+four frontends built, and an isolated base wheel smoke passed. Real configured
+models completed 12/12 behavior cases and 13/13 retrieval engineering checks.
+The retrieval sample used concurrency 2: P50 12.00 s, P95 21.32 s; 8 requests
+reported warnings, including broad CJK lexical budget limits and known data gaps.
+These checks do not establish expert relevance or clinical validity. See the
+[upgrade record](docs/upgrade_20261019.zh.md).
+
+## 0.4.0
 
 ### Workflows
 

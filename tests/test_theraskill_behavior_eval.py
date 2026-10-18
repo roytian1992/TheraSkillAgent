@@ -49,7 +49,7 @@ def test_invalid_citations_are_failed_even_with_positive_judge(monkeypatch):
     def model(system,payload):
         if 'scores' in system:
             return {'scores':{k:5 for k in ['relevance','grounding','task_completion','language','boundary']},'reasons':{k:'fixture' for k in ['relevance','grounding','task_completion','language','boundary']}},{'fixture':True}
-        return {'answer':'Example response','evidence_ids':['fabricated'],'limitations':[]},{'fixture':True}
+        return {'action':'finish','result':{'answer':'Example response','evidence_ids':['fabricated'],'limitations':[]}},{'fixture':True}
     result=b.evaluate_case(b.load_suite()['cases'][0],None,call_model=model)
     assert not result['checks']['valid_citations']
 

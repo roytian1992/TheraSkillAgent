@@ -1,6 +1,10 @@
 ---
 name: synthetic-dialogue-builder
-description: "基于框架、角色、阶段和构建知识生成标注清晰的合成咨询对话。"
+description: 基于框架、角色、阶段和构建知识生成标注清晰的合成咨询对话。
+runtime:
+  required_tools:
+  - theraskill_context
+  - theraskill_knowledge_search
 ---
 
 # Synthetic Dialogue Builder

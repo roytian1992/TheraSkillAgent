@@ -126,6 +126,7 @@ def _lexical(source, output, mapping, progress, cancel):
         metadata.create_indexes(meta)
         labels.create_indexes(label)
         for connection in (db, english, meta, label):
+            connection.execute('ANALYZE')
             connection.commit()
             connection.execute('PRAGMA wal_checkpoint(TRUNCATE)')
             connection.execute('PRAGMA journal_mode=DELETE')

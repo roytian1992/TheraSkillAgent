@@ -1,7 +1,11 @@
 ---
 name: transcript-quality-reviewer
-description: Review transcript structure, speaker attribution, ASR noise and evidence quality before downstream analysis.
+description: Review transcript structure, speaker attribution, ASR noise and evidence
+  quality before downstream analysis.
 version: 0.1.0
+runtime:
+  required_tools:
+  - theraskill_transcript
 ---
 
 # Transcript Quality Reviewer

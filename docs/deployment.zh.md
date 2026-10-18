@@ -7,7 +7,7 @@ Linux / Python 3.11+。本地开发源码需要 Node 22.12+ 来构建四个界�
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install /path/to/theraskill_agent-0.4.0-py3-none-any.whl
+pip install /path/to/theraskill_agent-0.5.0-py3-none-any.whl
 theraskill-agent project init ~/TheraSkillAgent
 theraskill-agent status
 theraskill-agent run extraction.plan --goal 'Extract response strategies grounded in source quotations'
@@ -121,3 +121,11 @@ llm:
 ## 部署简化验收
 
 单进程合并、公共模型恢复、独立安装检查及真实浏览器结果见[部署简化验收记录](deployment_simplification_20261018.zh.md)。
+
+## 完整资源 ZIP 与首页检查
+
+完整知识和情景素材的安装见[资源安装说明](resource_installation.zh.md)。资源包使用 ZIP64、逐文件大小与 SHA-256 校验；界面可上传内层资源 ZIP，也可使用包旁的本地 catalog 安装。首次安装情景素材后重启应用；现有索引不会被自动替换。
+
+首页“使用准备”显示配置、模型真实连接测试、活动索引、素材和技能依赖状态。配置检查不请求模型；点击连接测试才发起真实调用。内置 12 个技能均声明运行工具要求；第三方技能缺少工具或依赖时会在调用模型前报告。
+
+`configs/theraskill/text.yaml` 配置抽取分段（默认 6000 字符、重叠 300）及 review 窗口。原文拼写和位置保留，规划样本覆盖文件首尾；默认 review 覆盖全部轮次，显式 `--max-turns` 才代表抽样。长 Agent 任务超过上下文预算时暂停并允许调整预算，不静默丢弃历史。

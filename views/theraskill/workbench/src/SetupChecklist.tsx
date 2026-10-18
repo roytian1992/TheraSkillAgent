@@ -1,0 +1,10 @@
+import {useEffect,useState} from 'react'
+import {api} from './taskApi'
+export default function SetupChecklist({locale}:{locale:'zh'|'en'}) {
+  const t=(zh:string,en:string)=>locale==='zh'?zh:en
+  const [data,setData]=useState<any>(null),[error,setError]=useState(''),[live,setLive]=useState<any>({}),[busy,setBusy]=useState('')
+  const refresh=()=>api('/api/resources/readiness').then(setData).catch(e=>setError(String(e)))
+  useEffect(()=>{void refresh()},[])
+  const test=async(kind:string)=>{setBusy(kind);try{setLive((old:any)=>({...old,[kind]:{status:'checking'}}));const r=await api('/api/resources/providers/check',{kind});setLive((old:any)=>({...old,[kind]:r}))}catch(e){setError(String(e))}finally{setBusy('')}}
+  return <section className="panel setup-checklist"><h2>{t('使用准备','Getting ready')}</h2><p>{t('先检查连接与素材，再开始任务。配置检查不会发送模型请求。','Check connections and resources before starting. Configuration checks make no model requests.')}</p>{error&&<p role="alert">{error}</p>}{data&&<><div className="resource-grid">{['llm','embedding'].map(kind=><article key={kind}><h3>{kind==='llm'?'LLM':'Embedding'}</h3><p>{data[kind]?.model||t('尚未配置','Not configured')}</p><p>{t('配置状态','Configuration')}: {data[kind]?.status}</p><button disabled={!!busy} onClick={()=>void test(kind)}>{busy===kind?t('检测中…','Checking…'):t('测试实际连接','Test connection')}</button><p role="status">{live[kind]?.status} {live[kind]?.error}</p></article>)}<article><h3>{t('知识索引','Knowledge index')}</h3><p>{data.index.ready?data.index.id:t('尚未启用索引','No active index')}</p><a href="/?workspace=knowledge">{t('安装资源并构建索引','Install resources and build an index')}</a></article><article><h3>{t('情景素材','Simulation assets')}</h3><p>{data.simulation.ready?t('已就绪','Ready'):t('请安装情景资源 ZIP 后重启应用','Install the simulation ZIP and restart the app')}</p><p>{data.skills.filter((s:any)=>s.ready).length}/{data.skills.length} {t('个技能通过运行检查','skills ready')}</p></article></div><p>{t('抽取分段','Extraction segments')}: {data.text_policy.max_chars} {t('字符，重叠','characters, overlap')} {data.text_policy.overlap}</p><button onClick={()=>void refresh()}>{t('重新检查','Refresh checks')}</button></>}</section>
+}

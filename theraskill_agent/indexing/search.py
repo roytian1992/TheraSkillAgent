@@ -247,6 +247,20 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
         # probing the full CJK corpus would defeat the language partition and
         # can dominate latency on a network-mounted index.
         if indexed_cjk and 'retrieval_cjk_fts' in tables and not english_partition:
+            # Keep a selective, fully indexed page before a broad OR scan.
+            # The OR channel still runs, but its timeout no longer discards
+            # completed precise matches. No source text or metadata filter is
+            # relaxed to fill an empty channel.
+            precise_terms = list(dict.fromkeys(sorted(indexed_cjk, key=len, reverse=True)))[:4]
+            precise_rows = []
+            if len(precise_terms) > 1:
+                precise_match = ' AND '.join('"'+term.replace('"',' ')+'"' for term in precise_terms)
+                precise_rows = recall('''SELECT rowid,retrieval_id,bm25(retrieval_cjk_fts) AS score
+                    FROM retrieval_cjk_fts WHERE retrieval_cjk_fts MATCH ? ORDER BY rank LIMIT ?''',
+                    (precise_match, limit))
+                if trace is not None:
+                    trace['precise_query'] = precise_match
+                    trace['precise_matches'] = len(precise_rows)
             # Our builder inserts both FTS tables in the same source order.
             # retrieval_id is UNINDEXED in FTS: joining by it alone can turn
             # every Chinese match into a scan of the entire text corpus.
@@ -257,6 +271,8 @@ def lexical_candidates(db_path: str | Path, understanding: dict[str, Any], limit
             cjk_rows = recall('''SELECT rowid,retrieval_id,bm25(retrieval_cjk_fts) AS score
                 FROM retrieval_cjk_fts WHERE retrieval_cjk_fts MATCH ? ORDER BY rank LIMIT ?''',
                 (_match(indexed_cjk), limit))
+            combined = {row['retrieval_id']:row for row in [*precise_rows,*cjk_rows]}
+            cjk_rows = list(combined.values())
             rows = []
             ids = [row['retrieval_id'] for row in cjk_rows]
             metadata = {}

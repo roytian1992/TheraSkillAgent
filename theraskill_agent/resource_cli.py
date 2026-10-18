@@ -23,6 +23,7 @@ def add_commands(sub):
     verify.add_argument('--scratch-directory', dest='scratch_root', help='optional fast temporary storage for full SQLite verification')
     search = commands.add_parser('search'); search.add_argument('--index', required=True); search.add_argument('--query', required=True)
     search.add_argument('--limit', type=int, default=8)
+    search.add_argument('--runtime',action='store_true',help='use the production skill retrieval pipeline with real model planning')
     search.add_argument('--skill', choices=SUPPORTED_RETRIEVAL_SKILLS)
     search.add_argument('--filters', help='JSON object of knowledge filters, for example {"language":"zh"}')
     understand = commands.add_parser('understand', help='inspect query understanding without a model or index')
@@ -40,7 +41,7 @@ def add_commands(sub):
     activate.add_argument('--behavior-report', help='reviewed behavior comparison report ID; required when changing an existing selection')
     activate.add_argument('--scratch-directory', dest='scratch_root', help='optional fast temporary storage for full SQLite verification')
     pack = commands.add_parser('pack'); pack.add_argument('--source', required=True); pack.add_argument('--output', required=True)
-    pack.add_argument('--id', required=True); pack.add_argument('--kind', choices=['knowledge', 'index'], required=True)
+    pack.add_argument('--id', required=True); pack.add_argument('--kind', choices=['knowledge', 'index', 'simulation'], required=True)
     pack.add_argument('--license'); pack.add_argument('--part-bytes', type=int)
 
 
@@ -65,6 +66,10 @@ def run_command(args):
         filters = json.loads(args.filters) if args.filters else None
         if action == 'understand':
             return understand_query(args.query, skill=args.skill, filters=filters)
+        if args.runtime:
+            from .resource_jobs import run_operation
+            return run_operation('search',{'index':args.index,'query':args.query,'skill':args.skill,
+                'filters':filters,'limit':args.limit,'production':True})
         return retrieve_index(resources.index_path(args.index), args.query, limit=args.limit, skill=args.skill, filters=filters)
     action = args.knowledge_command
     if action == 'list':

@@ -1,6 +1,10 @@
 ---
 name: therapy-response-reviewer
-description: "审查咨询式回应的阶段适配、策略质量、边界和证据一致性。"
+description: 审查咨询式回应的阶段适配、策略质量、边界和证据一致性。
+runtime:
+  required_tools:
+  - theraskill_context
+  - theraskill_knowledge_search
 ---
 
 # Therapy Response Reviewer

@@ -16,6 +16,15 @@ def runtime_root() -> Path:
     return data_root()
 
 
+def simulation_root() -> Path:
+    import json
+    from theraskill_agent.indexing.common import safe_path
+    selection = data_root() / 'active-simulation.json'
+    if selection.is_file():
+        return safe_path(data_root(), json.loads(selection.read_text(encoding='utf-8'))['path'])
+    return data_root() / 'current/simulation'
+
+
 def service_runtime_root(service: str) -> Path:
     root = state_root() / "services" / service
     root.mkdir(parents=True, exist_ok=True)

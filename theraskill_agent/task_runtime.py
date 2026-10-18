@@ -48,7 +48,7 @@ class TaskEngine:
         self.pool.shutdown(wait=False,cancel_futures=True)
 
     def create(self, kind, goal, language='zh', inputs=None):
-        if kind not in {'skill','extraction','evaluation','skill_evolution'}:
+        if kind not in {'skill','extraction','evaluation','retrieval_evaluation','skill_evolution'}:
             raise ValueError('Unknown task kind')
         if not goal.strip():
             raise ValueError('Task goal is required')
@@ -150,6 +150,11 @@ class TaskEngine:
                         cp['pending_tool']['approved']=True
                     t['stage']='skill'
                 elif stage=='skill_question':
+                    if t.get('interaction',{}).get('value',{}).get('budget_pause'):
+                        budget=int(values.get('max_context_chars',0))
+                        if budget<=int(t['inputs'].get('max_context_chars',160000)) or budget>2000000:
+                            raise ValueError('Provide a larger context budget, up to 2000000 characters')
+                        t['inputs']['max_context_chars']=budget
                     cp.setdefault('skill_history',[]).append({'user_response':values})
                     t['stage']='skill'
                 else:
@@ -199,6 +204,13 @@ class TaskEngine:
 
     def _step(self,t):
         cp=t['checkpoints']
+        if t['kind']=='retrieval_evaluation':
+            from .retrieval_eval import run_retrieval_suite
+            result=run_retrieval_suite(t['inputs'],run_id=t['id']+'_attempt_'+str(t['attempt']),
+                checkpoint=lambda key,val:self._evaluation_checkpoint(t['id'],key,val),
+                cancelled=lambda:self.store.get(t['id'])['status']=='cancelled')
+            t=self.store.get(t['id']);t=self._checkpoint(t,'result',result)
+            t['status']='completed';return self.store.save(t)
         if t['kind']=='skill_evolution':
             from .skills import SkillManager, _set_frontmatter_name
             from .skill_execution import model_json
@@ -233,7 +245,7 @@ class TaskEngine:
                 cp.pop('pending_tool',None)
                 t=self.store.save(t);self.store.event(t['id'],'tool_result',{'tool':decision['tool'],'result':result})
                 return t
-            if sum(1 for item in cp.get('skill_history',[]) if 'model' in item)>=int(t['inputs'].get('max_steps',24)):
+            if sum(1 for item in cp.get('skill_history',[]) if 'model' in item and not item.get('provenance',{}).get('budget_pause'))>=int(t['inputs'].get('max_steps',24)):
                 raise ValueError('Configured skill step budget reached; inspect the timeline before creating a follow-up task')
             step=self.skill_step(t)
             if 'selection' in step:
@@ -348,6 +360,10 @@ class TaskEngine:
             with self.lock:
                 t=self.store.get(task_id)
                 if t['status']!='cancelled':
+                    from .skill_execution import SkillOutputError
+                    if isinstance(exc,SkillOutputError):
+                        t['checkpoints']['rejected_model_output']={'output':exc.output,'provenance':exc.provenance}
+                        self.store.event(task_id,'model_validation_error',t['checkpoints']['rejected_model_output'])
                     t.update(status='failed',error=redact_secrets(f'{type(exc).__name__}: {exc}'))
                     self.store.save(t);self.store.event(task_id,'failed',{'error':t['error'],'stage':t['stage']})
         finally:

@@ -10,23 +10,29 @@ TheraSkillAgent 是一个面向治疗文本和知识流程的本地 skill-based 
 
 [English README](README.md) · [English deployment guide](docs/deployment.en.md) ·
 [中文部署说明](docs/deployment.zh.md) · [工作流使用说明](docs/workflows.zh.md) ·
-[更新记录](CHANGELOG.md)
+[资源 ZIP 安装](docs/resource_installation.zh.md) · [更新记录](CHANGELOG.md)
 
 ## 能做什么
 
 | 工作流 | 能力 |
 | --- | --- |
-| 对话工作台 | 导入 TXT/JSON/CSV/Markdown 或粘贴文本，整理轮次和说话人，分析风险信号，执行多 skill review，打包保留证据链的结果。 |
+| 对话工作台 | 导入 TXT/JSON/CSV/Markdown/SRT/VTT 或粘贴文本，整理轮次和说话人，分析风险信号，执行多 skill review，打包保留证据链的结果。 |
 | 交互式抽取 | 检查来源，按目标建议和编辑 schema，确认试抽/全量，交接治理，构建并启用经过审核的知识版本。 |
 | 知识与检索 | 接收合格 JSONL，构建词法或 hybrid 索引，校验清单，检索、启用、回滚和打包资源。 |
 | Skill 与任务 | 模型驱动工具调用、交互提问与确认、持久检查点、重试/取消，以及技能安装、优化草稿和回滚。 |
-| 效果回归 | 真实检索与模型执行固定中英文案例，查看引用、评分解释、基线对比及人工复核的版本门禁。 |
+| 效果回归 | 生产 TaskEngine 实际执行 12 个可编辑中英文案例，保留工具与交互轨迹、引用、评分、基线对比和人工门禁。 |
 | 课程与进展 | 定义目标、分配已审核场景、关联真实练习与复盘，记录教师复核并查看历次观察。 |
 | 训练与审核 | 从同一个工作台启动支持、情景模拟、专家审核、贡献和抽取服务。 |
 
 界面由项目自身提供：主工作台、支持、模拟、专家页面与六个业务模块共用
 一个进程、一个网页端口，启动时无需分别管理领域服务。各工作区支持中英文
 切换，原文和证据引文保持原样。
+
+## 安装完整知识和情景资源
+
+维护者另外提供 **TheraSkillAgent-resources-phase6-20261019.zip**。内附 0.5.0 安装 wheel，无需 Node。先解压外层交付包，再按包内 README / 本地 catalog 安装两个内层资源 ZIP。包内包括 **2,196,286 条知识发布记录与情景素材**，附清单、SHA-256 和来源说明；不包含模型权重或预构建向量索引。
+
+完整命令、界面上传方式、空间需求和索引构建见[资源安装说明](docs/resource_installation.zh.md)。当前尚无公共下载链接，由维护者手动提供。
 
 ## 从原始对话到可复用知识
 
@@ -159,7 +165,7 @@ theraskill-agent transcript analyze dialogue.txt
 theraskill-agent transcript review dialogue.txt --mode plan \
   --skill transcript-quality-reviewer
 theraskill-agent transcript review dialogue.txt --mode model \
-  --skill transcript-quality-reviewer --max-turns 200
+  --skill transcript-quality-reviewer
 ```
 
 CLI、界面和 skill/tool 调用共用相同的任务和结果契约，
@@ -172,7 +178,7 @@ CLI、界面和 skill/tool 调用共用相同的任务和结果契约，
 情景素材、模型权重、原始研究数据、密钥、会话、日志和运行状态均作为独立
 资源管理。
 
-`releases/catalog.json` 记录可下载资源的发布状态。目前完整知识和模拟素材
+`releases/catalog.json` 记录可下载资源的发布状态。完整知识和模拟素材
 没有公开下载地址；示例数据不代表临床指南或经过验证的知识库。
 
 参考文档：

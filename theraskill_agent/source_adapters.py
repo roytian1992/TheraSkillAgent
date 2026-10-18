@@ -14,7 +14,37 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator, Protocol, runtime_checkable
 
 
-SUPPORTED_SUFFIXES = {".json", ".jsonl", ".ndjson", ".csv", ".tsv", ".txt", ".md", ".markdown"}
+SUPPORTED_SUFFIXES = {".json", ".jsonl", ".ndjson", ".csv", ".tsv", ".txt", ".md", ".markdown", ".srt", ".vtt"}
+
+
+def text_policy() -> dict:
+    """A visible, configurable policy; offsets always refer to untouched UTF-8 text."""
+    from .paths import resource_path
+    import yaml
+    path = resource_path('configs/theraskill/text.yaml')
+    policy = {'max_chars': 6000, 'overlap': 300}
+    if path.is_file():
+        policy.update((yaml.safe_load(path.read_text(encoding='utf-8')) or {}).get('extraction', {}))
+    maximum, overlap = int(policy['max_chars']), int(policy['overlap'])
+    if maximum < 256 or overlap < 0 or overlap >= maximum // 2:
+        raise ValueError('Text policy requires max_chars >= 256 and 0 <= overlap < max_chars / 2')
+    return {'max_chars': maximum, 'overlap': overlap, 'version': 'raw_offsets_v1',
+            'sampling': 'evenly_spaced_including_first_and_last'}
+
+
+def raw_windows(text: str, max_chars: int, overlap: int):
+    """Prefer paragraph/turn boundaries, retain every character and exact offsets."""
+    start = 0
+    while start < len(text):
+        end = min(start + max_chars, len(text))
+        if end < len(text):
+            boundary = text.rfind('\n', start + max_chars // 2, end)
+            if boundary >= 0:
+                end = boundary + 1
+        yield start, end, text[start:end]
+        if end == len(text):
+            return
+        start = max(start + 1, end - overlap)
 
 
 @dataclass(frozen=True)
@@ -90,7 +120,9 @@ class SourceAdapter:
         raise NotImplementedError
 
     def fingerprint(self, path: Path) -> str:
-        return _fingerprint(path)
+        # Resuming with different chunk boundaries would mix extraction units.
+        policy = json.dumps(text_policy(), sort_keys=True)
+        return hashlib.sha256((_fingerprint(path) + policy).encode()).hexdigest()
 
     def inspect(self, path: Path) -> SourceInfo:
         count = sum(1 for _ in self.iter_records(path))
@@ -101,11 +133,17 @@ class SourceAdapter:
             self.fingerprint(path),
             count,
             _size(path),
-            {"is_directory": path.is_dir()},
+            {"is_directory": path.is_dir(), "text_policy": text_policy(),
+             "sample_policy": "evenly_spaced_including_first_and_last"},
         )
 
     def sample(self, path: Path, limit: int = 5) -> list[SourceRecord]:
-        return list(_take(self.iter_records(path), max(0, limit)))
+        limit = max(0, min(int(limit), 100))
+        if not limit:
+            return []
+        count = sum(1 for _ in self.iter_records(path))
+        indices = {round(i * (count - 1) / (limit - 1)) for i in range(limit)} if limit > 1 and count else {0}
+        return [record for index, record in enumerate(self.iter_records(path)) if index in indices]
 
 
 class JsonAdapter(SourceAdapter):
@@ -145,10 +183,32 @@ class TextAdapter(SourceAdapter):
     name = "text"
 
     def can_handle(self, path: Path) -> bool:
-        return path.is_file() and path.suffix.lower() in {".txt", ".md", ".markdown"}
+        return path.is_file() and path.suffix.lower() in {".txt", ".md", ".markdown", ".srt", ".vtt"}
 
     def iter_records(self, path: Path) -> Iterator[SourceRecord]:
-        yield SourceRecord(path.name, path.read_text(encoding="utf-8"), str(path), {"format": _format(path)})
+        # newline='' preserves CRLF, so source offsets are auditable as Python
+        # character offsets into the original decoded file, not normalized text.
+        policy = text_policy()
+        maximum, overlap = policy['max_chars'], policy['overlap']
+        with path.open(encoding='utf-8', newline='') as handle:
+            buffer = handle.read(maximum+1)
+            start, index, line = 0, 0, 1
+            while buffer:
+                final = len(buffer)<=maximum
+                end = min(len(buffer),maximum)
+                if not final:
+                    boundary=buffer.rfind('\n',maximum//2,end)
+                    if boundary>=0:end=boundary+1
+                value=buffer[:end]
+                rid=path.name if final and start==0 else f'{path.name}:chars:{start}:{start+end}'
+                yield SourceRecord(rid,value,str(path),{'format':_format(path),'chunk_index':index,
+                    'char_start':start,'char_end':start+end,'line_start':line,'line_end':line+value.count('\n'),
+                    'source_chars':start+end if final else None,'text_policy':policy})
+                if final:break
+                consumed=max(1,end-overlap)
+                line+=buffer[:consumed].count('\n');start+=consumed;index+=1
+                buffer=buffer[consumed:]
+                buffer+=handle.read(maximum+1-len(buffer))
 
 
 class DirectoryAdapter(SourceAdapter):

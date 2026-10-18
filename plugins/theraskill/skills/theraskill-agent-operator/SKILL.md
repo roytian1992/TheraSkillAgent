@@ -1,6 +1,12 @@
 ---
 name: theraskill-agent-operator
 description: 管理 TheraSkillAgent 技能并完成安全的文本预处理任务。
+runtime:
+  required_tools:
+  - text.normalize
+  - text.chunk
+  - source.inspect
+  - skill.manage
 ---
 
 # TheraSkillAgent Operator

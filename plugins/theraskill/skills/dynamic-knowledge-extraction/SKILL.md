@@ -1,6 +1,12 @@
 ---
 name: dynamic-knowledge-extraction
-description: Design and manage a reviewable TheraSkill knowledge extraction job from an arbitrary authorized source.
+description: Design and manage a reviewable TheraSkill knowledge extraction job from
+  an arbitrary authorized source.
+runtime:
+  required_tools:
+  - theraskill_extraction
+  - source.inspect
+  - source.sample
 ---
 
 # Dynamic knowledge extraction

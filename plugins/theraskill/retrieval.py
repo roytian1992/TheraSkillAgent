@@ -62,6 +62,8 @@ def search_managed_knowledge(query: str, *, skill: str, limit: int, filters: dic
                                                    "planner_timings": (bundle.get('planner_trace') or {}).get('timings') or {},
                                                    "policy_checks": bundle.get("policy_checks") or {},
                                                    "quality_checks": bundle.get("quality_checks") or {},
+                                                   "plan":bundle.get('llm_retrieval_plan') or {},
+                                                   "scope_trace":bundle.get('structured_filter') or {},
                                                    "channel_counts": bundle.get("channel_counts") or {}}}
 
 

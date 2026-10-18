@@ -91,7 +91,7 @@ export default function ExtractionStudio({ locale, onBack }: { locale: Locale; o
     <div className="workspace-toolbar"><button className="back-button" onClick={onBack}>← {t('返回工作台', 'Back to workbench')}</button></div>
     <div className="workspace-title"><div><p className="eyebrow">TheraSkillAgent</p><h1>{t('知识抽取工作区', 'Knowledge extraction workspace')}</h1><p>{t('检查输入 → 设计并确认字段 → 小样本试抽 → 完整运行 → 候选审核', 'Inspect → design and confirm fields → try a sample → run → review candidates')}</p></div></div>
     <div className="studio-grid extraction-grid"><section className="studio-editor panel">
-      <label className="file-picker">{t('上传并使用文件', 'Upload and use file')}<input type="file" accept=".json,.jsonl,.csv,.tsv,.md,.txt" onChange={upload} /></label>
+      <label className="file-picker">{t('上传并使用文件', 'Upload and use file')}<input type="file" accept=".json,.jsonl,.csv,.tsv,.md,.txt,.srt,.vtt" onChange={upload} /></label>
       <label className="field-label">{t('输入文件', 'Input file')}<input value={sourcePath} onChange={event => { setSourcePath(event.target.value); setPlanConfirmed(false) }} /></label>
       <button className="secondary-action" onClick={() => void inspect()} disabled={busy || !sourcePath}><Search size={15} />{t('检查输入', 'Inspect input')}</button>
       {sourceInfo && <details open><summary>{t('输入与样本（最多 5 条）', 'Source and samples (up to 5)')}</summary><pre>{JSON.stringify(sourceInfo, null, 2)}</pre></details>}

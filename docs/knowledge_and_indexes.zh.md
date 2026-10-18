@@ -140,8 +140,10 @@ theraskill-agent knowledge pack --source data/theraskill/indexes/demo-v1 --outpu
 
 命令同时输出 `.download.json`，可把其中的记录放入 `catalog.json` 的 `packages` 数组。下载地址默认是相对压缩包文件名；上传后填写实际 URL。需要分卷时加 `--part-bytes 1073741824`，记录每卷顺序与 hash；分卷不可分别解压。完整包保留在本地便于核对。
 
-打包知识需要明确数据许可，参数不会替你确认第三方数据的再分发权。预构建索引也可能含原文，需遵守相同来源限制。目前提供知识和索引的打包命令，模拟素材的专门打包入口仍待整理。公开 catalog 不填虚构 URL。
+打包知识需要明确数据许可，参数不会替你确认第三方数据的再分发权。预构建索引也可能含原文，需遵守相同来源限制。`knowledge pack --kind simulation` 也可打包模拟素材，输出扩展名 `.zip` 时使用 ZIP64。完整交付打包入口见[资源安装说明](resource_installation.zh.md)。公开 catalog 不填虚构 URL。
 
 ## 更换索引的效果门禁
 
 首次初始化空设备可直接启用索引。已有活动索引时，先在「效果回归」建立基线、评价候选并人工复核，再执行 `theraskill-agent knowledge activate --index CANDIDATE_ID --behavior-report REPORT_ID`。界面的「知识与索引」和抽取工作流遵循相同门禁。完整性验证不会替代效果对比。详见[工作流说明](workflows.zh.md)。
+
+工作台检索测试使用生产检索链路；CLI 加 `index search --runtime` 使用相同链路，默认 CLI 检索为不调用 LLM 的索引诊断。元数据范围统计使用选择性索引，CJK 词法优先保留精确交集命中，最终结果为每个必需家族保留证据位。缺少家族明确警告，显式语言/来源过滤不会被突破。

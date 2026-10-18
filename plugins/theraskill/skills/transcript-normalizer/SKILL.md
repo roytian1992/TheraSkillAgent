@@ -1,7 +1,11 @@
 ---
 name: transcript-normalizer
-description: Preserve and normalize noisy patient/clinician transcripts without overwriting raw evidence.
+description: Preserve and normalize noisy patient/clinician transcripts without overwriting
+  raw evidence.
 version: 0.1.0
+runtime:
+  required_tools:
+  - theraskill_transcript
 ---
 
 # Transcript Normalizer

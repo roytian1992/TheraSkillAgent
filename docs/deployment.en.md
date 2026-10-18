@@ -59,7 +59,7 @@ deployment machine:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install /path/to/theraskill_agent-0.4.0-py3-none-any.whl
+python -m pip install /path/to/theraskill_agent-0.5.0-py3-none-any.whl
 
 theraskill-agent project init ~/TheraSkillAgent
 theraskill-agent status --json
@@ -70,7 +70,7 @@ indexes:
 
 ```bash
 python -m pip install \
-  '/path/to/theraskill_agent-0.4.0-py3-none-any.whl[retrieval]'
+  '/path/to/theraskill_agent-0.5.0-py3-none-any.whl[retrieval]'
 ```
 
 Wheel installations use `~/TheraSkillAgent` by default; source installations
@@ -306,3 +306,11 @@ A first index can initialize an empty installation. Replacing an active index or
 ## Deployment validation
 
 See the [deployment simplification record (Chinese)](deployment_simplification_20261018.zh.md) for the single-process migration, model recovery checks, isolated installation smoke test and real browser results.
+
+## Full resource ZIPs and readiness
+
+Follow [Resource installation](resource_installation.en.md) for the full knowledge and simulation packages. ZIP64 installation checks every file's size and SHA-256. Upload inner resource ZIPs in the workbench or install using the accompanying local catalog. Restart after the first simulation installation; existing active indexes are not replaced automatically.
+
+The home page shows provider configuration, explicit live connection checks, active resources and skill requirements. Configuration checks make no model requests. All 12 bundled skills declare required runtime tools; missing tools or dependencies are reported before a model call.
+
+`configs/theraskill/text.yaml` controls extraction segments (6000 characters with 300-character overlap by default) and review windows. Original spelling and offsets remain intact; planning samples span the source. Review covers all turns by default; an explicit `--max-turns` requests a sample. Agent tasks pause at the context budget and allow a budget change without silently dropping history.

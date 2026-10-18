@@ -1,6 +1,10 @@
 ---
 name: emotional-support
-description: "低风险情绪支持、共情澄清和非诊断性应对建议。"
+description: 低风险情绪支持、共情澄清和非诊断性应对建议。
+runtime:
+  required_tools:
+  - theraskill_context
+  - theraskill_knowledge_search
 ---
 
 # Emotional Support

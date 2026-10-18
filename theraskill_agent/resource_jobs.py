@@ -67,6 +67,12 @@ def run_operation(operation, parameters, *, progress=None, cancel=None):
     if operation == 'verify':
         return verify_index(resources.index_path(p['index']), scratch_root=p.get('scratch_root'))
     if operation == 'search':
+        if p.get('production'):
+            from .resources import using_index
+            from plugins.theraskill.retrieval import search_managed_knowledge
+            with using_index(resources.index_path(p['index'])):
+                return search_managed_knowledge(p['query'],skill=p.get('skill') or 'emotional-support',
+                    limit=p.get('limit',8),filters=p.get('filters'))
         return retrieve_index(
             resources.index_path(p['index']),
             p['query'],
@@ -87,7 +93,7 @@ def run_operation(operation, parameters, *, progress=None, cancel=None):
             raise ValueError('archive or catalog and package are required')
         if cancel and cancel():
             raise BuildCancelled('installation cancelled before extraction')
-        return resources.install_package(archive, expected_sha256=checksum, expected_id=expected_id)
+        return resources.install_package(archive, expected_sha256=checksum, expected_id=expected_id,cancel=cancel,progress=progress)
     raise ValueError('unknown resource operation')
 
 

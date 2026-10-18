@@ -1,0 +1,171 @@
+{
+  "schema_version": "theraskill_retrieval_suite_v1",
+  "name": "Bilingual production retrieval coverage",
+  "cases": [
+    {
+      "id": "emotional-support_zh",
+      "query": "因为工作失误一直自责，如何共情和澄清？",
+      "skill": "emotional-support",
+      "filters": {
+        "primary_language": "zh"
+      },
+      "required_families": [
+        "therapy_process",
+        "style_response"
+      ],
+      "judgments": {}
+    },
+    {
+      "id": "emotional-support_en",
+      "query": "How can I respond empathically to guilt after a work mistake?",
+      "skill": "emotional-support",
+      "filters": {
+        "primary_language": "en"
+      },
+      "required_families": [
+        "therapy_process",
+        "style_response"
+      ],
+      "judgments": {}
+    },
+    {
+      "id": "risk-triage_zh",
+      "query": "来访者提到自伤想法，应如何确认即时安全？",
+      "skill": "risk-triage",
+      "filters": {
+        "primary_language": "zh"
+      },
+      "required_families": [
+        "clinical_risk_assessment"
+      ],
+      "judgments": {}
+    },
+    {
+      "id": "risk-triage_en",
+      "query": "How should a counselor clarify immediate safety when self harm is mentioned?",
+      "skill": "risk-triage",
+      "filters": {
+        "primary_language": "en"
+      },
+      "required_families": [
+        "clinical_risk_assessment"
+      ],
+      "judgments": {}
+    },
+    {
+      "id": "cognitive-reframing-support_zh",
+      "query": "一次考试失败就认为未来完了，如何协作检查灾难化想法？",
+      "skill": "cognitive-reframing-support",
+      "filters": {
+        "primary_language": "zh"
+      },
+      "required_families": [
+        "method_rubric"
+      ],
+      "judgments": {}
+    },
+    {
+      "id": "cognitive-reframing-support_en",
+      "query": "How can I collaboratively examine catastrophizing after one failed exam?",
+      "skill": "cognitive-reframing-support",
+      "filters": {
+        "primary_language": "en"
+      },
+      "required_families": [
+        "method_rubric"
+      ],
+      "judgments": {}
+    },
+    {
+      "id": "rebt-belief-work-support_zh",
+      "query": "如何用ABC区分必须被认可的信念及其后果？",
+      "skill": "rebt-belief-work-support",
+      "filters": {
+        "primary_language": "zh"
+      },
+      "required_families": [
+        "method_rubric"
+      ],
+      "judgments": {}
+    },
+    {
+      "id": "rebt-belief-work-support_en",
+      "query": "How do I explore an approval must belief with the REBT ABC framework?",
+      "skill": "rebt-belief-work-support",
+      "filters": {
+        "primary_language": "en"
+      },
+      "required_families": [
+        "method_rubric"
+      ],
+      "judgments": {}
+    },
+    {
+      "id": "synthetic-dialogue-builder_zh",
+      "query": "生成工作压力的虚构训练对话时，应满足什么构建要求？",
+      "skill": "synthetic-dialogue-builder",
+      "filters": {
+        "primary_language": "zh"
+      },
+      "required_families": [
+        "synthetic_construction",
+        "therapy_process"
+      ],
+      "judgments": {}
+    },
+    {
+      "id": "synthetic-dialogue-builder_en",
+      "query": "What construction guidelines support a fictional work stress training dialogue?",
+      "skill": "synthetic-dialogue-builder",
+      "filters": {
+        "primary_language": "en"
+      },
+      "required_families": [
+        "therapy_process"
+      ],
+      "judgments": {},
+      "expected_unavailable_families": [
+        "synthetic_construction"
+      ],
+      "data_gap_note": "Full release has 1796 Chinese construction records and no English ones. Preserve the explicit English-only filter and expose the missing family."
+    },
+    {
+      "id": "therapy-response-reviewer_zh",
+      "query": "怎样审核缺乏依据的诊断和武断用药建议？",
+      "skill": "therapy-response-reviewer",
+      "filters": {
+        "primary_language": "zh"
+      },
+      "required_families": [
+        "method_rubric",
+        "therapy_process"
+      ],
+      "judgments": {}
+    },
+    {
+      "id": "therapy-response-reviewer_en",
+      "query": "How should I review an unsupported diagnosis and medication recommendation?",
+      "skill": "therapy-response-reviewer",
+      "filters": {
+        "primary_language": "en"
+      },
+      "required_families": [
+        "method_rubric",
+        "therapy_process"
+      ],
+      "judgments": {}
+    },
+    {
+      "id": "missing_dataset",
+      "query": "empathic clarification",
+      "skill": "emotional-support",
+      "filters": {
+        "primary_dataset": "synthetic_missing_dataset_20261019"
+      },
+      "required_families": [],
+      "expect_empty": true,
+      "expect_nonempty": false,
+      "judgments": {}
+    }
+  ]
+}

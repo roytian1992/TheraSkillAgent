@@ -1,0 +1,13 @@
+export default function SchemaFields({schema,onChange,locale}:{schema:any;onChange:(schema:any)=>void;locale:'zh'|'en'}) {
+  const t=(zh:string,en:string)=>locale==='zh'?zh:en
+  const edit=(name:string,patch:any)=>onChange({...schema,properties:{...schema.properties,[name]:{...schema.properties[name],...patch}}})
+  return <div className="field-editor">{Object.entries(schema.properties||{}).map(([name,field]:any)=><fieldset key={name}><legend>{name}</legend>
+    <label>{t('字段名称','Field name')}<input defaultValue={name} onBlur={e=>{const next=e.target.value.trim();if(!next||next===name||schema.properties[next]){e.target.value=name;return}const properties={...schema.properties};delete properties[name];properties[next]=field;onChange({...schema,properties,required:(schema.required||[]).map((n:string)=>n===name?next:n)})}}/></label>
+    <label>{t('字段说明','Description')}<input value={field.description||''} onChange={e=>edit(name,{description:e.target.value})}/></label>
+    <label>{t('字段类型','Type')}<select value={field.type} onChange={e=>{const type=e.target.value;const next={...field,type};if(type==='array')next.items=field.items||{type:'string'};else delete next.items;edit(name,next)}}>{['string','number','integer','boolean','array','object'].map(type=><option key={type}>{type}</option>)}</select></label>
+    <label className="checkbox-line"><input type="checkbox" checked={(schema.required||[]).includes(name)} onChange={e=>onChange({...schema,required:e.target.checked?[...(schema.required||[]),name]:(schema.required||[]).filter((n:string)=>n!==name)})}/>{t('必填','Required')}</label>
+    {field.type==='object'&&<SchemaFields schema={{type:'object',properties:{},required:[],additionalProperties:false,...field}} locale={locale} onChange={next=>edit(name,next)}/>}
+    {field.type==='array'&&<><label>{t('列表元素类型','Array item type')}<select value={field.items?.type||'string'} onChange={e=>edit(name,{items:e.target.value==='object'?{type:'object',properties:{},required:[],additionalProperties:false}:{type:e.target.value}})}>{['string','number','integer','boolean','object'].map(type=><option key={type}>{type}</option>)}</select></label>{field.items?.type==='object'&&<SchemaFields schema={field.items} locale={locale} onChange={next=>edit(name,{items:next})}/>}</>}
+    <button onClick={()=>{const properties={...schema.properties};delete properties[name];onChange({...schema,properties,required:(schema.required||[]).filter((n:string)=>n!==name)})}}>{t('删除字段','Remove field')}</button>
+  </fieldset>)}<button onClick={()=>{let i=1;while(schema.properties?.['field_'+i])i++;onChange({...schema,properties:{...schema.properties,['field_'+i]:{type:'string',description:''}}})}}>{t('添加字段','Add field')}</button></div>
+}

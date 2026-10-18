@@ -7,12 +7,27 @@ import shutil
 import tarfile
 import tempfile
 import time
+import zipfile
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 import httpx
 from .paths import data_root
 from .indexing.common import digest, identity, read_json, write_json, safe_id, safe_path, exclusive
 from .indexing import verify_index
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+_INDEX_OVERRIDE = ContextVar('theraskill_index_override', default=None)
+
+
+@contextmanager
+def using_index(directory):
+    """Pin an evaluation/request to an index without changing shared activation."""
+    token = _INDEX_OVERRIDE.set(Path(directory).resolve() if directory else None)
+    try:
+        yield
+    finally:
+        _INDEX_OVERRIDE.reset(token)
 
 PACKAGE_SCHEMA = 'theraskill_resource_package_v1'
 CATALOG_SCHEMA = 'theraskill_resource_catalog_v1'
@@ -39,12 +54,24 @@ def list_resources():
         for path in sorted((root / folder).glob('*/manifest.json')):
             try:
                 record = read_json(path)
-                result[folder].append({'id': path.parent.name, 'manifest': record})
+                result[folder].append({'id': path.parent.name, 'manifest': record,
+                    'path':str(path.parent/'knowledge.jsonl') if folder=='knowledge' else str(path.parent)})
             except (OSError, ValueError):
                 continue
     for key, filename in (('active', 'active-index.json'), ('previous', 'previous-index.json')):
         if (root / filename).is_file():
             result[key] = read_json(root / filename)
+    legacy = root/'current/knowledge/phase6_reviewed_knowledge_units.jsonl'
+    if legacy.is_file():
+        original=read_json(root/'current/manifest.json') if (root/'current/manifest.json').is_file() else {}
+        result['knowledge'].append({'id':'current-release','path':str(legacy),
+            'manifest':{'knowledge_sha256':original.get('checksums',{}).get('knowledge_release',{}).get('sha256'),
+                        'counts':{'total':original.get('counts',{}).get('knowledge_release_rows')}}})
+    for path in sorted((root/'imports').glob('*.manifest.json')):
+        try:
+            record=read_json(path)
+            if Path(record['path']).is_file():result['knowledge'].append(record)
+        except (ValueError,OSError,KeyError):continue
     return result
 
 
@@ -87,6 +114,12 @@ def rollback_index():
 
 
 def active_index():
+    pinned = _INDEX_OVERRIDE.get()
+    if pinned is not None:
+        manifest = read_json(pinned / 'manifest.json')
+        if manifest.get('status') != 'complete':
+            raise ValueError('selected index is incomplete')
+        return pinned, manifest
     root = data_root().resolve()
     path = root / 'active-index.json'
     if not path.is_file():
@@ -99,7 +132,7 @@ def active_index():
     return directory, manifest
 
 
-def pack_resource(source, output, *, package_id, kind, license_id=None, part_bytes=None):
+def pack_resource(source, output, *, package_id, kind, license_id=None, part_bytes=None, provenance=None):
     """Create an explicit package, never archive the project/workspace wholesale."""
     package_id = safe_id(package_id)
     source, output = Path(source).expanduser().resolve(), Path(output).expanduser().resolve()
@@ -117,20 +150,40 @@ def pack_resource(source, output, *, package_id, kind, license_id=None, part_byt
         sources = {name: safe_path(source, name) for name in manifest['files']}
         sources['manifest.json'] = source / 'manifest.json'
         details = {'knowledge_sha256': manifest['input']['knowledge_sha256'], 'embedding': manifest.get('embedding'), 'index_id': manifest['index_id']}
+    elif kind == 'simulation':
+        if not source.is_dir() or not license_id or not (source / 'scenarios/scenario_registry.jsonl').is_file():
+            raise ValueError('simulation packaging needs a simulation directory, scenario registry and data license')
+        sources = {}
+        for path in sorted(source.rglob('*')):
+            if path.is_symlink():
+                raise ValueError('simulation package source must contain regular files, not links')
+            if path.is_file():
+                if path.suffix.lower() not in {'.json', '.jsonl', '.md', '.txt', '.yaml', '.yml'} and path.name != '.release-marker':
+                    raise ValueError('Unexpected simulation asset: ' + str(path.relative_to(source)))
+                sources[path.relative_to(source).as_posix()] = path
+        details = {'license': license_id, 'knowledge_sha256': None,
+                   'scenario_registry': 'scenarios/scenario_registry.jsonl'}
     else:
-        raise ValueError('supported package kinds: knowledge, index')
+        raise ValueError('supported package kinds: knowledge, index, simulation')
     if any(p.is_symlink() for p in sources.values()):
         raise ValueError('packages cannot include symbolic links')
     files = {name: {'size': p.stat().st_size, 'sha256': digest(p)} for name, p in sources.items()}
     package = {'schema_version': PACKAGE_SCHEMA, 'package_id': package_id, 'kind': kind,
-               'files': files, 'unpacked_bytes': sum(x['size'] for x in files.values()), **details}
+               'files': files, 'unpacked_bytes': sum(x['size'] for x in files.values()), **details,
+               'provenance': provenance or {}, 'installer': 'theraskill-agent knowledge install --archive PACKAGE'}
     if part_bytes is not None and int(part_bytes) <= 0:
         raise ValueError('part_bytes must be positive')
     output.parent.mkdir(parents=True, exist_ok=True)
     temp = output.with_name(output.name + '.partial')
     try:
-        with tarfile.open(temp, 'w:gz') as archive:
-            payload = (json.dumps(package, ensure_ascii=False, indent=2) + '\n').encode()
+        payload = (json.dumps(package, ensure_ascii=False, indent=2) + '\n').encode()
+        if output.suffix.lower() == '.zip':
+            with zipfile.ZipFile(temp, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=1, allowZip64=True) as archive:
+                archive.writestr('package.json', payload)
+                for name, path in sources.items():
+                    archive.write(path, arcname=name)
+        else:
+          with tarfile.open(temp, 'w:gz') as archive:
             entry = tarfile.TarInfo('package.json'); entry.size = len(payload); entry.mode = 0o644
             archive.addfile(entry, io.BytesIO(payload))
             for name, path in sources.items():
@@ -140,7 +193,7 @@ def pack_resource(source, output, *, package_id, kind, license_id=None, part_byt
         os.replace(temp, output)
     finally:
         temp.unlink(missing_ok=True)
-    record = {'id': package_id, 'kind': kind, 'available': True, 'format': 'tar.gz',
+    record = {'id': package_id, 'kind': kind, 'available': True, 'format': 'zip' if output.suffix.lower()=='.zip' else 'tar.gz',
               'size': output.stat().st_size, 'sha256': digest(output), 'unpacked_bytes': package['unpacked_bytes'],
               'url': output.name, 'knowledge_sha256': package['knowledge_sha256']}
     if part_bytes:
@@ -267,7 +320,7 @@ def download_package(catalog, package_id, *, cancel=None, progress=None):
         return archive, record
 
 
-def install_package(archive, *, expected_sha256=None, expected_id=None):
+def install_package(archive, *, expected_sha256=None, expected_id=None, cancel=None, progress=None):
     archive = Path(archive).expanduser().resolve()
     if expected_sha256 and digest(archive) != _valid_hash(expected_sha256):
         raise ValueError('archive checksum mismatch')
@@ -275,7 +328,8 @@ def install_package(archive, *, expected_sha256=None, expected_id=None):
     root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.resource-', dir=root) as temp:
         staging = Path(temp)
-        with tarfile.open(archive, 'r:gz') as bundle:
+        from .resource_archives import open_bundle
+        with open_bundle(archive) as bundle:
             # Manifest must be first, bounding extraction before any files are written.
             first = bundle.next()
             if first is None or first.name != 'package.json' or not first.isfile() or first.size > 16 * 1024 * 1024:
@@ -298,6 +352,7 @@ def install_package(archive, *, expected_sha256=None, expected_id=None):
                 if int(item['size']) < 0:
                     raise ValueError('negative file size')
             seen = set()
+            unpacked=0
             for member in bundle:
                 if member.name == 'package.json' and member is first:
                     continue
@@ -309,9 +364,17 @@ def install_package(archive, *, expected_sha256=None, expected_id=None):
                     raise ValueError('archive member size mismatch')
                 target = safe_path(staging, member.name)
                 target.parent.mkdir(parents=True, exist_ok=True)
+                import hashlib
+                hasher=hashlib.sha256()
                 with bundle.extractfile(member) as src, target.open('xb') as out:
-                    shutil.copyfileobj(src, out)
-                if digest(target) != record['sha256']:
+                    while chunk:=src.read(4*1024**2):
+                        if cancel and cancel():
+                            from .indexing.builder import BuildCancelled
+                            raise BuildCancelled('Resource installation cancelled; staged files were removed')
+                        out.write(chunk);hasher.update(chunk);unpacked+=len(chunk)
+                        if progress and (unpacked//(32*1024**2)!=(unpacked-len(chunk))//(32*1024**2)):
+                            progress({'stage':'unpack','bytes':unpacked,'total_bytes':needed,'files':len(seen),'total_files':len(files)})
+                if hasher.hexdigest() != record['sha256']:
                     raise ValueError('archive member checksum mismatch')
             if seen != set(files):
                 raise ValueError('archive is missing declared files')
@@ -324,6 +387,8 @@ def install_package(archive, *, expected_sha256=None, expected_id=None):
             if folder == 'knowledge':
                 if 'knowledge.jsonl' not in files or digest(staging / 'knowledge.jsonl') != package.get('knowledge_sha256'):
                     raise ValueError('knowledge fingerprint mismatch')
+            if folder == 'simulation' and 'scenarios/scenario_registry.jsonl' not in files:
+                raise ValueError('simulation package is missing its scenario registry')
             write_json(staging / 'manifest.json', package)
         destination = root / folder / pid
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -331,4 +396,10 @@ def install_package(archive, *, expected_sha256=None, expected_id=None):
             if destination.exists():
                 raise ValueError('resource version already exists; installed versions are immutable')
             os.replace(staging, destination)
+        if package['kind'] == 'simulation':
+            # The first installation is selected for fresh workspaces. Existing
+            # simulations are never replaced as a side effect of installation.
+            selection = root / 'active-simulation.json'
+            if not selection.exists() and not (root/'current/simulation/scenarios/scenario_registry.jsonl').exists():
+                write_json(selection, {'id': pid, 'path': destination.relative_to(root).as_posix()})
     return {'id': pid, 'kind': package['kind'], 'path': str(destination)}

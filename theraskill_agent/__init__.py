@@ -41,4 +41,4 @@ from .source_adapters import (
 __all__ += ["AgentResult", "AgentTask", "AgentRuntime", "EvalCase", "EvalRunner", "load_cases", "SkillExecutionContext", "SkillManifest", "SkillWorkflow", "interaction_for_hermes", "TranscriptDocument", "TranscriptTurn", "analyze_transcript", "build_bundle", "load_transcript", "parse_transcript", "build_review_plan", "run_skill_reviews", "SourceAdapterProtocol", "SourceInfo", "SourceRecord", "adapter_registry", "get_adapter", "inspect_source", "register_adapter", "sample_source", "unregister_adapter"]
 __all__ += ["active_release_id", "data_root", "project_root"]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

@@ -53,9 +53,9 @@ theraskill-agent skill install /path/to/candidate --overwrite \
 
 ## Behavioral evaluations and gates
 
-Establish a baseline in Behavioral evaluations, then run identical cases and rubrics against a preview release, candidate index or skill directory. Each case retrieves real evidence, calls the configured LLM for an answer and calls a model to judge relevance, grounding, task completion, language and boundaries.
+Establish a baseline in Behavioral evaluations, then run identical cases and rubrics against a preview release, candidate index or skill directory. Each case runs its installed skill through the production TaskEngine, including tools and scripted clarification answers, then calls a model to judge relevance, grounding, task completion, language and boundaries. Mutation and script approvals are never granted automatically by the evaluator.
 
-The interface shows engineering checks, actual answers, citations, score explanations, fingerprints, baseline changes and human decisions. The editable default suite is `configs/theraskill/evaluations/behavior.json`. Its four cases provide bounded functional checks; production evaluation needs cases representing the intended tasks, users and boundary conditions.
+The interface shows engineering checks, actual answers, citations, score explanations, fingerprints, baseline changes and human decisions. The editable default suite is `configs/theraskill/evaluations/behavior.json`. Its 12 cases execute the same production TaskEngine, tool registry, checkpoints and interactive questions as user tasks. They provide bounded functional checks; production evaluation needs cases representing the intended tasks, users and boundary conditions.
 
 A passing report requires complete cases, successful checks, dimension scores meeting thresholds, a comparable baseline with no excessive regression, and human approval. Approval cannot override failed checks. Changes to knowledge, index manifests, skills/references, LLM/embedding settings or the evaluator invalidate approval or use of old reports. Rerun evaluation after changes. Reports and review history live in `data/theraskill/evaluations/behavior/`.
 
@@ -74,3 +74,13 @@ The report shows observations over attempts, latest ratings and changes. A singl
 Switch Chinese/English in the interface; the preference is saved locally. Reviews, support responses, generation, task questions and results receive an output language. Transcript source language is independent of review language. Source text, evidence quotations, existing user content and JSON field names are preserved. Historical model outputs keep their original language.
 
 Back up the writable project, including tasks, evaluation reports, course databases, sessions, `skills/local/`, configuration and knowledge/index resources. Restart the single application after code upgrades. Preserve data directories. Full knowledge releases continue to be distributed separately from source.
+
+## Visual editing, long sources and retrieval evaluation
+
+Workflow forms offer file uploads, installed resource/release/report selectors and a visual schema editor, including nested objects and arrays. Full plan JSON remains available under advanced options. Long TXT/Markdown/SRT/VTT inputs are segmented with original character offsets and configurable overlap; samples span the whole source. Review processes full turn windows by default and reports coverage and failed windows.
+
+Behavior cases can be edited as forms. Engineering checks include actual completion, required tools, all required evidence families and consumption of scripted clarification answers. Saved reports retain actual execution traces. Runtime source fingerprints also bind reports to the code under evaluation.
+
+The retrieval panel uses the production skill search path, 13 editable default cases, 1–4 concurrent requests and 1–10 repetitions. Inspect channel warnings, hard-filter checks and P50/P95. Optional human grades range from 0 to 3; identify the annotator and export the case/judgment JSON to preserve them. Unjudged Recall/nDCG are unavailable. Small samples are not latency guarantees. English-only synthetic-construction coverage is a known data gap, shown explicitly.
+
+Upload a skill ZIP to inspect readiness before installation, or run `theraskill-agent skill check SKILL_NAME`. A missing adapter is actionable and never triggers dependency installation. `skill.run_script` requires explicit approval, accepts contained Python scripts only and records complete output files. It executes locally with permissions of the application user; it is not an operating-system sandbox. Context-budget pauses preserve history; answer the requested budget question to continue.

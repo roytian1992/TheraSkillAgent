@@ -296,7 +296,7 @@ def count_scope_uncached(db: Path, plan: dict[str, Any]) -> int:
     if is_metadata_v2(db):
         where.extend(token_exists_clauses(token_filters, params))
     append_query_scope(db, plan, where, params, table_name(db))
-    sql = f"select count(*) from {table_name(db)} m where {' and '.join(where)}"
+    sql = f"select count(*) from {scoped_metadata_table(db, plan)} where {' and '.join(where)}"
     con = sqlite3.connect(str(db))
     try:
         return int(con.execute(sql, params).fetchone()[0])
@@ -436,6 +436,19 @@ def append_query_scope(db: Path, plan: dict[str, Any], where: list[str], params:
         where[:] = ['(m.retrieval_eligible = 1) IS TRUE' if other else 'm.retrieval_eligible = 1', *other]
 
 
+def scoped_metadata_table(db: Path, plan: dict[str, Any]) -> str:
+    """Avoid choosing the almost-full Chinese language index for a small family."""
+    table=table_name(db)
+    if not is_metadata_v2(db):return table+' m'
+    filters=plan.get('metadata_filters') or {}
+    families=filters.get('dedup_family') or []
+    if not families:return table+' m'
+    name='idx_metadata_v2_knowledge_type' if 'style_response' in families and filters.get('primary_knowledge_type') else 'idx_metadata_v2_family'
+    with closing(sqlite3.connect(f'{db.resolve().as_uri()}?mode=ro',uri=True)) as connection:
+        available={row[1] for row in connection.execute('PRAGMA index_list(metadata_v2)')}
+    return table+' m INDEXED BY '+name if name in available else table+' m'
+
+
 def token_exists_clauses(token_filters: list[tuple[str, str]], params: list[Any]) -> list[str]:
     clauses: list[str] = []
     for field, value in token_filters:
@@ -503,6 +516,11 @@ def apply_skill_retrieval_invariants(plan: dict[str, Any], skill: str) -> tuple[
         container[key] = values
         trace.append({"field": f"{path_name}.{key}", "values": [family], "reason": reason})
 
+    from theraskill_agent.query_understanding import MINIMUM_EVIDENCE_FAMILIES
+    explicit=((scoped.get('_query_understanding') or {}).get('filters') or {}).get('dedup_family') or []
+    for family in MINIMUM_EVIDENCE_FAMILIES.get(skill,[]):
+        if explicit and family not in explicit:continue
+        ensure_family('target_families',scoped.setdefault('target_families',{}),'required',family,'business_minimum_evidence_coverage')
     if skill == "rebt-belief-work-support":
         target = scoped.setdefault("target_families", {})
         rerank = scoped.setdefault("rerank_preferences", {})
@@ -1506,7 +1524,20 @@ def build_items(fused: list[dict[str, Any]], plan: dict[str, Any], skill: str, t
         }
         reranked.append(item)
     reranked.sort(key=lambda row: row["ranking_trace"]["rerank_score"], reverse=True)
-    return V2.assign_and_select(reranked, top_k, skill)
+    selected=V2.assign_and_select(reranked, top_k, skill)
+    # Preserve one real recalled item from every required family before a
+    # prolific family consumes all result slots. User scope was applied above.
+    anchors=[]
+    for family in required_families(plan):
+        anchor=next((row for row in reranked if row.get('dedup_family')==family),None)
+        if anchor is not None:anchors.append(anchor)
+    result=[];seen=set()
+    for row in [*anchors,*selected,*reranked]:
+        key=row.get('retrieval_id')
+        if key not in seen:
+            seen.add(key);result.append(row)
+        if len(result)>=top_k:break
+    return result
 
 
 def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
@@ -1630,6 +1661,9 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
     )
     selected = timings.call('selection', build_items, fused, scoped_plan, args.skill, args.top_k)
     families = {item.get("dedup_family") for item in selected}
+    missing=sorted(set(required_families(scoped_plan))-families)
+    if missing:
+        filter_trace.setdefault('warnings',[]).append('Required knowledge families unavailable under the current scope/result limit: '+', '.join(missing))
     routes = {item.get("default_route") for item in selected}
     labels = " ".join(str(item.get("canonical_label") or "") for item in selected[:1])
     risk_level = scoped_plan.get("risk", {}).get("level")
@@ -1695,6 +1729,8 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
             "high_risk_query_top1_not_low_risk": (not high_query) or (not V2.contains_any(labels, V2.LOW_RISK_LABEL_TERMS)),
         },
         "quality_checks": {
+            "required_family_coverage":not missing,
+            "missing_required_families":missing,
             "method_rubric_in_top5_for_cognitive": args.skill != "cognitive-reframing-support" or any(item.get("dedup_family") == "method_rubric" for item in selected[:5]),
             "method_rubric_in_top5_for_rebt": args.skill != "rebt-belief-work-support" or any(item.get("dedup_family") == "method_rubric" for item in selected[:5]),
             "clinical_risk_in_top3_for_high_risk": args.skill != "risk-triage" or (not high_query) or any(item.get("dedup_family") == "clinical_risk_assessment" for item in selected[:3]),

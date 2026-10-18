@@ -58,7 +58,7 @@ from domains.theraskill.theraskill_contribution.client import (
     ContributionClientError,
     HTTPContributionClient,
 )
-from domains.theraskill.runtime import runtime_root
+from domains.theraskill.runtime import runtime_root, simulation_root
 from domains.theraskill.observability import RequestMetrics
 from domains.theraskill.metrics_middleware import MetricsMiddleware
 
@@ -74,7 +74,7 @@ class SimulationAPISettings(BaseModel):
     project_root: Path = PROJECT_ROOT
     database_path: Path = Field(default_factory=lambda: runtime_root() / "simulation/sessions.sqlite")
     scenario_registry_path: Path = Field(
-        default_factory=lambda: runtime_root() / "current/simulation/scenarios/scenario_registry.jsonl"
+        default_factory=lambda: simulation_root() / "scenarios/scenario_registry.jsonl"
     )
     extraction_config_path: Path = resource_path("configs/extraction_config.yaml")
     model_config_path: Path = resource_path("configs/theraskill/retrieval.yaml")

@@ -8,7 +8,7 @@
     "tests/test_standalone_kernel.py", "tests/test_theraskill*.py", "tests/smoke_theraskill_install.py", "tests/conftest.py",
     "examples/**/*", "schemas/*.json", "releases/*.json", ".github/workflows/*.yml",
     "docs/knowledge_and_indexes.zh.md", "docs/knowledge_and_indexes.en.md", "docs/deployment.zh.md", "docs/deployment.en.md", "docs/source_release.zh.md", "docs/experiment_log_20261018.md",
-    "docs/workflows.zh.md", "docs/workflows.en.md", "docs/user_experience_audit_20261018.zh.md", "docs/ux_improvements_20261018.zh.md", "docs/platform_upgrade_20261018.zh.md", "docs/deployment_simplification_20261018.zh.md", "docs/retrieval_optimization_20261018.zh.md"
+    "docs/workflows.zh.md", "docs/workflows.en.md", "docs/user_experience_audit_20261018.zh.md", "docs/ux_improvements_20261018.zh.md", "docs/platform_upgrade_20261018.zh.md", "docs/deployment_simplification_20261018.zh.md", "docs/retrieval_optimization_20261018.zh.md", "docs/upgrade_20261019.zh.md", "docs/resource_installation.zh.md", "docs/resource_installation.en.md"
   ],
   "exclude": [
     "**/__pycache__/**", "**/*.pyc", "**/*.tsbuildinfo", "**/run_hermes_*", "**/run_h6_runtime_pilot.py",

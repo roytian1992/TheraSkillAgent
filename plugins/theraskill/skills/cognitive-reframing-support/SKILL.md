@@ -1,6 +1,10 @@
 ---
 name: cognitive-reframing-support
-description: "识别思维模式、缓和苛刻自我对话并探索替代视角。"
+description: 识别思维模式、缓和苛刻自我对话并探索替代视角。
+runtime:
+  required_tools:
+  - theraskill_context
+  - theraskill_knowledge_search
 ---
 
 # Cognitive Reframing Support

@@ -44,7 +44,7 @@ def check_provider(kind: str, *, live: bool = False) -> dict[str, Any]:
             config = dict(resolved)
             config.update({
                 "temperature": 0,
-                "max_output_tokens": 8,
+                "max_output_tokens": config.get('max_output_tokens') or 2048,
                 "retry_attempts": 0,
                 "timeout_seconds": min(int(config.get("timeout_seconds", 30)), 30),
             })

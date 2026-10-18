@@ -1,0 +1,8 @@
+# Text segmentation is visible in source inspection and extraction plans.
+# Raw text is never normalized, corrected or discarded by this step.
+extraction:
+  max_chars: 6000
+  overlap: 300
+review:
+  max_turn_chars: 6000
+  max_window_chars: 18000

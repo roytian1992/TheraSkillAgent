@@ -21,7 +21,19 @@ Return one JSON object per step, one of:
 When the task is complete, finish; do not repeatedly retrieve the same material.
 Write user-facing questions and answers in output_language. Preserve source quotes.
 A citation must identify a record that appeared in a tool result. Do not diagnose.
+When knowledge search returns matches, use their canonical retrieval_id values
+in result.evidence_ids. Cite at least one source actually used. A nonempty
+result.answer is required. Output language does not restrict source language:
+only add a language filter when the user explicitly requests that source scope.
+For transcript tasks, cite actual turn_id values or the document_id returned
+by the transcript tool. evidence_ids is an array of ID strings, not objects.
 '''
+
+
+class SkillOutputError(ValueError):
+    def __init__(self,message,output,provenance):
+        super().__init__(message)
+        self.output=output;self.provenance=provenance
 
 CUSTOM_TOOLS={}
 
@@ -40,6 +52,9 @@ TOOLS={
  'text.chunk':'{text:string,max_chars:integer,overlap:integer}. Split text with offsets.',
  'source.inspect':'{path:string}. Inspect the user-supplied source file.',
  'source.sample':'{path:string,limit:integer}. Explicitly sample source records (default 5).',
+ 'source.read_record':'{path:string,record_id:string}. Read one complete segmented record with original source offsets.',
+ 'artifact.read':'{path:string,offset:integer,limit:integer}. Read a visible window of a saved artifact; reports total length and next offset.',
+ 'skill.run_script':'{path:string,arguments:[string],timeout_seconds:integer}. Run a Python script inside the selected skill scripts directory. Explicit user approval required. Local execution is not sandboxed.',
  'transcript.analyze':'{path:string,language:string}. Parse and analyze a transcript.',
  'skill.read_reference':'{path:string}. Read a text reference inside the selected skill directory.',
 }
@@ -59,6 +74,26 @@ def model_json(system, payload):
 
 
 def execute_tool(name, args, *, skill_path=None):
+    if name=='skill.run_script':
+        from .skill_readiness import run_script
+        return run_script(args, skill_path=skill_path)
+    if name=='source.read_record':
+        from .source_adapters import get_adapter
+        path=Path(args['path']).expanduser().resolve()
+        for record in get_adapter(path).iter_records(path):
+            if record.record_id==args['record_id']:return record.to_dict()
+        raise ValueError('Source record not found')
+    if name=='artifact.read':
+        from .paths import data_root
+        path=Path(args['path']).expanduser().resolve()
+        if not path.is_relative_to(data_root().resolve()) or not path.is_file():
+            raise ValueError('Artifact must be a file inside the project data directory')
+        text=path.read_text(encoding='utf-8',errors='replace')
+        start=int(args.get('offset',0));limit=int(args.get('limit',6000))
+        if start<0 or not 1<=limit<=32000:raise ValueError('Invalid artifact window')
+        end=min(start+limit,len(text))
+        return {'text':text[start:end],'offset':start,'end':end,'total_chars':len(text),
+                'next_offset':end if end<len(text) else None,'partial':start>0 or end<len(text)}
     if name=='theraskill_context':
         from .resources import active_index
         selected=active_index()
@@ -107,15 +142,38 @@ def next_skill_step(task, *, manager=None, call_model=model_json):
             raise ValueError('Model selected a skill outside the installed catalog')
         return {'selection':selected,'provenance':provenance}
     record=manager.inspect(skill)
+    from .skill_readiness import check_skill
+    readiness=check_skill(skill,manager=manager)
+    if not readiness['ready']:
+        raise ValueError('Skill is not ready: '+json.dumps(readiness,ensure_ascii=False))
     pinned=cp.get('skill_snapshot')
     if pinned and (pinned['checksum']!=record.checksum or pinned.get('bundle_checksum')!=record.bundle_checksum):
         raise ValueError('Skill changed during this task. Create a new task to use the new version.')
     instructions=manager.resolve(skill).read_text(encoding='utf-8')
     system=PROTOCOL+'\nSelected skill instructions:\n'+instructions
     references=sorted(str(p.relative_to(record.path)) for p in Path(record.path).rglob('*') if p.is_file())
-    output,provenance=call_model(system,{'goal':task['goal'],'output_language':task['language'],
+    payload={'goal':task['goal'],'output_language':task['language'],
         'input':inputs.get('text',''),'source_path':inputs.get('source_path'), 'tools':TOOLS,
-        'references':references,'history':cp.get('skill_history',[])})
+        'references':references,'history':cp.get('skill_history',[]),
+        'valid_evidence_ids':sorted(evidence_ids_from_history(cp.get('skill_history',[]))[0])}
+    size=len(system)+len(json.dumps(payload,ensure_ascii=False))
+    budget=int(inputs.get('max_context_chars',160000))
+    if budget<4000 or budget>2000000:raise ValueError('max_context_chars must be between 4000 and 2000000')
+    if size>budget:
+        return {'decision':{'action':'ask','question':'上下文已达到配置预算；完整历史已保存。请提高预算后继续，或创建后续任务。 / Context budget reached. Full history is saved. Increase the budget to resume or create a follow-up task.',
+                'fields':[{'name':'max_context_chars','label':'Context character budget','type':'number'}],
+                'value':{'max_context_chars':min(2000000,max(budget*2,size+4000))},'budget_pause':True,
+                'context_chars':size,'configured_budget':budget},'provenance':{'budget_pause':True},'skill_snapshot':record.to_dict()}
+    output,provenance=call_model(system,payload)
+    provenance.update(context_chars=size,context_budget=budget)
+    errors=finish_errors(output,cp.get('skill_history',[]))
+    if errors:
+        previous=output
+        output,repair=call_model(system,{**payload,'previous_decision':previous,'validation_errors':errors,
+            'instruction':'Correct the result using actual tool evidence. Do not fabricate another tool execution.'})
+        provenance.update(repair={'original_decision':previous,'errors':errors,'provenance':repair})
+        remaining=finish_errors(output,cp.get('skill_history',[]))
+        if remaining:raise SkillOutputError('Skill final result failed validation after one model repair: '+'; '.join(remaining),output,provenance)
     action=output.get('action')
     if action not in {'tool','ask','finish'}:
         raise ValueError('Unsupported skill action; expected tool, ask or finish')
@@ -126,6 +184,42 @@ def next_skill_step(task, *, manager=None, call_model=model_json):
     if action=='finish' and not output.get('result'):
         raise ValueError('Skill result is empty')
     return {'decision':output,'provenance':provenance,'skill_snapshot':record.to_dict()}
+
+
+def evidence_ids_from_history(history):
+    ids=set();knowledge=False
+    for entry in history:
+        result=entry.get('result')
+        if not isinstance(result,dict):continue
+        data=result.get('data',result)
+        if not isinstance(data,dict):continue
+        for hit in data.get('matches',[]):
+            key=hit.get('retrieval_id') or hit.get('unit_id') or hit.get('id')
+            if key:ids.add(str(key))
+            knowledge=True
+        if (data.get('document') or {}).get('document_id'):
+            ids.add(str(data['document']['document_id']))
+        for turn in (data.get('document') or {}).get('turns',[]):
+            if turn.get('turn_id'):ids.add(str(turn['turn_id']))
+        for record in data.get('records',[]):
+            if record.get('record_id'):ids.add(str(record['record_id']))
+        if data.get('record_id'):ids.add(str(data['record_id']))
+    return ids,knowledge
+
+
+def finish_errors(output,history):
+    if output.get('action')!='finish':return []
+    result=output.get('result')
+    if not isinstance(result,dict):return ['result must be an object']
+    errors=[]
+    if not isinstance(result.get('answer'),str) or not result['answer'].strip():errors.append('result.answer must be nonempty')
+    cited=result.get('evidence_ids',[])
+    valid,knowledge=evidence_ids_from_history(history)
+    if not isinstance(cited,list):errors.append('result.evidence_ids must be a list')
+    else:
+        if any(str(key) not in valid for key in cited):errors.append('Citations must use canonical IDs present in tool results')
+        if knowledge and not cited:errors.append('Cite at least one retrieved source actually used in result.evidence_ids')
+    return errors
 
 # Domain tool names used in the bundled SKILL.md files share the same catalog.
 TOOLS.update({
@@ -139,7 +233,7 @@ _base_tool=execute_tool
 
 
 def tool_requires_approval(name,args):
-    return (name in CUSTOM_TOOLS and CUSTOM_TOOLS[name]['requires_approval']) or (name=='theraskill_extraction' and args.get('operation') in {'start','handoff','cancel'}) or (name=='theraskill_resources' and args.get('operation') in {'build','install','activate','rollback'})
+    return name=='skill.run_script' or (name in CUSTOM_TOOLS and CUSTOM_TOOLS[name]['requires_approval']) or (name=='theraskill_extraction' and args.get('operation') in {'start','handoff','cancel'}) or (name=='theraskill_resources' and args.get('operation') in {'build','install','activate','rollback'})
 
 
 def execute_tool(name,args,*,skill_path=None):

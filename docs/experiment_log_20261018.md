@@ -145,3 +145,7 @@ python scripts/AdvancedRetrieval/evaluate_managed_retrieval.py \
 - 测试改为精确断言探测的 PID/信号并抛出 `ProcessLookupError`，显式模拟已退出 worker，不绕过进程保护，不改变生产恢复逻辑或增加依赖。
 - 同一干净源码环境设置 `CI=true` 复测，为 **219 passed / 6 skipped / 1 既有 Starlette 警告 / 13.70 秒**。环境为 Python 3.12.7、pytest 9.1.1、FastAPI 0.146.0、Pydantic 2.14.1、NumPy 2.5.4、FAISS 1.15.1；与此前开发环境版本分开记录。
 - 保留首次失败及修复后日志：`artifacts/git_sync_20261019/ci-jobs.json`、`ci-annotations-*.json`、`ci-repro-install.log`、`ci-repro-tests.log`、`ci-repro-tests-fixed.log`。修复随独立提交推送 main；最终远端检查结果另存本地收据，不把本机通过提前表述为 GitHub 已通过。
+
+## 2026-10-19 — 0.5.0 使用完整性
+
+用户授权推进真实 TaskEngine 评测、长文本、检索验收、界面与技能兼容，并打包手动分发资源。起点 10fa3a4；本轮完整记录见 `docs/upgrade_20261019.zh.md`。原始产物 `artifacts/upgrade_20261019/` 包含真实模型 / fixture 分开的日志、报告和源码清单。干净源码 230 passed、6 skipped；真实行为 12/12、真实检索 13/13 工程检查通过；不构成人工相关性或临床验证。

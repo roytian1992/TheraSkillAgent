@@ -1,6 +1,10 @@
 ---
 name: rebt-belief-work-support
-description: "用 ABC 结构探索事件、信念、后果、质疑和替代信念。"
+description: 用 ABC 结构探索事件、信念、后果、质疑和替代信念。
+runtime:
+  required_tools:
+  - theraskill_context
+  - theraskill_knowledge_search
 ---
 
 # REBT Belief Work Support
