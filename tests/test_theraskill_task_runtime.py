@@ -75,8 +75,15 @@ def test_new_engine_does_not_interrupt_another_live_process(tmp_path):
     finally:e.close()
 
 
-def test_interrupted_task_is_explicitly_resumable(tmp_path):
-    store=TaskStore(tmp_path/'t.sqlite');t=store.create('skill','goal');t.update(status='running',worker_pid=999999999);store.save(t)
+def test_interrupted_task_is_explicitly_resumable(tmp_path, monkeypatch):
+    worker_pid = 999999999
+
+    def exited_worker(pid, signal):
+        assert (pid, signal) == (worker_pid, 0)
+        raise ProcessLookupError('fixture worker has exited')
+
+    monkeypatch.setattr('theraskill_agent.task_runtime.os.kill', exited_worker)
+    store=TaskStore(tmp_path/'t.sqlite');t=store.create('skill','goal');t.update(status='running',worker_pid=worker_pid);store.save(t)
     e=TaskEngine(store)
     try:
         recovered=store.get(t['id']);assert recovered['status']=='interrupted'

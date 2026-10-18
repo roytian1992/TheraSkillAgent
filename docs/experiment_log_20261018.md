@@ -137,3 +137,11 @@ python scripts/AdvancedRetrieval/evaluate_managed_retrieval.py \
 - 在 `/tmp/theraskill-git-source-p4bw51_l/source` 验证发布清单导出的干净源码：Node 22.22.2 / npm 10.9.7，`npm ci` 与四界面 `npm run build` 成功；Python 3.12.7，`python -m pytest -q -o addopts='' tests/test_standalone_kernel.py tests/test_theraskill*.py tests/smoke_theraskill_install.py` 为 219 passed / 6 skipped / 3 warnings / 17.96 秒。六项跳过依赖未分发的模拟语言素材，三项旧宿主测试未导出；不可把此口径与完整本机 228 passed 混为一谈。
 - 同一干净源码 `python -m build --no-isolation` 成功生成 sdist 并从 sdist 构建 wheel；在 `/tmp/theraskill-lean-verify-0_b93602/venv` 以 `python -I` 运行导出源码中的安装 smoke，通过四界面、六模块、fixture 抽取交接及词法检索检查。没有为这轮 Git 同步额外发起真实业务模型任务。
 - 证据：`artifacts/git_sync_20261019/source-manifest.json`、`npm-ci.log`、`frontend-build.log`、`clean-source-tests.log`、`package-build.log`、`lean-validation.log`。提交前继续执行清单、链接、暂存范围及文件 hash 核对；实际提交和推送收据记录到本地 `git-receipt.json`。远端 CI 以实际运行状态为准。
+
+## 36. 远端 CI 的退出进程测试隔离修复（2026-10-19）
+
+- 首次同步提交 `efa94061608ae27778625b46376c84b384933e46` 已推送 main 并核对远端 SHA。其 standalone-build 运行 `39145479312` 的 Python 3.11 测试失败、3.12 被矩阵取消；前端构建和源码范围检查均通过。首次本机 GPG 签名失败后，仅对本次提交关闭签名，未修改全局配置。
+- 公开 API 可读取 job/annotation，但日志下载返回 403。为取得具体原因，在 `/tmp/theraskill-ci-repro-oa6itxdn/venv` 新建环境，安装与 CI 相同的 `dev,retrieval` extras，并对干净导出源码运行测试；复现为 218 passed / 6 skipped / 1 failed。失败点是 `test_interrupted_task_is_explicitly_resumable` 对虚构 PID 的 `os.kill(pid, 0)` 探测被 conftest 的进程保护拦截。
+- 测试改为精确断言探测的 PID/信号并抛出 `ProcessLookupError`，显式模拟已退出 worker，不绕过进程保护，不改变生产恢复逻辑或增加依赖。
+- 同一干净源码环境设置 `CI=true` 复测，为 **219 passed / 6 skipped / 1 既有 Starlette 警告 / 13.70 秒**。环境为 Python 3.12.7、pytest 9.1.1、FastAPI 0.146.0、Pydantic 2.14.1、NumPy 2.5.4、FAISS 1.15.1；与此前开发环境版本分开记录。
+- 保留首次失败及修复后日志：`artifacts/git_sync_20261019/ci-jobs.json`、`ci-annotations-*.json`、`ci-repro-install.log`、`ci-repro-tests.log`、`ci-repro-tests-fixed.log`。修复随独立提交推送 main；最终远端检查结果另存本地收据，不把本机通过提前表述为 GitHub 已通过。
