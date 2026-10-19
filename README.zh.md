@@ -8,6 +8,8 @@ TheraSkillAgent 不是一个只会生成回复的聊天界面。它关注的是�
 
 [English README](README.md) · [中文部署说明](docs/deployment.zh.md) · [English deployment guide](docs/deployment.en.md) · [模拟患者说明](docs/simulated_patients.zh.md) · [资源安装说明](docs/resource_installation.zh.md)
 
+复杂设计和评审任务分阶段生成、核验与修复。患者和对话评估可查看后台进度、失败恢复；课程批次展示计划和覆盖。详见[证据检查与任务恢复](docs/workflow_reliability.zh.md)。
+
 ## 它解决什么问题
 
 心理咨询训练通常需要同时处理四类工作：

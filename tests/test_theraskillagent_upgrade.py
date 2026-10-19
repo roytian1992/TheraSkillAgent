@@ -15,6 +15,8 @@ class FakeClient:
     model = "fake-model"
 
     def chat(self, system_prompt, user_payload, *, force_json_response=None, extra_user_instruction=None):
+        if system_prompt.startswith("Independently review"):
+            return json.dumps({"verdict": "pass", "findings": [], "summary": "Fixture source-supported."})
         return json.dumps({"claim": "supported", "evidence": "source text"})
 
 

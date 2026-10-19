@@ -274,9 +274,11 @@ def review_digest(review_report: dict[str, Any], summary_report: dict[str, Any] 
                 "severity": row.get("severity"),
                 "category": row.get("category"),
                 "message": row.get("message"),
+                "evidence": row.get("evidence") or [],
             }
-            for row in (result.get("findings") or [])[:8]
+            for row in (result.get("findings") or [])
         ],
+        "evidence_coverage": result.get("evidence_coverage") or {},
         "recommended_actions": result.get("recommended_actions") or [],
         "key_turning_points": session_summary.get("key_turning_points") or [],
         "active_unresolved_threads": session_summary.get("active_unresolved_threads") or [],

@@ -71,6 +71,8 @@ class ResponseCandidate(TrainingModel):
     rationale: str
     applicable_context: str
     limitations: str
+    evidence_unit_ids: list[str] = Field(default_factory=list)
+    evidence: list[dict[str, str]] = Field(default_factory=list)
 
 
 class ResponseComparison(TrainingModel):
@@ -84,6 +86,8 @@ class ResponseComparison(TrainingModel):
     prompt_release_id: str
     knowledge_release_id: str
     evidence_unit_ids: list[str] = Field(default_factory=list)
+    evidence_context: list[dict[str, Any]] = Field(default_factory=list)
+    retrieval_summary: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -304,6 +308,10 @@ class LLMResponseComparisonEngine:
         model_config: str | Path,
     ) -> None:
         root = Path(project_root).resolve()
+        self.project_root = root
+        self.model_config_path = Path(model_config).resolve()
+        self.retriever = None
+        self.retrieval_paths = None
         common = root / "scripts/_common"
         if str(common) not in sys.path:
             sys.path.insert(0, str(common))
@@ -316,6 +324,37 @@ class LLMResponseComparisonEngine:
             "zh": load_prompt(root / "prompts/Simulation/response_comparison_zh.md"),
             "en": load_prompt(root / "prompts/Simulation/response_comparison_en.md"),
         }
+
+    def _retrieve_evidence(self, query: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        from domains.theraskill.hybrid_retrieval import (HybridRetrievalError, TheraSkillHybridRetriever,
+            selected_retrieval_paths, search_policy_lexical)
+        from domains.theraskill.runtime import runtime_root
+        from theraskill_agent.resources import active_index
+
+        selected = active_index()
+        index_id = selected[1]["index_id"] if selected else None
+        paths = selected_retrieval_paths(self.model_config_path, runtime_root() / "cache/comparison_retrieval")
+        try:
+            if self.retriever is None or self.retrieval_paths != paths:
+                self.retriever = TheraSkillHybridRetriever(self.project_root, paths)
+                self.retrieval_paths = paths
+            bundle = self.retriever.search(query, skill="therapy-response-reviewer", top_k=6)
+        except HybridRetrievalError:
+            try:
+                bundle = search_policy_lexical(self.project_root, paths.sqlite_fts, query,
+                                               skill="therapy-response-reviewer", top_k=6)
+            except HybridRetrievalError:
+                bundle = {"items": [], "retrieval_mode": "unavailable"}
+        context = []
+        for item in bundle.get("items") or []:
+            unit_id = str(item.get("release_unit_id") or item.get("retrieval_id") or "")
+            text = str(item.get("text_preview") or "")
+            if unit_id and text:
+                context.append({"unit_id": unit_id, "text": text, "label": item.get("canonical_label"),
+                                "allowed_use": item.get("allowed_use"), "forbidden_use": item.get("forbidden_use"),
+                                "evidence_role": item.get("evidence_role")})
+        return context, {"index_id": index_id, "retrieval_mode": bundle.get("retrieval_mode"),
+                         "source_count": len(context), "status": "available" if context else "no_evidence"}
 
     def generate(
         self,
@@ -330,40 +369,50 @@ class LLMResponseComparisonEngine:
     ) -> ResponseComparison:
         from domains.theraskill.theraskill_llm import chat_json_with_repair
 
-        result = chat_json_with_repair(
-            self.client,
-            self.prompts.get(str(language).lower(), self.prompts["zh"]),
-            {
-                "scenario": scenario,
-                "transcript_through_target": transcript,
-                "target_turn_id": target_turn_id,
-                "required_candidate_count": 3,
-            },
-            parse_retries=1,
-            max_prompt_tokens=12000,
-            force_json_first=True,
-        )
-        candidates = [
-            ResponseCandidate(
-                candidate_id=f"candidate_{index + 1}",
-                framework=str(row.get("framework") or "integrative"),
-                strategy=str(row.get("strategy") or "supportive exploration"),
-                response=str(row.get("response") or "").strip(),
-                rationale=str(row.get("rationale") or "").strip(),
-                applicable_context=str(row.get("applicable_context") or "").strip(),
-                limitations=str(row.get("limitations") or "").strip(),
-            )
-            for index, row in enumerate((result.get("candidates") or [])[:3])
-        ]
-        if len(candidates) != 3 or any(not row.response for row in candidates):
-            raise ValueError("response comparison requires three complete candidates")
+        query = " ".join(str(row.get("text") or "") for row in transcript[-6:])
+        context, retrieval = self._retrieve_evidence(query)
+        by_id = {row["unit_id"]: row for row in context}
+        prompt = self.prompts.get(str(language).lower(), self.prompts["zh"]) + """
+Use retrieved_evidence as reference material, respecting allowed_use and forbidden_use.
+For each candidate also return evidence: [{"unit_id": "supplied ID", "quote": "exact excerpt"}].
+Cite at least one applicable source per candidate when evidence is supplied. Quotes must be
+verbatim from retrieved_evidence.text. Explain the connection in rationale. Do not cite past
+session evidence or invent sources. If no evidence is supplied, return evidence: [], explicitly
+state in limitations that this is a transcript-based draft without knowledge-library grounding.
+"""
+        def validate(value: dict[str, Any]) -> None:
+            rows = value.get("candidates")
+            if not isinstance(rows, list) or len(rows) != 3:
+                raise ValueError("Response comparison requires exactly three candidates")
+            for row in rows:
+                if not isinstance(row, dict) or any(not isinstance(row.get(key), str) or not row[key].strip()
+                    for key in ("framework", "strategy", "response", "rationale", "applicable_context", "limitations")):
+                    raise ValueError("Every comparison candidate requires complete text fields")
+                citations = row.get("evidence")
+                if not isinstance(citations, list) or (context and not citations):
+                    raise ValueError("Every candidate must cite the supplied knowledge when available")
+                for citation in citations:
+                    source = by_id.get(citation.get("unit_id")) if isinstance(citation, dict) else None
+                    quote = citation.get("quote") if isinstance(citation, dict) else None
+                    if not source or not isinstance(quote, str) or not quote.strip() or quote not in source["text"]:
+                        raise ValueError("Comparison evidence must quote an actual supplied knowledge unit")
+            if len({row["response"].strip().casefold() for row in rows}) != 3:
+                raise ValueError("Comparison candidates must not be identical responses")
+
+        result = chat_json_with_repair(self.client, prompt, {
+            "scenario": scenario, "transcript_through_target": transcript, "target_turn_id": target_turn_id,
+            "required_candidate_count": 3, "retrieved_evidence": context,
+        }, parse_retries=1, max_prompt_tokens=12000, force_json_first=True, validate=validate)
+        candidates = [ResponseCandidate(candidate_id=f"candidate_{index + 1}",
+            **{key: row[key].strip() for key in ("framework", "strategy", "response", "rationale", "applicable_context", "limitations")},
+            evidence=row["evidence"], evidence_unit_ids=list(dict.fromkeys(item["unit_id"] for item in row["evidence"])))
+            for index, row in enumerate(result["candidates"])]
         return ResponseComparison(
-            comparison_id=f"comparison_{uuid.uuid4().hex}",
-            session_id=session_id,
-            target_turn_id=target_turn_id,
-            candidates=candidates,
-            model_config_id=self.model_name,
-            prompt_release_id=f"response_comparison_{str(language).lower()}_v1",
+            comparison_id=f"comparison_{uuid.uuid4().hex}", session_id=session_id, target_turn_id=target_turn_id,
+            status="complete" if context else "limited_evidence", candidates=candidates,
+            model_config_id=self.model_name, prompt_release_id=f"response_comparison_{str(language).lower()}_v2",
             knowledge_release_id=knowledge_release_id,
-            evidence_unit_ids=list(dict.fromkeys(evidence_unit_ids)),
+            evidence_unit_ids=list(dict.fromkeys(item for candidate in candidates for item in candidate.evidence_unit_ids)),
+            evidence_context=context, retrieval_summary={**retrieval, "session_knowledge_release_id": knowledge_release_id,
+                "prior_session_evidence_count": len(set(evidence_unit_ids)), "citation_validation": "exact_source_and_quote"},
         )

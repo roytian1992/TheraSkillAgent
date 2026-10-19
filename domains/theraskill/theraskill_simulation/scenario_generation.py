@@ -12,6 +12,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 from .patient_builder import PatientDossier, compile_patient, dossier_from_bundle, public_role_card, save_bundle_version
+from .generation_workflow import generation_checkpoint, fingerprint, model_signature, implementation_signature
 
 
 class ScenarioGenerationRequest(BaseModel):
@@ -26,6 +27,7 @@ class ScenarioGenerationRequest(BaseModel):
     constraints: str = Field(default="", max_length=2000)
     patient: PatientDossier | None = None
     use_knowledge: bool = True
+    request_id: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class PatientBuildRequest(ScenarioGenerationRequest):
@@ -72,6 +74,7 @@ class ScenarioDraftReviewRequest(BaseModel):
 
     action: Literal["approve", "reject"]
     reason: str = Field(default="", max_length=2000)
+    override_model_review: bool = False
 
 
 class ScenarioGenerator(Protocol):
@@ -132,6 +135,10 @@ def build_quality_report(
         detail="来访者角色卡为空，开始训练前应补充",
     )
     check("synthetic_marker", row.get("generated") is True and row.get("synthetic") is True, detail="必须标记为合成草稿")
+    workflow = row.get("generation_workflow")
+    if workflow:
+        check("generation_review", workflow.get("review_status") in {"pass", "pass_after_repair"},
+              severity="warning", detail="模型审阅尚未通过；请复核问题后重新检查或记录人工审核理由")
     risk_band = _normalise_text(row.get("risk_band"))
     check("risk_band", risk_band in {"low", "elevated", "high"}, severity="warning", detail="风险带应为 low、elevated 或 high")
     bundle_path = str(row.get("case_bundle_path") or "")
@@ -201,6 +208,52 @@ def _clean_list(value: Any, *, limit: int = 8) -> list[str]:
     return list(dict.fromkeys(" ".join(str(item).split()) for item in value if str(item).strip()))[:limit]
 
 
+def validate_scenario_review(value: Any) -> None:
+    if not isinstance(value, dict) or value.get("status") not in {"pass", "repair"}:
+        raise ValueError("Review must explicitly return status pass or repair")
+    issues = value.get("issues")
+    if not isinstance(issues, list):
+        raise ValueError("Review must include an issues array")
+    for issue in issues:
+        if (not isinstance(issue, dict) or issue.get("severity") not in {"error", "warning"}
+                or not str(issue.get("code") or "").strip() or not str(issue.get("detail") or "").strip()):
+            raise ValueError("Each review issue needs code, severity and detail")
+    if value["status"] == "pass" and any(issue["severity"] == "error" for issue in issues):
+        raise ValueError("A review containing unresolved errors cannot pass")
+    if value["status"] == "repair" and not issues:
+        raise ValueError("A repair request must identify at least one issue")
+
+
+def _validate_package(value: Any) -> None:
+    if not isinstance(value, dict) or not isinstance(value.get("scenario_brief"), str) or not 8 <= len(value["scenario_brief"].strip()) <= 1200:
+        raise ValueError("Scenario package needs a public brief of 8–1200 characters")
+    for name in ("learner_role_card", "visible_profile", "hidden_profile", "continuity_seed", "initial_session_state"):
+        if name in value and not isinstance(value[name], dict):
+            raise ValueError(f"{name} must be an object")
+    if "scenario_tags" in value and (not isinstance(value["scenario_tags"], list) or any(not isinstance(v, str) for v in value["scenario_tags"])):
+        raise ValueError("scenario_tags must contain strings")
+    for name, allowed in (("risk_band", {"low", "elevated", "high"}), ("difficulty_band", {"low", "medium", "high"})):
+        if name in value and value[name] not in allowed:
+            raise ValueError(f"Invalid {name}")
+    budget = value.get("recommended_turn_budget", 4)
+    if type(budget) is not int or not 2 <= budget <= 12:
+        raise ValueError("recommended_turn_budget must be an integer from 2 to 12")
+
+
+def effective_scenario_package(patient: PatientDossier, package: dict, request: ScenarioGenerationRequest) -> dict:
+    """Use the same compilation as saving, so the reviewer sees the final facts."""
+    package = {**package, "scenario_family": request.scenario_family,
+               "difficulty_band": request.difficulty_band, "risk_band": request.risk_band,
+               "case_family": package.get("case_family") or ("Synthetic patient" if request.language == "en" else "合成患者"),
+               "scenario_tags": _clean_list(package.get("scenario_tags"), limit=12) or _clean_list(request.scenario_tags, limit=12) or [request.scenario_family]}
+    row = {**request.model_dump(mode="json"), **package, "case_id": "review-candidate", "revision": 1,
+           "scenario_brief": package.get("scenario_brief") or request.brief}
+    bundle = compile_patient({"runtime_state_seed": {"initial_session_state": package.get("initial_session_state") or {}}}, row, patient)
+    return {**package, **bundle["authoritative_layer"],
+            "learner_role_card": public_role_card(bundle, row),
+            "initial_session_state": bundle["runtime_state_seed"]["initial_session_state"]}
+
+
 class LLMScenarioGenerator:
     def __init__(
         self,
@@ -267,97 +320,106 @@ class LLMScenarioGenerator:
         except Exception as exc:
             return {"status": "unavailable", "reason": redact_secrets(str(exc))[:500], "items": []}
 
-    def generate(self, request: ScenarioGenerationRequest) -> dict[str, Any]:
-        """Generate a scenario through a staged, repairable workflow.
-
-        The browser endpoint remains compatible with the original synchronous
-        contract, but generation is split into planning, dossier construction,
-        runtime-package construction, and independent review. This gives smaller
-        Qwen-class models a narrower JSON task at each call and preserves a
-        trace that can later be surfaced as a durable Task timeline.
-        """
-        from domains.theraskill.theraskill_llm import chat_json_with_repair
-
-        knowledge = self._knowledge_context(request)
+    def generate(self, request: ScenarioGenerationRequest, *, workflow_id: str | None = None, progress=None) -> dict[str, Any]:
+        """Resume one durable design job; a fresh invocation creates a new case."""
         prompts = self._prompts_for(request.language)
+        binding = {"version": 3, "request": request.model_dump(mode="json"), "prompts": prompts,
+                   "model": model_signature(self.client), "implementation": implementation_signature()}
+        with generation_checkpoint(self.output_root, workflow_id or f"patient_{uuid.uuid4().hex}", binding, progress) as checkpoint:
+            if checkpoint.state.get("result"):
+                result = checkpoint.state["result"]
+                row = result["scenario"]
+                if not Path(row["case_bundle_path"]).is_file():
+                    raise ValueError("Saved generation bundle is missing; restore it before retrying")
+                import hashlib
+                if hashlib.sha256(Path(row["case_bundle_path"]).read_bytes()).hexdigest() != row["bundle_sha256"]:
+                    raise ValueError("Saved generation bundle changed; restore it before retrying")
+                return result
+            result = self._generate(request, checkpoint, prompts)
+            checkpoint.state["result"] = result
+            checkpoint.save()
+            return result
+
+    def _generate(self, request, checkpoint, prompts):
+        from domains.theraskill.theraskill_llm import chat_json_with_repair
+        from theraskill_agent.text import redact_secrets
+
+        knowledge = checkpoint.run("knowledge", request.model_dump(mode="json"), lambda: self._knowledge_context(request))
         base_payload = {**request.model_dump(mode="json"), "knowledge_context": knowledge}
-        trace: list[dict[str, Any]] = []
+        supplied = ({key: value for key, value in request.patient.model_dump(mode="json").items() if value}
+                    if request.patient is not None else {})
 
-        def call_stage(stage: str, payload: dict[str, Any], *, validate=None) -> dict[str, Any]:
-            value = chat_json_with_repair(
-                self.client,
-                prompts[stage],
-                payload,
-                parse_retries=1,
-                max_prompt_tokens=12000,
-                force_json_first=True,
-                validate=validate,
-            )
-            trace.append({"stage": stage, "status": "completed"})
-            return value if isinstance(value, dict) else {}
+        def pinned_patient(value):
+            patient = PatientDossier.model_validate({**value, **supplied})
+            if not patient.presenting_concern:
+                raise ValueError("Patient dossier requires a presenting concern")
+            return patient
 
-        def validate_patient(value: dict[str, Any]) -> None:
-            patient_value = value.get("patient")
-            if not isinstance(patient_value, dict):
-                raise ValueError("patient dossier stage must return a patient object")
-            PatientDossier.model_validate(patient_value)
+        def call_stage(stage, payload, *, validate=None, prompt_stage=None):
+            prompt = prompts[prompt_stage or stage]
+            def operation():
+                return chat_json_with_repair(self.client, prompt, payload, parse_retries=1,
+                    max_prompt_tokens=12000, force_json_first=True, validate=validate)
+            return checkpoint.run(stage, {"prompt": prompt, "payload": payload}, operation, validate)
 
-        plan = call_stage("plan", {**base_payload, "workflow_stage": "plan"})
-        patient_result = call_stage(
-            "patient",
-            {**base_payload, "workflow_stage": "patient", "design_plan": plan},
-            validate=validate_patient,
-        )
-        package = call_stage(
-            "package",
-            {
-                **base_payload,
-                "workflow_stage": "package",
-                "design_plan": plan,
-                "patient_dossier": patient_result.get("patient"),
-            },
-        )
+        def validate_plan(value):
+            if not isinstance(value, dict) or not isinstance(value.get("training_goal"), str) or not value["training_goal"].strip():
+                raise ValueError("Design plan requires a training_goal")
 
-        review_payload = {
-            **base_payload,
-            "workflow_stage": "review",
-            "design_plan": plan,
-            "patient_dossier": patient_result.get("patient"),
-            "scenario_package": package,
-        }
-        try:
-            review = call_stage("review", review_payload)
-        except Exception as exc:  # A review outage should not lose a usable draft.
-            review = {"status": "unavailable", "issues": [{"severity": "warning", "detail": str(exc)[:500]}]}
-            trace.append({"stage": "review", "status": "unavailable", "error": str(exc)[:500]})
+        def validate_patient(value):
+            if not isinstance(value, dict) or not isinstance(value.get("patient"), dict):
+                raise ValueError("Patient stage must return a patient object")
+            pinned_patient(value["patient"])
 
-        # A reviewer can request one focused repair pass. Deterministic checks
-        # still run after repair and remain the final gate.
-        if str(review.get("status") or "pass").lower() == "repair":
+        plan = call_stage("plan", {**base_payload, "workflow_stage": "plan"}, validate=validate_plan)
+        patient_result = call_stage("patient", {**base_payload, "workflow_stage": "patient", "design_plan": plan}, validate=validate_patient)
+        patient = pinned_patient(patient_result["patient"])
+        package = call_stage("package", {**base_payload, "workflow_stage": "package", "design_plan": plan,
+                                         "patient_dossier": patient.model_dump(mode="json")}, validate=_validate_package)
+        package = effective_scenario_package(patient, package, request)
+        history = []
+
+        def review_candidate(stage):
             try:
-                repaired = call_stage(
-                    "repair",
-                    {
-                        **base_payload,
-                        "workflow_stage": "repair",
-                        "design_plan": plan,
-                        "patient_dossier": patient_result.get("patient"),
-                        "scenario_package": package,
-                        "review": review,
-                    },
-                )
-                if isinstance(repaired.get("patient"), dict):
-                    PatientDossier.model_validate(repaired["patient"])
-                    patient_result = {**patient_result, "patient": repaired["patient"]}
-                package = {**package, **{key: value for key, value in repaired.items() if key != "patient"}}
-                review = {**review, "status": "pass_after_repair", "repaired": True}
-            except Exception as exc:  # Preserve the draft; deterministic checks remain the gate.
-                review = {**review, "repair_status": "unavailable", "repair_error": str(exc)[:500]}
-                trace.append({"stage": "repair", "status": "unavailable", "error": str(exc)[:500]})
+                reviewed = call_stage(stage, {**base_payload, "workflow_stage": stage, "design_plan": plan,
+                    "patient_dossier": patient.model_dump(mode="json"), "scenario_package": package},
+                    validate=validate_scenario_review, prompt_stage="review")
+            except Exception as exc:
+                reviewed = {"status": "unavailable", "issues": [{"code": "review_unavailable", "severity": "error",
+                             "detail": redact_secrets(str(exc))[:500]}]}
+            history.append(dict(reviewed))
+            return reviewed
 
+        review = review_candidate("review")
+        repair_requested = review["status"] == "repair"
+        if repair_requested:
+            before = fingerprint({"patient": patient.model_dump(mode="json"), "package": package})
+            def validate_repair(value):
+                if not isinstance(value, dict) or not value or set(value) - (set(package) | {"patient"}):
+                    raise ValueError("Repair must change known patient or scenario fields")
+                revised_patient = pinned_patient(value.get("patient", patient.model_dump(mode="json")))
+                revised_package = {**package, **{key: v for key, v in value.items() if key != "patient"}}
+                _validate_package(revised_package)
+                revised_package = effective_scenario_package(revised_patient, revised_package, request)
+                if before == fingerprint({"patient": revised_patient.model_dump(mode="json"), "package": revised_package}):
+                    raise ValueError("Repair made no effective changes to the reviewed candidate")
+            try:
+                repaired = call_stage("repair", {**base_payload, "workflow_stage": "repair", "design_plan": plan,
+                    "patient_dossier": patient.model_dump(mode="json"), "scenario_package": package, "review": review},
+                    validate=validate_repair)
+                patient = pinned_patient(repaired.get("patient", patient.model_dump(mode="json")))
+                package = effective_scenario_package(patient, {**package, **{k: v for k, v in repaired.items() if k != "patient"}}, request)
+                review = {**review_candidate("re_review"), "repaired": True}
+                if review["status"] == "pass":
+                    review["status"] = "pass_after_repair"
+            except Exception as exc:
+                review = {**review, "repair_status": "failed", "repair_error": redact_secrets(str(exc))[:500]}
+        review["history"] = history
+        patient_result = {"patient": patient.model_dump(mode="json")}
+        trace = checkpoint.trace
         result = {**package, "patient": patient_result.get("patient")}
-        scenario_id = f"generated_{uuid.uuid4().hex}"
-        case_id = f"generated_case_{uuid.uuid4().hex}"
+        scenario_id = f"generated_{checkpoint.state['ids']['scenario']}"
+        case_id = f"generated_case_{checkpoint.state['ids']['case']}"
         visible = result.get("visible_profile") or {}
         hidden = result.get("hidden_profile") or {}
         continuity = result.get("continuity_seed") or {}
@@ -381,19 +443,21 @@ class LLMScenarioGenerator:
             "synthetic": True,
             "review_status": "draft",
             "review_history": [],
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": checkpoint.state["created_at"],
             "revision": 1,
             "grounding_status": knowledge["status"],
             "generation_workflow": {
                 "mode": "staged_agentic_generation",
                 "stages": trace,
-                "review_status": str(review.get("status") or "pass"),
-                "repair_requested": bool(review.get("repaired")) or str(review.get("status") or "pass").lower() == "repair",
+                "review_status": review["status"],
+                "repair_requested": repair_requested,
+                "issues": review.get("issues", []),
+                "candidate_sha256": fingerprint({"patient": patient.model_dump(mode="json"), "package": package}),
             },
         }
         bundle = {
             "schema_version": "theraskill_generated_case_bundle_v1",
-            "bundle_id": f"generated_bundle_{uuid.uuid4().hex}",
+            "bundle_id": f"generated_bundle_{checkpoint.state['ids']['bundle']}",
             "case_id": case_id,
             "source_id": f"online::{scenario_id}",
             "metadata": {
@@ -415,7 +479,7 @@ class LLMScenarioGenerator:
             "runtime_priors": {},
             "runtime_state_seed": {"initial_session_state": initial_state},
             "provenance": {
-                "generated_by": "theraskill_online_scenario_agentic_v2",
+                "generated_by": "theraskill_online_scenario_agentic_v3",
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "request": request.model_dump(mode="json"),
                 "knowledge_grounding": knowledge,
@@ -427,41 +491,22 @@ class LLMScenarioGenerator:
                 },
             },
         }
-        patient_value = result.get("patient")
-        patient = (PatientDossier.model_validate(patient_value) if isinstance(patient_value, dict)
-                   else dossier_from_bundle(bundle, scenario))
-        if request.patient is not None:
-            # The user's supplied facts take precedence over model inventions;
-            # empty seed fields may be completed by the generator.
-            supplied = {key: value for key, value in request.patient.model_dump(mode="json").items() if value}
-            patient = PatientDossier.model_validate({**patient.model_dump(mode="json"), **supplied})
         bundle = compile_patient(bundle, scenario, patient)
         scenario["learner_role_card"] = public_role_card(bundle, scenario)
         scenario = save_bundle_version(bundle, scenario, self.output_root)
         return {"scenario": scenario, "case_bundle": bundle}
 
-    def generate_batch(self, request: ScenarioGenerationBatchRequest) -> list[dict[str, Any]]:
-        generated: list[dict[str, Any]] = []
-        for index in range(request.count):
-            variation = (
-                f"{request.constraints.strip()}\n"
-                + (
-                    f"This is scenario {index + 1}/{request.count} in a course batch. "
-                    "Vary the trigger or client goal so scenarios in the same batch are distinct."
-                    if str(request.language).lower() == "en"
-                    else (
-                        f"这是课程批次中的第 {index + 1}/{request.count} 个场景。"
-                        "请改变触发情境或来访者目标，避免与同批其他场景重复。"
-                    )
-                )
-            ).strip()
-            generated.append(self.generate(ScenarioGenerationRequest(
-                brief=request.brief,
-                scenario_family=request.scenario_family,
-                difficulty_band=request.difficulty_band,
-                risk_band=request.risk_band,
-                language=request.language,
-                scenario_tags=request.scenario_tags,
-                constraints=variation,
-            )))
-        return generated
+    def generate_batch(self, request: ScenarioGenerationBatchRequest, *, workflow_id: str | None = None) -> list[dict[str, Any]]:
+        from .course_generation import plan_course, course_requests, review_course
+        run_id = workflow_id or f"course_{uuid.uuid4().hex}"
+        with generation_checkpoint(self.output_root, run_id,
+                {"version": 1, "request": request.model_dump(mode="json"), "model": model_signature(self.client), "implementation": implementation_signature()}) as checkpoint:
+            plan = plan_course(self.client, request, checkpoint=checkpoint)
+            generated = [self.generate(case, workflow_id=f"{run_id}_case_{index}")
+                         for index, case in enumerate(course_requests(request, plan), start=1)]
+            report = review_course(self.client, request, plan,
+                [{"index": index, "scenario": result["scenario"]} for index, result in enumerate(generated, start=1)],
+                checkpoint=checkpoint)
+            checkpoint.state["course_review"] = report
+            checkpoint.save()
+            return [{**result, "course_plan": plan, "course_review": report} for result in generated]

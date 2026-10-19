@@ -252,6 +252,8 @@ def execute_tool(name,args,*,skill_path=None):
         from .task_runtime import domain_call
         op=args.get('operation');parameters=args.get('parameters') or {}
         if op in {'build','generate'}:
+            if op=='generate' and args.get('_call_id'):
+                parameters={**parameters,'request_id':args['_call_id']}
             return domain_call('simulation','/scenarios/'+('build-patient' if op=='build' else 'generate'),parameters)
         sid=quote(str(args.get('scenario_id') or ''),safe='')
         if not sid:raise ValueError('scenario_id is required')

@@ -165,6 +165,7 @@ class SupportSessionRecord(ContractModel):
     model_config_id: str | None = None
     prompt_release_id: str | None = None
     conversation_summary: str | None = None
+    summary_through_message: int = Field(default=0, ge=0)
     turn_traces: list[SupportTurnTrace] = Field(default_factory=list)
 
 
@@ -203,6 +204,7 @@ class SupportEngineResult(ContractModel):
     model_config_id: str
     prompt_release_id: str
     conversation_summary: str | None = None
+    summary_through_message: int = Field(default=0, ge=0)
     latency_ms: dict[str, int] = Field(default_factory=dict)
     history_compaction: dict[str, Any] = Field(default_factory=dict)
 

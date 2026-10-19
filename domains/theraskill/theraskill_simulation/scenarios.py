@@ -46,6 +46,11 @@ class ScenarioRegistry:
                 return row
             return existing[scenario_id]
 
+    def generated_for_batch(self, batch_id: str) -> list[dict[str, Any]]:
+        """Recover all batch members, independently of recent-list UI limits."""
+        with self._generated_lock:
+            return [row for row in self._generated_rows() if row.get("batch_id") == batch_id]
+
     def update_generated(self, scenario_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         if self.generated_registry_path is None:
             raise RuntimeError("generated scenario storage is not configured")

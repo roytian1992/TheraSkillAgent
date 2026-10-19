@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { tr } from '../../shared/i18n'
 import type { CallerRole, Scenario, SessionLanguage } from './types'
-import { buildPatient, forkPatient, inspectPatient, updateGeneratedScenario } from './api'
-import type { PatientDesign } from './api'
+import { buildPatient, forkPatient, inspectPatient, updateGeneratedScenario, startPatientJob, getPatientJob, listPatientJobs, retryPatientJob } from './api'
+import type { PatientDesign, PatientJob } from './api'
 import { cleanPatient, emptyPatient, PatientEditor } from './PatientEditor'
 
 export function PatientDesigner({ scenario, role, onSaved }: { scenario: Scenario; role: CallerRole; onSaved: (scenario: Scenario) => void }) {
@@ -46,11 +46,53 @@ export function PatientBuilder({ role, language, onSaved }: { role: CallerRole; 
   const [useKnowledge, setUseKnowledge] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [job, setJob] = useState<PatientJob | null>(null)
+  const [jobs, setJobs] = useState<PatientJob[]>([])
+  const notified = useRef('')
+  const onSavedRef = useRef(onSaved)
+  onSavedRef.current = onSaved
+  const running = !!job && ['queued', 'running'].includes(job.status)
+  const stageLabels: Record<string, string> = { knowledge: '检索构建知识', plan: '规划患者', patient: '构建档案', package: '构建场景', review: '审阅候选', repair: '定向修复', re_review: '修复后复验' }
+  useEffect(() => {
+    let active = true
+    setJob(null); setJobs([]); setError('')
+    void listPatientJobs(role).then(result => {
+      if (!active) return
+      const rows = result.jobs.filter(row => row.request.language === language)
+      setJobs(rows)
+      const saved = window.localStorage.getItem(`theraskill-patient-job-${language}`)
+      const restored = rows.find(row => row.job_id === saved) || rows.find(row => ['queued', 'running', 'failed', 'partial'].includes(row.status))
+      if (restored) { notified.current = restored.status === 'completed' ? restored.job_id : ''; setJob(restored) }
+    }).catch(err => active && setError(String(err)))
+    return () => { active = false }
+  }, [role, language])
+  useEffect(() => {
+    if (!job || job.request.language !== language) return
+    window.localStorage.setItem(`theraskill-patient-job-${language}`, job.job_id)
+    setJobs(rows => [job, ...rows.filter(row => row.job_id !== job.job_id)].slice(0, 20))
+    if (job.status === 'completed' && job.result?.scenario && notified.current !== job.job_id) {
+      notified.current = job.job_id
+      onSavedRef.current(job.result.scenario)
+    }
+  }, [job, language])
+  useEffect(() => {
+    if (!job || !running) return
+    let active = true
+    const timer = window.setInterval(() => { void getPatientJob(role, job.job_id).then(value => active && setJob(value)).catch(err => active && setError(String(err))) }, 1500)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [job?.job_id, running, role])
+  async function retry() {
+    if (!job) return
+    setBusy(true); setError('')
+    try { setJob(await retryPatientJob(role, job.job_id)) }
+    catch (err) { setError(String(err)) } finally { setBusy(false) }
+  }
   async function save(generate: boolean) {
     setBusy(true); setError('')
     try {
-      const result = await buildPatient(role, { brief, patient: cleanPatient(patient), scenario_family: family, difficulty_band: difficulty, risk_band: risk, language, use_knowledge: useKnowledge }, generate)
-      onSaved(result.scenario)
+      const payload = { brief, patient: cleanPatient(patient), scenario_family: family, difficulty_band: difficulty, risk_band: risk, language, use_knowledge: useKnowledge }
+      if (generate) setJob(await startPatientJob(role, payload))
+      else onSaved((await buildPatient(role, payload, false)).scenario)
     } catch (err) { setError(err instanceof Error ? err.message : String(err)) } finally { setBusy(false) }
   }
   return <section className="detail-band online-generation-band">
@@ -64,6 +106,14 @@ export function PatientBuilder({ role, language, onSaved }: { role: CallerRole; 
     <details><summary>{tr('补充人设、背景和近期经历（可选）')}</summary><PatientEditor value={patient} onChange={setPatient} prefix="build" /></details>
     <label className="patient-grounding"><input type="checkbox" checked={useKnowledge} onChange={e => setUseKnowledge(e.target.checked)} />{tr('生成时检索相关构建知识')}</label>
     {error && <p role="alert" className="error-banner">{error}</p>}
-    <div className="governance-actions"><button className="primary-button" disabled={busy || brief.trim().length < 8} onClick={() => void save(true)}>{busy ? tr('正在构建…') : tr('生成并保存患者草稿')}</button><button className="secondary-button" disabled={busy || brief.trim().length < 8 || !patient.presenting_concern.trim()} onClick={() => void save(false)}>{tr('直接保存填写的患者')}</button></div>
+    <div className="governance-actions"><button className="primary-button" disabled={busy || running || brief.trim().length < 8} onClick={() => void save(true)}>{busy || running ? tr('正在构建…') : tr('生成并保存患者草稿')}</button><button className="secondary-button" disabled={busy || running || brief.trim().length < 8 || !patient.presenting_concern.trim()} onClick={() => void save(false)}>{tr('直接保存填写的患者')}</button></div>
+    {!!jobs.length && <label>{tr('患者生成任务')}<select aria-label={tr('患者生成任务')} value={job?.job_id || ''} onChange={e => setJob(jobs.find(row => row.job_id === e.target.value) || null)}>{jobs.map(row => <option key={row.job_id} value={row.job_id}>{String(row.request.brief || '').slice(0, 60)} · {row.status}</option>)}</select></label>}
+    {job && <div className="patient-job" aria-live="polite">
+      <p>{tr('任务状态')}：{tr(({ queued: '等待执行', running: '进行中', completed: '已完成', failed: '失败', partial: '部分完成' } as Record<string, string>)[job.status] || job.status)} · {tr('刷新页面后可继续查看进度。')}</p>
+      <ol>{job.progress.stages?.map(stage => <li key={stage.stage}>{tr(stageLabels[stage.stage] || stage.stage)} · {tr(({ completed: '已完成', running: '进行中', failed: '失败' } as Record<string, string>)[stage.status] || stage.status)}{stage.error && <p role="alert">{stage.error}</p>}</li>)}</ol>
+      {job.error && <p role="alert" className="error-banner">{job.error}</p>}
+      {['failed', 'partial'].includes(job.status) && <button className="secondary-button" disabled={busy} onClick={() => void retry()}>{tr('从未完成步骤继续')}</button>}
+      {job.result?.scenario && <button className="secondary-button" onClick={() => onSaved(job.result!.scenario)}>{tr('打开患者草稿')}</button>}
+    </div>}
   </section>
 }

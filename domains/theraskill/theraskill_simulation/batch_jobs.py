@@ -16,11 +16,12 @@ def _now() -> str:
 
 
 class ScenarioBatchJobStore:
-    def __init__(self, root: str | Path, runner: Callable[[str, dict[str, Any]], dict[str, Any]], *, max_workers: int = 1, runner_reports_progress: bool = False) -> None:
+    def __init__(self, root: str | Path, runner: Callable[[str, dict[str, Any]], dict[str, Any]], *, max_workers: int = 1, runner_reports_progress: bool = False, job_prefix: str = "scenario_batch") -> None:
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.runner = runner
         self.runner_reports_progress = runner_reports_progress
+        self.job_prefix = job_prefix
         self._lock = threading.RLock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="theraskill-scenario-batch")
         self._jobs: dict[str, dict[str, Any]] = {}
@@ -61,7 +62,7 @@ class ScenarioBatchJobStore:
             return dict(job)
 
     def create(self, payload: dict[str, Any], actor: str) -> dict[str, Any]:
-        job_id = f"scenario_batch_{uuid.uuid4().hex[:16]}"
+        job_id = f"{self.job_prefix}_{uuid.uuid4().hex[:16]}"
         job = {
             "job_id": job_id,
             "status": "queued",
@@ -69,7 +70,7 @@ class ScenarioBatchJobStore:
             "updated_at": _now(),
             "actor": actor,
             "request": dict(payload),
-            "progress": {"processed": 0, "total": int(payload.get("count") or 0)},
+            "progress": {"processed": 0, "total": int(payload.get("count") or 1)},
             "result": None,
             "error": None,
         }
@@ -92,7 +93,8 @@ class ScenarioBatchJobStore:
             job = self._jobs.get(job_id)
             if not job:
                 return None
-            if job.get("status") not in {"failed", "partial"}:
+            review_pending = job.get("status") == "completed" and ((job.get("result") or {}).get("course_review") or {}).get("status") == "needs_review"
+            if job.get("status") not in {"failed", "partial"} and not review_pending:
                 raise ValueError("only failed or partial batch jobs can be retried")
             job["status"] = "queued"
             job["error"] = None
@@ -108,10 +110,12 @@ class ScenarioBatchJobStore:
             payload = dict(self._jobs[job_id].get("request") or {})
             result = (self.runner(job_id, payload, lambda **updates: self._update(job_id, **updates))
                       if self.runner_reports_progress else self.runner(job_id, payload))
-            self._update(job_id, status="completed", progress={"processed": int(result.get("count") or 0), "total": int(payload.get("count") or 0)}, result=result, finished_at=_now())
+            progress = {**self._jobs[job_id].get("progress", {}), "processed": int(result.get("count") or 1), "total": int(payload.get("count") or 1)}
+            self._update(job_id, status="completed", progress=progress, result=result, finished_at=_now())
         except Exception as exc:  # noqa: BLE001
             status = "partial" if int((self._jobs[job_id].get("progress") or {}).get("processed") or 0) else "failed"
-            self._update(job_id, status=status, error=f"{type(exc).__name__}: {exc}", finished_at=_now())
+            from theraskill_agent.text import redact_secrets
+            self._update(job_id, status=status, error=redact_secrets(f"{type(exc).__name__}: {exc}"), finished_at=_now())
 
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)

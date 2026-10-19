@@ -56,46 +56,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_payload(session_obj: dict[str, Any]) -> dict[str, Any]:
-    transcript = session_obj.get("transcript") or []
-    compact_transcript = [
-        {"role": item.get("role"), "text": str(item.get("text") or "")[:220]}
-        for item in transcript[-10:]
-    ]
-    turn_records = session_obj.get("turn_records") or []
-    compact_turn_records = []
-    for item in turn_records[-4:]:
-        compact_turn_records.append(
-            {
-                "turn_index": item.get("turn_index"),
-                "continuation_only": bool(item.get("continuation_only")),
-                "therapist_utterance": ((item.get("therapist_turn") or {}).get("therapist_utterance") or "")[:220],
-                "patient_utterance": ((item.get("patient_turn") or {}).get("patient_utterance") or "")[:220],
-                "patient_state_focus": {
-                    "current_emotion": ((item.get("patient_state_memory") or {}).get("current_emotion") or [])[:4],
-                    "current_cognition": ((item.get("patient_state_memory") or {}).get("current_cognition") or [])[:4],
-                    "unresolved_threads": ((item.get("patient_state_memory") or {}).get("unresolved_threads") or [])[:4],
-                },
-                "therapist_case_focus": {
-                    "working_formulation": ((item.get("therapist_case_memory") or {}).get("working_formulation") or [])[:4],
-                    "top_priorities": ((item.get("therapist_case_memory") or {}).get("top_priorities") or [])[:4],
-                    "risk_watchpoints": ((item.get("therapist_case_memory") or {}).get("risk_watchpoints") or [])[:4],
-                },
-            }
-        )
-    return {
-        "task": "build_session_longitudinal_summary",
-        "transcript": compact_transcript,
-        "turn_records": compact_turn_records,
-        "final_patient_state_memory": session_obj.get("final_patient_state_memory") or {},
-        "final_therapist_case_memory": session_obj.get("final_therapist_case_memory") or {},
-        "therapist_continuation": session_obj.get("therapist_continuation") or {},
-        "session_meta": {
-            "turn_count_completed": session_obj.get("turn_count_completed"),
-            "review_turn_record_count": session_obj.get("review_turn_record_count"),
-            "has_therapist_continuation": bool(session_obj.get("therapist_continuation")),
-            "stop_reason": session_obj.get("stop_reason"),
-        },
-    }
+    from domains.theraskill.theraskill_simulation.session_analysis import build_session_payload
+    return build_session_payload(session_obj)
 
 
 def main() -> int:
@@ -117,12 +79,11 @@ def main() -> int:
     client = OpenAICompatibleClient(model_config)
 
     try:
-        result = chat_json_with_repair(
-            client,
-            system_prompt,
-            payload,
-            parse_retries=parse_retries,
-            force_json_first=True,
+        from domains.theraskill.theraskill_simulation.session_analysis import run_session_analysis
+        result, prompt_audit = run_session_analysis(
+            client, system_prompt, payload, mode="summary",
+            max_prompt_tokens=max_prompt_tokens, parse_retries=parse_retries,
+            checkpoint_dir=output_path.parent / (output_path.stem + ".checkpoints"),
         )
         status = "complete"
         error = None
@@ -150,7 +111,7 @@ def main() -> int:
             "session_input": args.session_input,
             "turn_count_completed": session_obj.get("turn_count_completed"),
             "transcript_len": len(session_obj.get("transcript") or []),
-            "compact_transcript_len": len(payload["transcript"]),
+            "covered_transcript_len": len(payload["transcript"]),
         },
         "result": result,
         "error": error,

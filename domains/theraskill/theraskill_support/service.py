@@ -330,6 +330,7 @@ class SupportSessionService:
                 "model_config_id": result.model_config_id,
                 "prompt_release_id": result.prompt_release_id,
                 "conversation_summary": result.conversation_summary,
+                "summary_through_message": result.summary_through_message,
                 "turn_traces": traces,
             }
         )
@@ -658,6 +659,7 @@ class SupportSessionService:
                 "model_config_id": record.model_config_id,
                 "prompt_release_id": record.prompt_release_id,
                 "conversation_summary": record.conversation_summary,
+                "summary_through_message": record.summary_through_message,
                 "turn_traces": [trace.model_dump(mode="json") for trace in record.turn_traces],
                 "events": [
                     event.model_dump(mode="json")

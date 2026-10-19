@@ -62,11 +62,15 @@ design and disclosure, never patient biography. The form can disable retrieval.
 2. **Patient dossier**: generate only the `PatientDossier` fields: identity, presenting concern, background, recent experiences, hidden concerns, goals, and communication preferences.
 3. **Scenario package**: use the validated dossier to produce the public role card, hidden settings, continuity seeds, and initial session state.
 4. **Independent review**: check identity, timeline, public/hidden leakage, risk band, and training-objective alignment.
-5. **Focused repair**: when the review finds an error, repair only the named issue before deterministic checks run again.
+5. **Focused repair and review**: repair the identified issues, then review the compiled candidate again. Empty or ineffective repairs never establish a pass.
 
-Each stage is a separate structured JSON call, so a Qwen-class local model solves smaller problems instead of placing the entire case schema in one prompt. The result still goes through dossier validation, Persona v2 compilation, duplicate checks, and draft governance. The case bundle stores stage status and the review summary so the workflow can later expose durable Task checkpoints.
+User-supplied facts are pinned before packaging and review. The reviewer sees the compiled patient and public role card that will be saved. Draft edits and copies invalidate the previous model review. The governance panel shows unresolved findings and offers **Review the current version**; an explicit human override requires a recorded reason.
 
-The browser button currently waits for the complete workflow and returns once; generation is staged, but each stage is not yet shown as a pausable Tasks Center step. When `simulated-patient-builder` is called through the Agent workflow, the outer Agent can clarify, call tools, and inspect/update the saved case while using this same staged generator underneath.
+The browser creates a background job and shows each stage. Refresh the page to recover progress or select a saved job. **Resume unfinished steps** reuses completed stages and preserves the case ID. The same Agent tool call also retains its generation request ID across retries. Changed model settings, inputs or implementation require a new job.
+
+Course batches first plan distinct objectives and recent experiences. Each patient uses the same generation workflow. A final course review reads the actual saved dossiers and checks coverage and duplication. Edit deficient cases, then recheck the course. The requested risk, difficulty and scenario family are preserved.
+
+See [workflow reliability](workflow_reliability.en.md) for evidence checking, transcript reviews and the other staged workflows.
 
 ## Runtime and limits
 

@@ -107,13 +107,18 @@ class LLMSupportEngine:
             "synthetic_construction": "synthetic-dialogue-builder",
         }
         if record.workflow in workflow_skills:
+            from .artifact_workflows import _source_request
+            specification, revision = _source_request(record, latest_text)
+            source = str(specification.get("transcript_or_response") or specification.get("goal") or latest_text)
+            query = " ".join([str(specification.get("framework") or ""), source[:3500], revision[:500]]).strip()
             return RoutingDecision(
                 primary_skill=workflow_skills[record.workflow], task_type=record.workflow,
                 detected_language=record.output_language, risk_level="none_observed",
                 requires_immediate_safety_attention=False, routing_source="explicit_workflow",
-                retrieval_query=latest_text, user_intent_summary=record.workflow,
+                retrieval_query=query, user_intent_summary=record.workflow,
             ), 0
-        safety = screen_safety_risk(latest_text)
+        source_messages = getattr(getattr(record, "public", None), "messages", [])
+        safety = screen_safety_risk(source_messages[-1].text if source_messages else latest_text)
         payload = {
             "conversation_summary": conversation_summary,
             "recent_messages": recent_messages,
@@ -252,56 +257,75 @@ class LLMSupportEngine:
         dict[str, Any],
         int,
     ]:
+        # The checkpoint counts source messages represented by the persisted summary.
+        # Every message leaving the raw window is summarized before it disappears.
+        from domains.theraskill.theraskill_llm import prompt_budget_report
+
         messages = [
             {"role": str(message.role), "text": message.text}
             for message in record.public.messages
         ]
-        combined = json.dumps(messages, ensure_ascii=False)
-        estimated = self.estimate_prompt_tokens(combined)
+        checkpoint = min(int(getattr(record, "summary_through_message", 0)), len(messages))
+        summary = record.conversation_summary
+        if not summary:
+            checkpoint = 0
         latest_estimated = self.estimate_prompt_tokens(latest_text)
-        requires_compaction = estimated > 10000 or latest_estimated > 7000
-        if not requires_compaction:
-            return record.conversation_summary, messages[-11:-1], latest_text, {
-                "applied": False,
-                "estimated_history_tokens": estimated,
-            }, 0
-
-        older = messages[:-5] if len(messages) > 5 else []
-        recent = messages[-5:-1]
-        if latest_estimated > 7000:
-            older = messages[:-1]
-            recent = messages[-4:-1]
-        payload = {
-            "previous_summary": record.conversation_summary,
-            "conversation_to_compact": older,
-            "latest_long_message": latest_text if latest_estimated > 7000 else None,
-            "target": "balanced compact representation under 3500 estimated tokens",
-        }
+        long_latest = latest_estimated > min(7000, self.max_runtime_prompt_tokens // 2)
+        through = len(messages) if long_latest else max(checkpoint, len(messages) - 11)
+        recent = messages[through:-1] if not long_latest else []
+        while recent and self.estimate_prompt_tokens(json.dumps(recent, ensure_ascii=False)) > self.max_runtime_prompt_tokens // 3:
+            through += 1
+            recent = messages[through:-1]
+        source_rows = messages[checkpoint:through]
         started = time.monotonic()
-        summary = self.client.chat(
-            self.compaction_prompt,
-            payload,
-            force_json_response=False,
-        ).strip()
-        summary_tokens = self.estimate_prompt_tokens(summary)
-        if not summary or summary_tokens > 4000:
-            raise ValueError("LLM history compaction did not produce a usable bounded summary")
-        runtime_latest = latest_text
-        if latest_estimated > 7000:
-            runtime_latest = "The latest full user message is represented in conversation_summary."
+        calls = 0
+        target_tokens = min(3500, max(128, self.max_runtime_prompt_tokens // 4))
+        pending = [{**row, "message_position": position + 1, "char_start": 0}
+                   for position, row in enumerate(source_rows, start=checkpoint)]
+        while pending:
+            batch = []
+            def payload_for(rows):
+                return {"previous_summary": summary, "conversation_to_compact": rows,
+                        "target": f"Preserve facts, risks and unresolved commitments in at most {target_tokens} estimated tokens."}
+            while pending:
+                row = pending[0]
+                if not prompt_budget_report(self.compaction_prompt, payload_for([*batch, row]), self.max_runtime_prompt_tokens)["over_budget"]:
+                    batch.append(pending.pop(0))
+                    continue
+                if batch:
+                    break
+                # Split a single long message without dropping any characters.
+                size = len(row["text"])
+                while size and prompt_budget_report(self.compaction_prompt, payload_for([{**row, "text": row["text"][:size]}]), self.max_runtime_prompt_tokens)["over_budget"]:
+                    size //= 2
+                if not size:
+                    raise ValueError("Support summary cannot fit the configured prompt budget")
+                batch.append({**row, "text": row["text"][:size]})
+                pending[0] = {**row, "text": row["text"][size:], "char_start": row["char_start"] + size}
+                break
+            candidate = self.client.chat(self.compaction_prompt, payload_for(batch), force_json_response=False).strip()
+            if not candidate or self.estimate_prompt_tokens(candidate) > target_tokens:
+                raise ValueError("LLM history compaction did not produce a usable bounded summary")
+            summary = candidate
+            calls += 1
+        runtime_latest = ("The latest full user message is represented in conversation_summary."
+                          if long_latest else latest_text)
         return summary, recent, runtime_latest, {
-            "applied": True,
-            "estimated_history_tokens": estimated,
-            "latest_message_tokens": latest_estimated,
-            "summary_estimated_tokens": summary_tokens,
+            "applied": bool(calls),
+            "method": "incremental_checkpoint_compaction",
+            "summary_through_message": through,
+            "previous_checkpoint": checkpoint,
+            "newly_summarized_messages": len(source_rows),
+            "model_calls": calls,
             "preserved_recent_messages": len(recent),
-            "method": "llm_balanced_compaction",
+            "latest_message_tokens": latest_estimated,
         }, int((time.monotonic() - started) * 1000)
 
     @staticmethod
     def _retrieved_context(bundle: dict[str, Any]) -> list[dict[str, Any]]:
         return [
             {
+                "unit_id": item.get("release_unit_id") or item.get("retrieval_id"),
                 "dedup_family": item.get("dedup_family"),
                 "canonical_label": item.get("canonical_label"),
                 "evidence_role": item.get("evidence_role"),
@@ -371,6 +395,17 @@ class LLMSupportEngine:
         domain_memory: dict[str, Any],
     ) -> tuple[dict[str, Any], str | None, dict[str, Any], dict[str, int]]:
         from domains.theraskill.theraskill_llm import chat_json_with_repair, prompt_budget_report
+
+        if getattr(record, "workflow", "support") in {"response_review", "synthetic_construction"}:
+            from .artifact_workflows import run_artifact_workflow
+            started = time.monotonic()
+            # Expert source material must not be replaced by a conversational summary.
+            raw_latest = next((message.text for message in reversed(record.public.messages)
+                               if str(message.role) == "user"), latest_text)
+            result = run_artifact_workflow(self, record, raw_latest, routing, bundle)
+            compaction["artifact_workflow"] = result["structured_content"]["generation_workflow"]
+            return result, summary, compaction, {"history_compaction": compaction_ms,
+                "response_generation": int((time.monotonic() - started) * 1000)}
 
         payload = {
             "routing": routing.model_dump(mode="json"),
@@ -446,9 +481,14 @@ class LLMSupportEngine:
             for message in reversed(record.public.messages)
             if str(message.role) == "user"
         )
-        summary, recent, runtime_latest, compaction, compaction_ms = (
-            self._compact_history(record, user_message.text)
-        )
+        if record.workflow in {"response_review", "synthetic_construction"}:
+            summary, recent, runtime_latest, compaction, compaction_ms = (
+                record.conversation_summary, [], user_message.text,
+                {"applied": False, "method": "artifact_source_preserved",
+                 "summary_through_message": record.summary_through_message}, 0,
+            )
+        else:
+            summary, recent, runtime_latest, compaction, compaction_ms = self._compact_history(record, user_message.text)
         route, route_ms = self._route(
             record,
             runtime_latest,
@@ -504,6 +544,7 @@ class LLMSupportEngine:
             model_config_id=self.model_name,
             prompt_release_id="support_routing_response_v2",
             conversation_summary=summary,
+            summary_through_message=int(compaction.get("summary_through_message") or 0),
             latency_ms={
                 "routing": route_ms,
                 "retrieval": retrieval_ms,

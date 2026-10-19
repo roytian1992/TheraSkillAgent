@@ -1297,6 +1297,7 @@ class CommandBackedLLMSimulationReviewer:
             "active_unresolved_threads": digest.get("active_unresolved_threads") or [],
             "risk_watchpoints": digest.get("risk_watchpoints") or [],
             "recommended_actions": digest.get("recommended_actions") or [],
+            "evidence_coverage": digest.get("evidence_coverage") or {},
         }
         return ReviewResult(
             public_review=ReviewPublicView(

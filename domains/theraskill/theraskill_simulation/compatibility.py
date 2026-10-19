@@ -14,6 +14,8 @@ def build_reviewer_runtime_report(snapshot: SessionSnapshot) -> dict[str, Any]:
             "role": turn.role,
             "text": turn.text,
             **turn.metadata,
+            "turn_id": turn.turn_id,
+            "turn_index": turn.turn_index,
         }
         for turn in snapshot.public_view.transcript
     ]

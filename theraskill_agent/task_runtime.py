@@ -213,21 +213,8 @@ class TaskEngine:
             t=self.store.get(t['id']);t=self._checkpoint(t,'result',result)
             t['status']='completed';return self.store.save(t)
         if t['kind']=='skill_evolution':
-            from .skills import SkillManager, _set_frontmatter_name
-            from .skill_execution import model_json
-            from .paths import data_root
-            import shutil
-            manager=SkillManager();record=manager.inspect(t['inputs']['skill'])
-            original=manager.resolve(t['inputs']['skill']).read_text(encoding='utf-8')
-            proposal,provenance=model_json('Propose an improved SKILL.md for the requested goal. Preserve the domain scope, evidence requirements and safety boundaries. Do not invent tools. Return JSON {"skill_md":"complete markdown including YAML frontmatter","changes":[],"evaluation_focus":[]}.',{'goal':t['goal'],'original_skill':original,'output_language':t['language']})
-            markdown=proposal.get('skill_md')
-            if not isinstance(markdown,str) or not markdown.strip():raise ValueError('Model did not return a complete skill proposal')
-            folder=data_root()/'skill-drafts'/t['id'];folder.parent.mkdir(parents=True,exist_ok=True)
-            if folder.exists():shutil.rmtree(folder)
-            shutil.copytree(record.path,folder)
-            (folder/'SKILL.md').write_text(_set_frontmatter_name(markdown,record.name),encoding='utf-8')
-            t=self._checkpoint(t,'result',{'draft_path':str(folder),'original':record.to_dict(),'proposal':proposal,'provenance':provenance,'status':'draft_requires_behavior_comparison'})
-            t['status']='completed';return self.store.save(t)
+            from .skill_evolution import step
+            return step(self, t)
         if t['kind']=='skill':
             if cp.get('pending_tool'):
                 pinned=cp.get('skill_snapshot')

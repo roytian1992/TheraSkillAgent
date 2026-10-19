@@ -8,6 +8,7 @@ release-manager operation in the existing contribution workflow.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
 import sys
@@ -17,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -61,11 +62,36 @@ class ExtractionAPISettings(BaseModel):
     max_workers: int = Field(default=2, ge=1, le=8)
 
 
+class TrialReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["accepted", "skipped"]
+    sample_job_id: str | None = Field(default=None, min_length=1, max_length=160, pattern=r"^[A-Za-z0-9_-]+$")
+    review_token: str | None = Field(default=None, max_length=100)
+    note: str = Field(default="", max_length=2000)
+
+
 class StartExtractionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     plan: dict[str, Any]
     limit: int | None = Field(default=None, ge=1, le=100000)
     request_id: str | None = Field(default=None, min_length=1, max_length=160)
+    trial_review: TrialReviewRequest | None = None
+
+
+def _plan_fingerprint(plan: dict[str, Any]) -> str:
+    """Bind acceptance to execution settings, excluding IDs and display metadata."""
+    canonical = validate_plan(plan)
+    keys = ("goal", "unit_definition", "language", "target_schema", "evidence_required",
+            "evidence_fields", "quality_rules", "operations", "semantic_review", "model_profile", "prompt_version")
+    source = canonical.get("source") or {}
+    binding = {key: canonical.get(key) for key in keys}
+    binding["source_path"] = str(Path(source.get("path") or source.get("input_uri") or "").expanduser().resolve())
+    return hashlib.sha256(json.dumps(binding, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def _model_fingerprint(config: dict[str, Any]) -> str:
+    """Bind resolved request settings without persisting credentials or URLs."""
+    return hashlib.sha256(json.dumps(config, ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()
 
 
 class InspectSourceRequest(BaseModel):
@@ -103,7 +129,11 @@ class ExtractionJobStore:
             job_id = str(job.get("job_id") or path.parent.name)
             if not job_id:
                 continue
-            if job.get("status") in {"queued", "running"}:
+            if job.get("status") == "cancel_requested":
+                job.update(status="cancelled", updated_at=datetime.now(timezone.utc).isoformat())
+                self._jobs[job_id] = job
+                self._save(job)
+            elif job.get("status") in {"queued", "running"}:
                 job["status"] = "queued"
                 job["recovered_at"] = datetime.now(timezone.utc).isoformat()
                 job["updated_at"] = job["recovered_at"]
@@ -135,20 +165,26 @@ class ExtractionJobStore:
         except (OSError, json.JSONDecodeError):
             return None
 
-    def create(self, plan: dict[str, Any], limit: int | None, actor: str, request_id: str | None = None) -> dict[str, Any]:
+    def create(self, plan: dict[str, Any], limit: int | None, actor: str, request_id: str | None = None,
+               trial_review: dict[str, Any] | None = None) -> dict[str, Any]:
         with self._lock:
-            return self._create(plan, limit, actor, request_id)
+            return self._create(plan, limit, actor, request_id, trial_review)
 
-    def _create(self, plan: dict[str, Any], limit: int | None, actor: str, request_id: str | None = None) -> dict[str, Any]:
+    def _create(self, plan: dict[str, Any], limit: int | None, actor: str, request_id: str | None = None,
+                trial_review: dict[str, Any] | None = None) -> dict[str, Any]:
         if request_id:
             with self._lock:
                 for existing in self._jobs.values():
                     if existing.get("request_id") == request_id:
-                        if existing['plan'] != plan or existing['limit'] != limit or existing['actor'] != actor:
+                        if (existing['plan'] != plan or existing['limit'] != limit or existing['actor'] != actor
+                                or existing.get('trial_review_request') != trial_review):
                             raise ValueError("request_id was already used for different extraction inputs")
                         return dict(existing)
         job_id = f"extract_{uuid.uuid4().hex[:16]}"
         now = datetime.now(timezone.utc).isoformat()
+        decision = self._validate_trial_review(plan, limit, trial_review) if trial_review is not None else None
+        if decision:
+            decision.update(recorded_at=now, confirmed_by=actor)
         job = {
             "job_id": job_id,
             "request_id": request_id,
@@ -158,6 +194,9 @@ class ExtractionJobStore:
             "actor": actor,
             "plan": plan,
             "limit": limit,
+            "trial_review_request": trial_review,
+            "trial_review": decision,
+            "expected_source_fingerprint": decision.get("source_fingerprint") if decision else None,
             "counts": {"units": 0, "failures": 0},
             "artifacts": {},
             "error": None,
@@ -169,6 +208,49 @@ class ExtractionJobStore:
             self._save(job)
         self._executor.submit(self._run, job_id)
         return job
+
+    def _review_context(self, job: dict[str, Any]) -> dict[str, Any] | None:
+        if not job.get("limit") or job.get("status") != "completed" or not job.get("counts", {}).get("units"):
+            return None
+        source_fingerprint = (job.get("source_info") or {}).get("fingerprint")
+        model_fingerprint = (job.get("execution_binding") or {}).get("model_config_sha256")
+        units_path = Path(str((job.get("artifacts") or {}).get("units") or ""))
+        if not source_fingerprint or not model_fingerprint or not units_path.is_file():
+            return None
+        content = units_path.read_bytes()
+        units = [json.loads(line) for line in content.decode("utf-8").splitlines() if line.strip()]
+        if not units or any(unit.get("qa", {}).get("status") != "pass" for unit in units):
+            return None
+        context = {"sample_job_id": job["job_id"], "source_fingerprint": source_fingerprint,
+                   "plan_fingerprint": _plan_fingerprint(job["plan"]),
+                   "model_config_sha256": model_fingerprint,
+                   "artifact_sha256": hashlib.sha256(content).hexdigest(), "sample_units": len(units)}
+        context["review_token"] = hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
+        return context
+
+    def _validate_trial_review(self, plan: dict[str, Any], limit: int | None, value: dict[str, Any]) -> dict[str, Any]:
+        review = TrialReviewRequest.model_validate(value).model_dump(exclude_none=True)
+        if limit is not None:
+            raise ValueError("Trial review decisions apply only to full extraction jobs")
+        source = plan.get("source") or {}
+        current = inspect_source(source.get("path") or source.get("input_uri")).fingerprint
+        if review["decision"] == "skipped":
+            if not review["note"].strip():
+                raise ValueError("Explain why the sample extraction is being skipped")
+            if review.get("sample_job_id") or review.get("review_token"):
+                raise ValueError("Skipping a trial cannot also claim acceptance of a sample")
+            return {**review, "source_fingerprint": current, "plan_fingerprint": _plan_fingerprint(plan)}
+        sample = self._load(str(review.get("sample_job_id") or ""))
+        context = self._review_context(sample) if sample else None
+        if not context or context["review_token"] != review.get("review_token"):
+            raise ValueError("Preview a completed, quality-checked sample before accepting it")
+        if context["plan_fingerprint"] != _plan_fingerprint(plan):
+            raise ValueError("The source, goal, schema or quality settings changed; run and review a new sample")
+        if context["source_fingerprint"] != current:
+            raise ValueError("Source contents changed after the sample; run and review a new sample")
+        if context["model_config_sha256"] != _model_fingerprint(self._model_settings()):
+            raise ValueError("Model configuration changed after the sample; run and review a new sample")
+        return {**review, **context}
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         return self._load(job_id)
@@ -222,7 +304,8 @@ class ExtractionJobStore:
                         break
         except (OSError, json.JSONDecodeError) as exc:
             return {"job_id": job_id, "status": job["status"], "items": [], "error": str(exc)}
-        return {"job_id": job_id, "status": job["status"], "items": items}
+        return {"job_id": job_id, "status": job["status"], "items": items,
+                "trial_review_context": self._review_context(job)}
 
     def handoff(self, job_id: str, actor: str) -> dict[str, Any] | None:
         """Create a governed candidate pack without activating a release."""
@@ -300,13 +383,25 @@ class ExtractionJobStore:
             self._save(job)
             return dict(job)
 
+    def _model_settings(self) -> dict[str, Any]:
+        import yaml
+        from domains.theraskill.theraskill_llm import merged_model_config
+
+        path = self.settings.model_config_path
+        if not path.is_file():
+            raise FileNotFoundError(f"model config does not exist: {path}")
+        return merged_model_config({}, yaml.safe_load(path.read_text(encoding="utf-8")) or {})
+
     def _run(self, job_id: str) -> None:
         try:
-            queued = self._load(job_id) or {}
-            if queued.get("status") == "cancel_requested":
-                self._update(job_id, status="cancelled")
-                return
-            job = self._update(job_id, status="running")
+            with self._lock:
+                queued = self._load(job_id) or {}
+                if queued.get("status") == "cancel_requested":
+                    self._update(job_id, status="cancelled")
+                    return
+                if queued.get("status") not in {"queued", "running"}:
+                    return
+                job = self._update(job_id, status="running")
             plan = validate_plan(job["plan"])
             source_path = Path(str((plan.get("source") or {}).get("path") or (plan.get("source") or {}).get("input_uri") or ""))
             if not source_path.exists():
@@ -318,27 +413,38 @@ class ExtractionJobStore:
                 sys.path.insert(0, str(project_root / "scripts"))
             # The extraction project supplies the generic executor/contracts,
             # while TheraSkillAgent owns provider routing for the model client.
-            from _common.theraskill_llm import load_yaml
-            from domains.theraskill.theraskill_llm import OpenAICompatibleClient, merged_model_config
+            from domains.theraskill.theraskill_llm import OpenAICompatibleClient
             from theraskill_agent.extraction.contracts import ExtractionPlan
-            from theraskill_agent.extraction.executor import build_manifest, extract_records, load_source_records
+            from theraskill_agent.extraction.executor import _source_id, build_manifest, extract_records, load_source_records
 
-            model_config_path = self.settings.model_config_path
-            if not model_config_path.exists():
-                raise FileNotFoundError(f"model config does not exist: {model_config_path}")
-            model_file = load_yaml(model_config_path)
-            model_config = merged_model_config({}, model_file)
+            model_config = self._model_settings()
             client = OpenAICompatibleClient(model_config)
             extraction_plan = ExtractionPlan.from_mapping(plan)
+            fingerprint = inspect_source(source_path).fingerprint
             records = load_source_records(source_path)
+            if inspect_source(source_path).fingerprint != fingerprint:
+                raise ValueError("source changed while loading records; create a new extraction job")
             work_dir = self.settings.work_root / job_id
             work_dir.mkdir(parents=True, exist_ok=True)
             checkpoint_units_path = work_dir / "knowledge_units.checkpoint.jsonl"
             checkpoint_failures_path = work_dir / "failures.checkpoint.jsonl"
-            fingerprint = build_manifest(extraction_plan, source_path, units=[], failures=[], model_name=client.model)["source"]["fingerprint"]
-            previous_fingerprint = (job.get("source_info") or {}).get("fingerprint")
+            previous_fingerprint = (job.get("source_info") or {}).get("fingerprint") or job.get("expected_source_fingerprint")
             if previous_fingerprint and previous_fingerprint != fingerprint:
                 raise ValueError("source changed since this job started; create a new extraction job")
+            record_digest = hashlib.sha256()
+            for record in records:
+                value = record.to_dict() if hasattr(record, "to_dict") else record
+                record_digest.update(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode() + b"\n")
+            binding = {"model_config_sha256": _model_fingerprint(model_config), "plan_sha256": _plan_fingerprint(plan),
+                       "source_sha256": fingerprint, "records_sha256": record_digest.hexdigest(), "limit": job.get("limit")}
+            expected_model = (job.get("trial_review") or {}).get("model_config_sha256")
+            if expected_model and expected_model != binding["model_config_sha256"]:
+                raise ValueError("Model configuration changed after the accepted sample; run and review a new sample")
+            if job.get("execution_binding") and job["execution_binding"] != binding:
+                raise ValueError("Model configuration, plan or source records changed; create a new extraction job")
+            if not job.get("execution_binding") and any(path.exists() and path.stat().st_size for path in (checkpoint_units_path, checkpoint_failures_path)):
+                raise ValueError("Existing checkpoints have no verified execution binding; create a new extraction job")
+            self._update(job_id, execution_binding=binding)
             if job.get("retry_failed_records"):
                 # Keep the previous attempt for audit while retrying only records
                 # that have not produced a successful unit.
@@ -354,8 +460,20 @@ class ExtractionJobStore:
                     try:
                         with checkpoint_path.open("r", encoding="utf-8") as handle:
                             target.extend(json.loads(line) for line in handle if line.strip())
-                    except (OSError, json.JSONDecodeError):
-                        target.clear()
+                    except (OSError, json.JSONDecodeError) as exc:
+                        raise ValueError("Extraction checkpoint is damaged; preserve it and create a new job") from exc
+            cohort = list(enumerate(records))
+            if job.get("limit"):
+                limit = int(job["limit"])
+                indices = ({round(i * (len(records) - 1) / (limit - 1)) for i in range(limit)} if limit > 1 and records else {0})
+                cohort = [(i, record) for i, record in cohort if i in indices]
+            source_ids = {_source_id(record, i) for i, record in cohort}
+            if len(source_ids) != len(cohort):
+                raise ValueError("Source record IDs are not unique; use an adapter with stable unique record IDs")
+            checkpoint_ids = [str(item.get("source_id") or "") for item in (*checkpoint_units, *checkpoint_failures) if isinstance(item, dict)]
+            if (len(checkpoint_ids) != len(checkpoint_units) + len(checkpoint_failures)
+                    or len(set(checkpoint_ids)) != len(checkpoint_ids) or not set(checkpoint_ids) <= source_ids):
+                raise ValueError("Extraction checkpoint contains invalid or duplicate source records; create a new job")
             completed_source_ids = {str(item.get("source_id")) for item in (*checkpoint_units, *checkpoint_failures) if item.get("source_id")}
             checkpoint_lock = threading.Lock()
 
@@ -385,22 +503,32 @@ class ExtractionJobStore:
             )
             all_units = checkpoint_units + units
             all_failures = checkpoint_failures + failures
+            if inspect_source(source_path).fingerprint != fingerprint:
+                raise ValueError("source changed during extraction; create a new extraction job")
             units_path = work_dir / "knowledge_units.jsonl"
             failures_path = work_dir / "failures.jsonl"
             manifest_path = work_dir / "manifest.json"
             units_path.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in all_units), encoding="utf-8")
             failures_path.write_text("".join(json.dumps(item, ensure_ascii=False) + "\n" for item in all_failures), encoding="utf-8")
-            manifest = build_manifest(extraction_plan, source_path, units=all_units, failures=all_failures, model_name=client.model)
-            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            final_status = "cancelled" if str((self._load(job_id) or {}).get("status")) == "cancel_requested" else ("completed" if not all_failures else "partial")
-            self._update(
-                job_id,
-                status=final_status,
-                counts={"units": len(all_units), "failures": len(all_failures)},
-                artifacts={"units": str(units_path), "failures": str(failures_path), "manifest": str(manifest_path)},
-            )
+            with self._lock:
+                cancelled = (self._load(job_id) or {}).get("status") == "cancel_requested"
+                manifest = build_manifest(extraction_plan, source_path, units=all_units, failures=all_failures,
+                                          model_name=client.model, expected_records=len(cohort), cancelled=cancelled)
+                if manifest["source"]["fingerprint"] != fingerprint:
+                    raise ValueError("source changed during extraction; create a new extraction job")
+                manifest["execution_binding"] = binding
+                manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                final_status = "cancelled" if cancelled else ("completed" if manifest["status"] == "complete" else "partial")
+                self._update(
+                    job_id,
+                    status=final_status,
+                    counts={"units": len(all_units), "failures": len(all_failures)},
+                    artifacts={"units": str(units_path), "failures": str(failures_path), "manifest": str(manifest_path)},
+                )
         except Exception as exc:  # noqa: BLE001 - preserve failure in job state
-            self._update(job_id, status="failed", error=f"{type(exc).__name__}: {exc}")
+            with self._lock:
+                cancelled = (self._load(job_id) or {}).get("status") in {"cancel_requested", "cancelled"}
+                self._update(job_id, status="cancelled" if cancelled else "failed", error=f"{type(exc).__name__}: {exc}")
 
 
 def create_app(settings: ExtractionAPISettings | None = None) -> FastAPI:
@@ -443,8 +571,9 @@ def create_app(settings: ExtractionAPISettings | None = None) -> FastAPI:
         if not plan_source.get("path") and not plan_source.get("input_uri"):
             raise HTTPException(status_code=422, detail="plan.source.path or plan.source.input_uri is required")
         try:
-            return store.create(plan, request.limit, x_extraction_user.strip() or actor_role, request.request_id)
-        except ValueError as exc:
+            return store.create(plan, request.limit, x_extraction_user.strip() or actor_role, request.request_id,
+                                request.trial_review.model_dump(exclude_none=True) if request.trial_review else None)
+        except (ValueError, OSError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/v1/extraction/inspect")
@@ -515,7 +644,7 @@ def create_app(settings: ExtractionAPISettings | None = None) -> FastAPI:
         return job
 
     @app.get("/v1/extraction/jobs/{job_id}/preview")
-    def preview_job(job_id: str, limit: int = Query(default=5, ge=1, le=50), x_extraction_role: str = Header(default="", alias="X-Extraction-Role")) -> dict[str, Any]:
+    def preview_job(job_id: str, limit: int = Query(default=5, ge=1, le=100), x_extraction_role: str = Header(default="", alias="X-Extraction-Role")) -> dict[str, Any]:
         require_role(x_extraction_role)
         preview = store.preview(job_id, limit)
         if not preview:

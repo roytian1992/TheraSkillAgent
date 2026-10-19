@@ -90,6 +90,8 @@ A simulated patient is an editable, reusable case revision rather than a fixed p
 
 During a session, the patient model receives only the facts allowed at the current interaction state. Instructors can create or edit a patient, fork it into a new scenario, save a new revision, and assign the scenario to a course. See the [simulated patient guide](docs/simulated_patients.en.md).
 
+Complex design and review tasks use separate generation, evidence-checking and repair stages. Patient and transcript jobs show saved progress and resume after failure; course batches expose their plan and coverage. See [evidence checking and recovery](docs/workflow_reliability.en.md).
+
 ## Interface and runtime
 
 The unified workbench provides:

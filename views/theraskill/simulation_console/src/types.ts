@@ -6,6 +6,7 @@ export type Scenario = {
     stages?: Array<{ stage?: string; status?: string; error?: string }>
     review_status?: string
     repair_requested?: boolean
+    issues?: Array<{ code?: string; severity?: string; detail?: string }>
   }
   parent_scenario_id?: string
   scenario_id: string
@@ -69,7 +70,7 @@ export type TranscriptTurn = {
 export type Review = {
   status: string
   gate_status?: string
-  summary: Record<string, unknown>
+  summary: Record<string, unknown> & { evidence_coverage?: { complete?: boolean; source_turn_count?: number; covered_character_count?: number; source_character_count?: number } }
   findings: Array<Record<string, unknown>>
 }
 
@@ -139,9 +140,11 @@ export type ResponseCandidate = {
   rationale: string
   applicable_context: string
   limitations: string
+  evidence?: Array<{ unit_id: string; quote: string }>
 }
 
 export type ResponseComparison = {
+  status?: string
   comparison_id: string
   session_id: string
   target_turn_id: string

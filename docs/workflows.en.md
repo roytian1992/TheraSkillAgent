@@ -2,6 +2,8 @@
 
 [中文](workflows.zh.md) · [Deployment](deployment.en.md)
 
+[Evidence checks, staged generation and recovery](workflow_reliability.en.md)
+
 Run `theraskill-agent ui` and open <http://127.0.0.1:5176/>. The home page provides **Skill workflows**, **Behavioral evaluations**, and **Courses and learning progress**, alongside transcript, knowledge, support, simulation and expert workspaces. All business modules run in the same process and browser port, without additional runtime dependencies.
 
 ## Interactive skill tasks

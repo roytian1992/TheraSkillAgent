@@ -101,6 +101,8 @@ def test_extraction_retry_reprocesses_failures_and_keeps_successful_checkpoint(t
     config=tmp_path/'model.yaml';config.write_text('{}')
     seen=[]
     def chat(_client,_prompt,payload,**kwargs):
+        if _prompt.startswith('Independently review'):
+            return {'verdict':'pass','findings':[],'summary':'Fixture source-supported.'}
         seen.append(payload['source_id'])
         if len(seen)==2:raise RuntimeError('synthetic record failure')
         return {'claim':'synthetic strategy','evidence':payload['source_record']['text']}

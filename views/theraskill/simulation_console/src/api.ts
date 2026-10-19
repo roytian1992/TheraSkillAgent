@@ -90,6 +90,12 @@ export type PatientDesign = { patient: PatientDossier; revision: number; groundi
 export const inspectPatient = (role: CallerRole, id: string) => request<PatientDesign>(`/scenarios/${encodeURIComponent(id)}/patient`, role)
 export const forkPatient = (role: CallerRole, id: string) => request<{ scenario: Scenario }>(`/scenarios/${encodeURIComponent(id)}/fork`, role, { method: 'POST', body: '{}' })
 export const buildPatient = (role: CallerRole, payload: Record<string, unknown>, generate: boolean) => request<{ scenario: Scenario }>(generate ? '/scenarios/generate' : '/scenarios/build-patient', role, { method: 'POST', body: JSON.stringify(payload) })
+export type PatientJob = { job_id: string; status: string; error?: string; request: Record<string, unknown>; progress: { processed: number; total: number; stage?: string; stages?: Array<{ stage: string; status: string; error?: string }> }; result?: { scenario: Scenario } }
+export const startPatientJob = (role: CallerRole, payload: Record<string, unknown>) => request<PatientJob>('/scenarios/generate/jobs', role, { method: 'POST', body: JSON.stringify(payload) })
+export const getPatientJob = (role: CallerRole, id: string) => request<PatientJob>(`/scenarios/generate/jobs/${encodeURIComponent(id)}`, role)
+export const listPatientJobs = (role: CallerRole) => request<{ jobs: PatientJob[] }>('/scenarios/generate/jobs', role)
+export const retryPatientJob = (role: CallerRole, id: string) => request<PatientJob>(`/scenarios/generate/jobs/${encodeURIComponent(id)}/retry`, role, { method: 'POST' })
+export const checkGeneratedScenario = (role: CallerRole, id: string) => request<{ scenario: Scenario; quality: ScenarioQualityReport }>(`/scenarios/generated/${encodeURIComponent(id)}/check`, role, { method: 'POST' })
 
 export type ScenarioQualityReport = {
   status: 'pass' | 'warn' | 'fail' | string
@@ -115,14 +121,15 @@ export async function reviewGeneratedScenario(
   scenarioId: string,
   action: 'approve' | 'reject',
   reason = '',
+  overrideModelReview = false,
 ): Promise<{ scenario: Scenario; quality?: ScenarioQualityReport; review: { status: string } }> {
   return request(`/scenarios/generated/${encodeURIComponent(scenarioId)}/review`, role, {
     method: 'POST',
-    body: JSON.stringify({ action, reason }),
+    body: JSON.stringify({ action, reason, override_model_review: overrideModelReview }),
   })
 }
 
-export type BatchJob = { job_id: string; status: string; progress: { processed: number; total: number }; error?: string; result?: { scenarios: Scenario[]; count: number; course_draft: { title: string; scenario_ids: string[] } } }
+export type BatchJob = { job_id: string; status: string; progress: { processed: number; total: number; stage?: string; case_index?: number }; error?: string; result?: { scenarios: Scenario[]; count: number; course_draft: { title: string; scenario_ids: string[] }; course_plan?: { objectives: string[]; cases: Array<{ index: number; learning_objective: string; brief: string }> }; course_review?: { status: string; coverage?: Array<{ objective: string; covered: boolean; case_indices: number[]; rationale: string }>; deterministic_checks?: { issues: Array<{ detail: string }> }; semantic_review?: { issues?: string[]; summary?: string; error?: string } } } }
 
 export const getBatchJob = (role: CallerRole, id: string) => request<BatchJob>(`/scenarios/generate-batch/jobs/${id}`, role)
 export const retryBatchJob = (role: CallerRole, id: string) => request<BatchJob>(`/scenarios/generate-batch/jobs/${id}/retry`, role, { method: 'POST' })

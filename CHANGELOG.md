@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Make patient generation recoverable by stage, pin supplied facts before review,
+  review repairs again, and invalidate reviews after edits or forks. The UI shows
+  background jobs, retry and explicit human review overrides with reasons.
+- Plan distinct course cases before generation and review coverage using actual
+  saved dossiers. Preserve completed cases and stages on batch retry.
+- Validate nested extraction schemas and every quotation; review generated claims,
+  repair once and re-review. Record sample acceptance or explicit skip decisions.
+- Run declared review tools, quarantine unsupported findings, synthesize verified
+  evidence, and add resumable transcript jobs and full-transcript session debriefs.
+- Add staged expert reviews, teaching dialogue review/repair, real knowledge
+  citations in response comparisons, and incremental support conversation memory.
+- Diagnose Skill failures from supplied evidence before proposing targeted edits;
+  keep the existing behavior comparison and installation gates. See the bilingual
+  [workflow guide](docs/workflow_reliability.en.md).
 - Add a native `simulated-patient-builder` skill and a bilingual patient editor
   for background, recent life events, goals, hidden concerns and disclosure levels.
 - Compile authored/generated patients into Persona v2 and record actual retrieval

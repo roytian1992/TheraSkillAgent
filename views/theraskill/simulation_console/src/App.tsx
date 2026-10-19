@@ -48,6 +48,7 @@ import {
   listContributions,
   listSessions,
   reviewGeneratedScenario,
+  checkGeneratedScenario,
   updateGeneratedScenario,
   runDualCycle,
   sessionAction,
@@ -124,6 +125,7 @@ export default function App() {
   const [draftDifficulty, setDraftDifficulty] = useState('medium')
   const [draftRisk, setDraftRisk] = useState('low')
   const [reviewReason, setReviewReason] = useState('')
+  const [overrideModelReview, setOverrideModelReview] = useState(false)
   const [governanceBusy, setGovernanceBusy] = useState(false)
   const [batchTitle, setBatchTitle] = useState('')
   const [batchBrief, setBatchBrief] = useState('')
@@ -418,16 +420,30 @@ export default function App() {
     setGovernanceBusy(true)
     setError('')
     try {
-      const result = await reviewGeneratedScenario(role, selected.scenario_id, action, reviewReason.trim())
+      const result = await reviewGeneratedScenario(role, selected.scenario_id, action, reviewReason.trim(), overrideModelReview)
       setScenarios((rows) => rows.map((row) => row.scenario_id === result.scenario.scenario_id ? result.scenario : row))
       setSelected(result.scenario)
       setReviewReason('')
+      setOverrideModelReview(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setGovernanceBusy(false)
     }
   }
+
+  async function recheckSelected() {
+    if (!selected || governanceBusy) return
+    setGovernanceBusy(true); setError('')
+    try {
+      const result = await checkGeneratedScenario(role, selected.scenario_id)
+      setSelected(result.scenario)
+      setScenarios(rows => rows.map(row => row.scenario_id === result.scenario.scenario_id ? result.scenario : row))
+      setOverrideModelReview(false)
+    } catch (err) { setError(String(err)) } finally { setGovernanceBusy(false) }
+  }
+
+  useEffect(() => { setOverrideModelReview(false); setReviewReason('') }, [selected?.scenario_id])
 
   useEffect(() => {
     if (!['researcher', 'instructor'].includes(role)) return
@@ -908,6 +924,12 @@ export default function App() {
                         {selected.batch_id && <span>{tr("批次")}{selected.batch_index}/{selected.batch_size}</span>}
                         {selected.generation_workflow && <span>{tr("分阶段生成")} · {(selected.generation_workflow.stages || []).filter(stage => stage.status === 'completed').length}/{(selected.generation_workflow.stages || []).length}{tr("阶段")}</span>}
                       </div>
+                      {selected.generation_workflow && <div className="governance-warning">
+                        <p>{tr('模型审阅')}：{tr(({ pass: '检查通过', pass_after_repair: '修复后通过', repair: '仍需修复', unavailable: '审阅未完成', stale: '编辑后需重新检查' } as Record<string, string>)[selected.generation_workflow.review_status || ''] || tr('审阅未完成'))}</p>
+                        {selected.generation_workflow.issues?.map((issue, index) => <p key={index}>{issue.detail}</p>)}
+                        <button className="secondary-button" disabled={governanceBusy} onClick={() => void recheckSelected()}>{tr('重新检查当前版本')}</button>
+                        {!['pass', 'pass_after_repair'].includes(selected.generation_workflow.review_status || '') && <label><input type="checkbox" checked={overrideModelReview} onChange={e => setOverrideModelReview(e.target.checked)} />{tr('我已人工复核未解决的问题，并填写审核理由')}</label>}
+                      </div>}
                       {selected.quality_report?.duplicate_of && (
                         <p className="governance-warning">{tr("与已有草稿「")}{selected.quality_report.duplicate_of}{tr("」相似度")}{selected.quality_report.duplicate_similarity}{tr("，请先修改主题。")}</p>
                       )}
@@ -928,7 +950,7 @@ export default function App() {
                           <div className="governance-actions"><button className="secondary-button" onClick={() => setDraftEditOpen(false)}>{tr("取消")}</button><button className="primary-button" onClick={() => void saveGeneratedDraft()} disabled={governanceBusy || draftBrief.trim().length < 8}>{tr("保存并重新检查")}</button></div>
                         </div>
                       )}
-                      <label className="governance-reason">{tr("退回原因")}<input value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} placeholder={tr("退回时必填，批准时可留空")} /></label>
+                      <label className="governance-reason">{tr("审核理由")}<input value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} placeholder={tr("退回或人工覆盖模型审阅时必填")} /></label>
                       <button className="tertiary-danger" onClick={() => void reviewSelectedGenerated('reject')} disabled={governanceBusy}>{tr("退回草稿")}</button>
                     </section>
                   )}
@@ -941,6 +963,17 @@ export default function App() {
                         <div className="batch-generator-row"><input type="number" min={1} max={12} value={batchCount} onChange={(event) => setBatchCount(Number(event.target.value) || 1)} /><button className="secondary-button" onClick={() => void runBatchGeneration()} disabled={batchBusy || batchBrief.trim().length < 8 || !batchTitle.trim()}>{batchBusy ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}{tr("生成课程批次")}</button></div>
                         {batchNotice && <small className="online-generation-note">{batchNotice}</small>}
                         {batchJob && <div role="status"><strong>{batchJob.status} · {batchJob.progress.processed}/{batchJob.progress.total}</strong>{batchJob.error && <p className="error">{batchJob.error}</p>}{['failed','partial'].includes(batchJob.status) && <button onClick={() => void retryBatch()}>{locale === 'zh' ? tr('继续生成未完成场景') : 'Retry unfinished scenarios'}</button>}{batchJob.result?.scenarios.map(row => <button key={row.scenario_id} onClick={() => setSelected(row)}>{row.scenario_brief}</button>)}</div>}
+                        {batchJob?.result?.course_plan && <details open><summary>{tr('课程计划与覆盖')}</summary>
+                          <ol>{batchJob.result.course_plan.cases.map(item => <li key={item.index}><strong>{item.learning_objective}</strong><p>{item.brief}</p></li>)}</ol>
+                          {batchJob.result.course_review && <div>
+                            <p>{tr('整批检查')}：{batchJob.result.course_review.status === 'pass' ? tr('检查通过') : tr('仍需复核')}</p>
+                            {batchJob.result.course_review.coverage?.map(item => <p key={item.objective}>{item.covered ? '✓' : '○'} {item.objective} · {item.rationale}</p>)}
+                            {batchJob.result.course_review.deterministic_checks?.issues.map((item, index) => <p key={index}>{item.detail}</p>)}
+                            {batchJob.result.course_review.semantic_review?.issues?.map((item, index) => <p key={index}>{item}</p>)}
+                            {batchJob.result.course_review.semantic_review?.error && <p role="alert">{batchJob.result.course_review.semantic_review.error}</p>}
+                            {batchJob.status === 'completed' && batchJob.result.course_review.status === 'needs_review' && <button onClick={() => void retryBatch()}>{tr('修改病例后重新检查课程')}</button>}
+                          </div>}
+                        </details>}
                         {batchHistory.length > 0 && <details><summary>{locale === 'zh' ? tr('课程生成任务历史') : 'Course generation history'}</summary>{batchHistory.map(row => <button key={row.job_id} onClick={() => { setBatchJob(row); localStorage.setItem('theraskill_batch_job', row.job_id) }}>{row.job_id} · {row.status} · {row.progress.processed}/{row.progress.total}</button>)}</details>}
                       </div>
                     </section>
@@ -1158,7 +1191,7 @@ export default function App() {
                       <div className="review-failed"><p>{locale === 'zh' ? tr('复盘生成失败，训练记录已保留。') : 'Review failed. Your transcript is saved.'}</p><button disabled={busy} onClick={() => void recoverSession('review')}>{locale === 'zh' ? tr('重试复盘') : 'Retry review'}</button></div>
                     ) : (
                       <>
-                        <div className={'review-gate ' + (activeSession.review?.gate_status === 'pass' ? 'pass' : 'not-passed')}>{activeSession.review?.status === 'not_evaluable' ? (locale === 'zh' ? tr('暂不可评估：证据或状态不完整') : 'Not evaluable: incomplete evidence or state') : 'Reviewer gate: ' + (activeSession.review?.gate_status || tr('未标注'))}</div>{activeSession.review?.findings?.map((finding: any, index: number) => <p key={index}>{finding.message}</p>)}
+                        <div className={'review-gate ' + (activeSession.review?.gate_status === 'pass' ? 'pass' : 'not-passed')}>{activeSession.review?.status === 'not_evaluable' ? (locale === 'zh' ? tr('暂不可评估：证据或状态不完整') : 'Not evaluable: incomplete evidence or state') : 'Reviewer gate: ' + (activeSession.review?.gate_status || tr('未标注'))}</div>{activeSession.review?.summary?.evidence_coverage && <p>{tr('原文覆盖')}：{activeSession.review.summary.evidence_coverage.covered_character_count}/{activeSession.review.summary.evidence_coverage.source_character_count} {tr('字符')} · {activeSession.review.summary.evidence_coverage.source_turn_count} {tr('条发言')}</p>}{activeSession.review?.findings?.map((finding: any, index: number) => <div key={index}><p>{finding.message}</p>{finding.evidence?.map((item: any, evidenceIndex: number) => <blockquote key={evidenceIndex}>{item.quote}<small>{item.turn_id}</small></blockquote>)}</div>)}
                         {summaryEntries.map(([key, value]) => (
                           <div className="review-section" key={key}>
                             <h3>{key.replaceAll('_', ' ')}</h3>
@@ -1243,6 +1276,7 @@ export default function App() {
                         {busy ? <LoaderCircle className="spin" size={15} /> : <GitCompareArrows size={15} />}{tr("生成三个策略候选")}</button>
                     ) : (
                       <div className="candidate-list">
+                        {latestComparison.status === 'limited_evidence' && <p>{tr('本次未获得可引用的知识，候选仅供对照讨论。')}</p>}
                         {latestComparison.candidates.map((candidate) => {
                           const selectedCandidate = selectedCandidateId === candidate.candidate_id
                           return (
@@ -1259,6 +1293,7 @@ export default function App() {
                                   <p>{candidate.rationale}</p>
                                   <small>{tr("适用：")}{candidate.applicable_context}</small>
                                   <small>{tr("局限：")}{candidate.limitations}</small>
+                                  {candidate.evidence?.map((item, index) => <blockquote key={index}>{item.quote}<small>{item.unit_id}</small></blockquote>)}
                                 </div>
                               )}
                             </button>

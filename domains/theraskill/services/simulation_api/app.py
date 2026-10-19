@@ -44,6 +44,8 @@ from domains.theraskill.theraskill_simulation.scenario_generation import (
     build_quality_report,
     PatientBuildRequest,
     ScenarioForkRequest,
+    validate_scenario_review,
+    effective_scenario_package,
 )
 from domains.theraskill.theraskill_simulation.patient_builder import (
     PatientDossier, build_patient_scenario, compile_patient, dossier_from_bundle,
@@ -218,7 +220,7 @@ class ResponseComparisonRequest(BaseModel):
     target_turn_id: str = Field(min_length=1)
 
 
-def scenario_public_digest(row: dict[str, Any]) -> dict[str, Any]:
+def scenario_public_digest(row: dict[str, Any], *, include_review_details: bool = False) -> dict[str, Any]:
     digest = {
         key: row.get(key)
         for key in (
@@ -251,6 +253,12 @@ def scenario_public_digest(row: dict[str, Any]) -> dict[str, Any]:
     }
     if row.get("generated") is True:
         digest["review_status"] = row.get("review_status") or "draft"
+    if not include_review_details:
+        digest.pop("review_history", None)
+        if digest.get("generation_workflow"):
+            workflow = digest["generation_workflow"]
+            digest["generation_workflow"] = {key: workflow[key] for key in ("mode", "review_status", "repair_requested") if key in workflow}
+            digest["generation_workflow"]["stages"] = [{"stage": stage.get("stage"), "status": stage.get("status")} for stage in workflow.get("stages", [])]
     return digest
 
 
@@ -329,13 +337,59 @@ def create_app(
             api_token=resolved.contribution_api_token,
         )
 
+    def generated_rows() -> list[dict[str, Any]]:
+        return registry.list(split_key="formal_split", split_value="generated", limit=500, language="mixed")
+
+    def execute_generation(job_id, payload, report_progress=None):
+        request = ScenarioGenerationRequest.model_validate(payload)
+        if resolved_scenario_generator is None:
+            raise RuntimeError("online scenario generator is unavailable")
+        def report(**progress):
+            if report_progress:
+                report_progress(progress={"processed": 0, "total": 1, **progress})
+        if isinstance(resolved_scenario_generator, LLMScenarioGenerator):
+            generated = resolved_scenario_generator.generate(request, workflow_id=job_id, progress=report)
+        else:
+            generated = resolved_scenario_generator.generate(request)
+        row = dict(generated["scenario"])
+        row.setdefault("language", request.language)
+        row.setdefault("review_status", "draft")
+        row.setdefault("review_history", [])
+        row["quality_report"] = build_quality_report(row, [item for item in generated_rows() if item.get("scenario_id") != row.get("scenario_id")])
+        row = registry.register_generated(row)
+        return {"schema_version": "theraskill_online_scenario_draft_v1", "count": 1,
+                "synthetic": True, "scenario": scenario_public_digest(row, include_review_details=True), "draft": row,
+                "quality": row.get("quality_report"),
+                "review": {"status": row.get("review_status", "draft"), "history": row.get("review_history", [])},
+                "safety": {"status": "synthetic_draft", "requires_researcher_or_instructor_review": True, "not_clinical_diagnosis": True}}
+
     def execute_batch_payload(batch_id: str, payload: dict[str, Any], report_progress=None) -> dict[str, Any]:
         request = ScenarioGenerationBatchRequest.model_validate(payload)
         if resolved_scenario_generator is None:
             raise RuntimeError("online scenario generator is unavailable")
+        if isinstance(resolved_scenario_generator, LLMScenarioGenerator):
+            from domains.theraskill.theraskill_simulation.generation_workflow import generation_checkpoint, model_signature, implementation_signature
+            binding = {"version": 1, "request": payload, "model": model_signature(resolved_scenario_generator.client), "implementation": implementation_signature()}
+            with generation_checkpoint(resolved.generated_batch_work_root, batch_id, binding) as checkpoint:
+                return execute_course_batch(batch_id, request, report_progress, checkpoint)
+        return execute_course_batch(batch_id, request, report_progress)
+
+    def execute_course_batch(batch_id, request, report_progress=None, checkpoint=None):
+        from domains.theraskill.theraskill_simulation.course_generation import plan_course, course_requests, review_course
+        plan = None
+        coverage = None
+        if checkpoint is not None:
+            if report_progress:
+                report_progress(progress={"processed": 0, "total": request.count, "stage": "course_plan"})
+            plan = plan_course(resolved_scenario_generator.client, request, checkpoint=checkpoint)
+            requests = course_requests(request, plan)
+        else:
+            requests = [ScenarioGenerationRequest(brief=request.brief, scenario_family=request.scenario_family,
+                difficulty_band=request.difficulty_band, risk_band=request.risk_band, language=request.language,
+                scenario_tags=request.scenario_tags, constraints=request.constraints) for _ in range(request.count)]
         # The registry is the checkpoint: do not regenerate already saved items
         # after a provider failure or a restart between persistence and progress.
-        by_index = {int(row["batch_index"]): row for row in generated_rows()
+        by_index = {int(row["batch_index"]): row for row in registry.generated_for_batch(batch_id)
                     if row.get("batch_id") == batch_id and row.get("batch_index")}
         persisted = [by_index[i] for i in sorted(by_index)]
 
@@ -346,24 +400,26 @@ def create_app(
                 quality_counts[status] = quality_counts.get(status, 0) + 1
             return {
                 "schema_version": "theraskill_online_scenario_batch_v1", "batch_id": batch_id,
-                "count": len(persisted), "scenarios": [scenario_public_digest(row) for row in persisted],
-                "quality_summary": quality_counts,
+                "count": len(persisted), "scenarios": [scenario_public_digest(row, include_review_details=True) for row in persisted],
+                "quality_summary": quality_counts, "course_plan": plan, "course_review": coverage,
                 "course_draft": {"title": request.course_title, "description": request.course_description,
                                  "skill_tags": request.skill_tags,
                                  "scenario_ids": [str(row["scenario_id"]) for row in persisted],
                                  "batch_id": batch_id, "review_required": True},
             }
 
+        if report_progress:
+            report_progress(progress={"processed": len(persisted), "total": request.count, "stage": "course_plan"}, result=result_payload())
         for index in range(1, request.count + 1):
             if index not in by_index:
-                variation = (f"Scenario {index}/{request.count} in a course batch; vary the trigger or client goal to avoid duplicates."
-                             if str(request.language) == "en" else f"课程批次第 {index}/{request.count} 个场景，请改变触发情境或来访者目标，避免同批重复。")
-                generated = resolved_scenario_generator.generate(ScenarioGenerationRequest(
-                    brief=request.brief, scenario_family=request.scenario_family,
-                    difficulty_band=request.difficulty_band, risk_band=request.risk_band,
-                    language=request.language, scenario_tags=request.scenario_tags,
-                    constraints=f"{request.constraints.strip()}\n{variation}".strip(),
-                ))
+                if checkpoint is not None:
+                    def report_case(**progress):
+                        if report_progress:
+                            report_progress(progress={"processed": len(persisted), "total": request.count, "case_index": index, **progress}, result=result_payload())
+                    generated = resolved_scenario_generator.generate(requests[index - 1],
+                        workflow_id=f"{batch_id}_case_{index}", progress=report_case)
+                else:
+                    generated = resolved_scenario_generator.generate(requests[index - 1])
                 row = dict(generated["scenario"])
                 row.update({"language": row.get("language") or request.language,
                             "batch_id": batch_id, "batch_index": index, "batch_size": request.count,
@@ -373,9 +429,15 @@ def create_app(
                 persisted = [by_index[i] for i in sorted(by_index)]
             if report_progress:
                 report_progress(progress={"processed": len(persisted), "total": request.count}, result=result_payload())
+        if checkpoint is not None:
+            if report_progress:
+                report_progress(progress={"processed": len(persisted), "total": request.count, "stage": "course_coverage_review"}, result=result_payload())
+            coverage = review_course(resolved_scenario_generator.client, request, plan,
+                [{"index": index, "scenario": row} for index, row in sorted(by_index.items())], checkpoint=checkpoint)
         return result_payload()
 
     batch_job_store = ScenarioBatchJobStore(resolved.generated_batch_work_root, execute_batch_payload, runner_reports_progress=True)
+    generation_job_store = ScenarioBatchJobStore(resolved.generated_batch_work_root / "patient_jobs", execute_generation, runner_reports_progress=True, job_prefix="patient_generation")
     async def review_worker() -> None:
         while True:
             try:
@@ -400,6 +462,7 @@ def create_app(
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
             batch_job_store.shutdown()
+            generation_job_store.shutdown()
 
     app = FastAPI(
         title="TheraSkill Simulation API",
@@ -415,6 +478,7 @@ def create_app(
     app.state.comparison_engine = resolved_comparison_engine
     app.state.scenario_generator = resolved_scenario_generator
     app.state.scenario_batch_jobs = batch_job_store
+    app.state.patient_generation_jobs = generation_job_store
     app.add_middleware(
         CORSMiddleware,
         allow_origins=resolved.cors_origins,
@@ -463,9 +527,6 @@ def create_app(
         digest = hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
         return f"{prefix}_{digest}"
 
-    def generated_rows() -> list[dict[str, Any]]:
-        return registry.list(split_key="formal_split", split_value="generated", limit=500, language="mixed")
-
     def review_event(row: dict[str, Any], *, action: str, actor_role: ActorRole, reason: str = "") -> list[dict[str, Any]]:
         history = list(row.get("review_history") or [])
         history.append({
@@ -505,6 +566,9 @@ def create_app(
             visible = authoritative.setdefault("visible_profile", {})
             visible["scenario_brief"] = updates["scenario_brief"]
         revised = {**row, **updates, "revision": int(row.get("revision") or 1) + 1}
+        if row.get("generation_workflow"):
+            revised["generation_workflow"] = {**row["generation_workflow"], "review_status": "stale"}
+            bundle.setdefault("provenance", {})["review_invalidated_by_edit"] = revised["revision"]
         if "patient" in updates or bundle.get("patient_dossier"):
             patient = PatientDossier.model_validate(updates["patient"]) if "patient" in updates else dossier_from_bundle(bundle, row)
             bundle = compile_patient(bundle, revised, patient)
@@ -646,7 +710,7 @@ def create_app(
             "count": len(rows),
             "scenarios": [
                 {
-                    **scenario_public_digest(row),
+                    **scenario_public_digest(row, include_review_details=_role in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}),
                     "learner_role_card": row.get("learner_role_card") or service.learner_role_card_for_case(
                         str(row.get("case_id") or ""), row
                     ),
@@ -675,7 +739,7 @@ def create_app(
             if (not review_status or row.get("review_status", "draft") == review_status)
             and (not batch_id or row.get("batch_id") == batch_id)
         ][:limit]
-        return {"count": len(rows), "scenarios": [scenario_public_digest(row) for row in rows]}
+        return {"count": len(rows), "scenarios": [scenario_public_digest(row, include_review_details=True) for row in rows]}
 
     @app.post("/scenarios/generate", status_code=201)
     async def generate_scenario(
@@ -687,31 +751,46 @@ def create_app(
         if resolved_scenario_generator is None:
             raise HTTPException(status_code=503, detail="online scenario generator is unavailable")
         try:
-            generated = await asyncio.to_thread(resolved_scenario_generator.generate, request)
-            row = dict(generated["scenario"])
-            row.setdefault("language", request.language)
-            row.setdefault("review_status", "draft")
-            row.setdefault("review_history", [])
-            row["quality_report"] = build_quality_report(
-                row,
-                [item for item in generated_rows() if item.get("scenario_id") != row.get("scenario_id")],
-            )
-            row = registry.register_generated(row)
+            run_id = "patient_" + (hashlib.sha256(request.request_id.encode()).hexdigest() if request.request_id else uuid.uuid4().hex)
+            return await asyncio.to_thread(execute_generation, run_id, request.model_dump(mode="json"))
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"online scenario generation failed: {exc}") from exc
-        return {
-            "schema_version": "theraskill_online_scenario_draft_v1",
-            "synthetic": True,
-            "scenario": scenario_public_digest(row),
-            "draft": row,
-            "quality": row.get("quality_report"),
-            "review": {"status": row.get("review_status", "draft"), "history": row.get("review_history", [])},
-            "safety": {
-                "status": "synthetic_draft",
-                "requires_researcher_or_instructor_review": True,
-                "not_clinical_diagnosis": True,
-            },
-        }
+            from theraskill_agent.text import redact_secrets
+            raise HTTPException(status_code=502, detail=redact_secrets(f"online scenario generation failed: {exc}")) from exc
+
+    def generation_author(role):
+        if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
+            raise HTTPException(status_code=403, detail="Patient design requires instructor or researcher role")
+
+    @app.post("/scenarios/generate/jobs", status_code=202)
+    def start_generation_job(request: ScenarioGenerationRequest, role: ActorRole = Depends(caller_role)):
+        generation_author(role)
+        if resolved_scenario_generator is None:
+            raise HTTPException(status_code=503, detail="online scenario generator is unavailable")
+        return generation_job_store.create(request.model_dump(mode="json"), str(role))
+
+    @app.get("/scenarios/generate/jobs")
+    def list_generation_jobs(role: ActorRole = Depends(caller_role)):
+        generation_author(role)
+        return {"jobs": generation_job_store.list()}
+
+    @app.get("/scenarios/generate/jobs/{job_id}")
+    def get_generation_job(job_id: str, role: ActorRole = Depends(caller_role)):
+        generation_author(role)
+        job = generation_job_store.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Generation job not found")
+        return job
+
+    @app.post("/scenarios/generate/jobs/{job_id}/retry")
+    def retry_generation_job(job_id: str, role: ActorRole = Depends(caller_role)):
+        generation_author(role)
+        try:
+            job = generation_job_store.retry(job_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not job:
+            raise HTTPException(status_code=404, detail="Generation job not found")
+        return job
 
     @app.post("/scenarios/build-patient", status_code=201)
     def build_patient(request: PatientBuildRequest, role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
@@ -724,7 +803,7 @@ def create_app(
         row = generated["scenario"]
         row["quality_report"] = build_quality_report(row, generated_rows())
         row = registry.register_generated(row)
-        return {"scenario": scenario_public_digest(row), "quality": row["quality_report"], "synthetic": True}
+        return {"scenario": scenario_public_digest(row, include_review_details=True), "quality": row["quality_report"], "synthetic": True}
 
     @app.get("/scenarios/{scenario_id}/patient")
     def get_patient(scenario_id: str, role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
@@ -732,7 +811,7 @@ def create_app(
             raise HTTPException(status_code=403, detail="patient design contains private case facts")
         row = registry.get(scenario_id)
         bundle, _, _ = service._load_case_bundle(row, language=row.get("language") or "zh")
-        return {"scenario": scenario_public_digest(row), "revision": row.get("revision") or 1,
+        return {"scenario": scenario_public_digest(row, include_review_details=True), "revision": row.get("revision") or 1,
                 "patient": dossier_from_bundle(bundle, row).model_dump(mode="json"),
                 "grounding": (bundle.get("provenance") or {}).get("knowledge_grounding", {"status": "not_requested"}),
                 "bundle_sha256": row.get("bundle_sha256"), "synthetic": bool(row.get("synthetic"))}
@@ -750,9 +829,11 @@ def create_app(
             scenario_tags=source.get("scenario_tags") or [])
         generated = build_patient_scenario(request, resolved.generated_scenario_root, bundle=bundle)
         row = {**generated["scenario"], "parent_scenario_id": scenario_id, "parent_revision": source.get("revision") or 1}
+        if source.get("generation_workflow"):
+            row["generation_workflow"] = {**source["generation_workflow"], "review_status": "stale"}
         row["quality_report"] = build_quality_report(row, generated_rows())
         row = registry.register_generated(row)
-        return {"scenario": scenario_public_digest(row), "quality": row["quality_report"], "synthetic": True}
+        return {"scenario": scenario_public_digest(row, include_review_details=True), "quality": row["quality_report"], "synthetic": True}
 
     @app.post("/scenarios/generate-batch", status_code=201)
     async def generate_scenario_batch(
@@ -838,11 +919,52 @@ def create_app(
             saved = registry.update_generated(scenario_id, merged)
         return {
             "schema_version": "theraskill_online_scenario_draft_v1",
-            "scenario": scenario_public_digest(saved),
+            "scenario": scenario_public_digest(saved, include_review_details=True),
             "draft": saved,
             "quality": saved.get("quality_report"),
             "review": {"status": saved.get("review_status"), "history": saved.get("review_history", [])},
         }
+
+    @app.post("/scenarios/generated/{scenario_id}/check")
+    def check_generated_scenario(scenario_id: str, role: ActorRole = Depends(caller_role)):
+        generation_author(role)
+        if not isinstance(resolved_scenario_generator, LLMScenarioGenerator):
+            raise HTTPException(status_code=503, detail="Model reviewer is unavailable")
+        current = registry.get(scenario_id)
+        if not current.get("generated"):
+            raise HTTPException(status_code=400, detail="Only generated drafts can be checked")
+        bundle = json.loads(Path(current["case_bundle_path"]).read_text(encoding="utf-8"))
+        patient = dossier_from_bundle(bundle, current)
+        seed = ScenarioGenerationRequest(brief=current["scenario_brief"], language=current.get("language") or "zh",
+            scenario_family=current["scenario_family"], difficulty_band=current.get("difficulty_band") or "medium",
+            risk_band=current.get("risk_band") or "low", patient=patient)
+        package = {k: current[k] for k in ("scenario_brief", "scenario_family", "case_family", "scenario_tags", "difficulty_band", "risk_band", "recommended_turn_budget") if k in current}
+        package["initial_session_state"] = (bundle.get("runtime_state_seed") or {}).get("initial_session_state", {})
+        package = effective_scenario_package(patient, package, seed)
+        provenance = bundle.get("provenance") or {}
+        from domains.theraskill.theraskill_llm import chat_json_with_repair
+        try:
+            report = chat_json_with_repair(resolved_scenario_generator.client,
+                resolved_scenario_generator._prompts_for(seed.language)["review"],
+                {"workflow_stage": "review", "request": seed.model_dump(mode="json"),
+                 "design_plan": (provenance.get("generation_workflow") or {}).get("plan", {}),
+                 "patient_dossier": patient.model_dump(mode="json"), "scenario_package": package,
+                 "knowledge_context": provenance.get("knowledge_grounding", {})},
+                validate=validate_scenario_review, force_json_first=True, max_prompt_tokens=12000)
+            validate_scenario_review(report)
+        except Exception as exc:
+            from theraskill_agent.text import redact_secrets
+            raise HTTPException(status_code=502, detail=redact_secrets(str(exc))) from exc
+        with scenario_edit_lock:
+            latest = registry.get(scenario_id)
+            if latest.get("bundle_sha256") != current.get("bundle_sha256") or latest.get("revision") != current.get("revision"):
+                raise HTTPException(status_code=409, detail="Patient changed during review; check the new version")
+            workflow = {**(current.get("generation_workflow") or {}), "review_status": report["status"],
+                        "issues": report["issues"], "last_review": report, "reviewed_revision": current.get("revision")}
+            saved = {**latest, "generation_workflow": workflow, "review_status": "draft"}
+            saved["quality_report"] = build_quality_report(saved, [row for row in generated_rows() if row["scenario_id"] != scenario_id])
+            saved = registry.update_generated(scenario_id, saved)
+        return {"scenario": scenario_public_digest(saved, include_review_details=True), "quality": saved["quality_report"], "review": report}
 
     @app.post("/scenarios/generated/{scenario_id}/review")
     def review_generated_scenario(
@@ -864,6 +986,12 @@ def create_app(
             )
             if request.action == "approve" and quality.get("status") == "fail":
                 raise HTTPException(status_code=422, detail="quality checks must pass before approval")
+            workflow = current.get("generation_workflow") or {}
+            unresolved = bool(workflow) and workflow.get("review_status") not in {"pass", "pass_after_repair"}
+            if request.action == "approve" and unresolved and not (request.override_model_review and request.reason.strip()):
+                raise HTTPException(status_code=422, detail="Model review is unresolved or stale. Recheck the draft, or explicitly record a human review override and its reason.")
+            if request.action == "approve" and unresolved:
+                current = {**current, "review_history": review_event(current, action="model_review_override", actor_role=role, reason=request.reason)}
             status = "approved" if request.action == "approve" else "rejected"
             saved = registry.update_generated(scenario_id, {
                 "review_status": status,
@@ -872,7 +1000,7 @@ def create_app(
             })
         return {
             "schema_version": "theraskill_online_scenario_review_v1",
-            "scenario": scenario_public_digest(saved),
+            "scenario": scenario_public_digest(saved, include_review_details=True),
             "quality": quality,
             "review": {"status": status, "reason": request.reason.strip(), "history": saved.get("review_history", [])},
         }

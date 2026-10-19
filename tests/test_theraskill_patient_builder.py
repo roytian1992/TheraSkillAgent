@@ -186,7 +186,11 @@ def test_generation_passes_grounding_and_preserves_user_experiences(tmp_path, mo
     seen = {}
     def model(client, prompt, payload, **kwargs):
         seen.update(payload)
-        return {"scenario_brief": "Supportive exploration of a difficult work week.", "patient": patient().model_dump(mode="json")}
+        stage = payload["workflow_stage"]
+        if stage == "plan": return {"training_goal": "Practice validation"}
+        if stage == "patient": return {"patient": patient().model_dump(mode="json")}
+        if stage == "package": return {"scenario_brief": "Supportive exploration of a difficult work week."}
+        return {"status": "pass", "issues": []}
     monkeypatch.setattr(theraskill_llm, "chat_json_with_repair", model)
     generator = LLMScenarioGenerator.__new__(LLMScenarioGenerator)
     generator.client = object(); generator.prompts = {"zh": "prompt", "en": "prompt"}; generator.output_root = tmp_path
@@ -217,7 +221,9 @@ def test_generation_uses_staged_workflow_and_repairs_review_findings(tmp_path, m
         if stage == "package":
             return {"scenario_brief": "Supportive exploration of work stress", "scenario_tags": ["validation"]}
         if stage == "review":
-            return {"status": "repair", "issues": [{"code": "training_alignment", "severity": "error"}]}
+            return {"status": "repair", "issues": [{"code": "training_alignment", "severity": "error", "detail": "Clarify the objective"}]}
+        if stage == "re_review":
+            return {"status": "pass", "issues": []}
         if stage == "repair":
             repaired = dict(seed)
             repaired["training_objectives"] = ["Practice validation and open exploration"]
@@ -232,7 +238,7 @@ def test_generation_uses_staged_workflow_and_repairs_review_findings(tmp_path, m
     generator._knowledge_context = lambda req: {"status": "grounded", "items": [{"retrieval_id": "unit::plan", "content": "Use gradual disclosure"}]}
 
     generated = generator.generate(ScenarioGenerationRequest(brief="Explore recent work stress and coping.", language="en"))
-    assert calls == ["plan", "patient", "package", "review", "repair"]
+    assert calls == ["plan", "patient", "package", "review", "repair", "re_review"]
     workflow = generated["scenario"]["generation_workflow"]
     assert workflow["mode"] == "staged_agentic_generation"
     assert workflow["repair_requested"] is True

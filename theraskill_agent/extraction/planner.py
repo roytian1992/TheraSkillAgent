@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from domains.theraskill.theraskill_llm import OpenAICompatibleClient, chat_json_with_repair
 
 from .contracts import ExtractionPlan, PlanError
+from .schema import SCHEMA_GUIDANCE
 
 
 def suggest_schema(goal: str, *, language: str = "auto") -> dict[str, Any]:
@@ -99,7 +100,7 @@ strict JSON Schema object with properties and required fields. Include an
 evidence field in required whenever the goal can be grounded in the source.
 Keep fields minimal and useful for downstream simulation or review. Do not
 invent medical conclusions or output executable code.
-"""
+""" + SCHEMA_GUIDANCE
 
 
 def plan_with_model(

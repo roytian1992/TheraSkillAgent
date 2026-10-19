@@ -70,7 +70,14 @@ def main():
             result = AgentRuntime(root).run({"kind": "text.normalize", "text": "  one   two  "})
             assert result.output["text"] == "one two"
             manager = SkillManager()
-            assert len(manager.list_skills()) == 12
+            expected_skills = {
+                "cognitive-reframing-support", "dynamic-knowledge-extraction", "emotional-support",
+                "knowledge-index-manager", "rebt-belief-work-support", "risk-triage",
+                "simulated-patient-builder", "synthetic-dialogue-builder", "theraskill-agent-operator",
+                "therapy-response-reviewer", "transcript-evaluator", "transcript-normalizer",
+                "transcript-quality-reviewer",
+            }
+            assert {skill.name for skill in manager.list_skills()} == expected_skills
             source = root / "incoming/demo"
             source.mkdir(parents=True)
             (source / "SKILL.md").write_text("---\nname: demo\ndescription: Format text\n---\n# Format\nNormalize whitespace.\n")

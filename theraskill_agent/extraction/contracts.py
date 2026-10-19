@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 from uuid import uuid4
 
+from .schema import SchemaError, validate_schema
+
 
 PLAN_VERSION = "theraskill_dynamic_extraction_plan_v1"
 
@@ -38,33 +40,15 @@ def validate_json_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
     prevents an LLM-generated schema from smuggling executable behavior into
     the worker.
     """
-    if not isinstance(schema, Mapping):
-        raise PlanError("target_schema must be an object")
-    schema = dict(schema)
+    try:
+        schema = validate_schema(schema)
+    except SchemaError as exc:
+        raise PlanError(str(exc)) from exc
     if schema.get("type", "object") != "object":
         raise PlanError("target_schema.type must be object")
     properties = schema.get("properties")
     if not isinstance(properties, Mapping) or not properties:
         raise PlanError("target_schema.properties must contain at least one field")
-    required = schema.get("required", [])
-    if not isinstance(required, list) or any(not isinstance(item, str) for item in required):
-        raise PlanError("target_schema.required must be a list of field names")
-    unknown_required = [name for name in required if name not in properties]
-    if unknown_required:
-        raise PlanError(f"required fields missing from properties: {unknown_required}")
-    allowed_types = {"string", "number", "integer", "boolean", "array", "object"}
-    for name, definition in properties.items():
-        if not isinstance(name, str) or not name.strip():
-            raise PlanError("schema field names must be non-empty strings")
-        if not isinstance(definition, Mapping):
-            raise PlanError(f"schema field {name!r} must be an object")
-        field_type = definition.get("type", "string")
-        if field_type not in allowed_types:
-            raise PlanError(f"unsupported schema type for {name!r}: {field_type}")
-        if "enum" in definition and (
-            not isinstance(definition["enum"], list) or not definition["enum"]
-        ):
-            raise PlanError(f"schema enum for {name!r} must be a non-empty list")
     return schema
 
 
@@ -89,6 +73,7 @@ class ExtractionPlan:
     prompt_version: str = "dynamic_extraction_prompt_v1"
     plan_id: str = field(default_factory=lambda: f"plan_{uuid4().hex[:16]}")
     status: str = "draft"
+    semantic_review: str = "auto"
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     schema_version: str = PLAN_VERSION
 
@@ -118,6 +103,8 @@ class ExtractionPlan:
             raise PlanError("operations must be a list of strings")
         if self.status not in {"draft", "planned", "approved"}:
             raise PlanError("status must be draft, planned or approved")
+        if self.semantic_review not in {"auto", "always"}:
+            raise PlanError("semantic_review must be auto or always")
         object.__setattr__(self, "target_schema", validate_json_schema(self.target_schema))
 
     @classmethod
@@ -142,6 +129,7 @@ class ExtractionPlan:
             prompt_version=payload.get("prompt_version", "dynamic_extraction_prompt_v1"),
             plan_id=payload.get("plan_id") or f"plan_{uuid4().hex[:16]}",
             status=payload.get("status", "draft"),
+            semantic_review=payload.get("semantic_review", "auto"),
             created_at=payload.get("created_at") or datetime.now(timezone.utc).isoformat(),
             schema_version=payload.get("schema_version", PLAN_VERSION),
         )
