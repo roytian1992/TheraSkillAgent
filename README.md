@@ -65,6 +65,19 @@ A skill describes a task's purpose, inputs, outputs, tools, knowledge scope, and
 - **Therapeutic response and support**: `therapy-response-reviewer`, `emotional-support`, `cognitive-reframing-support`, `rebt-belief-work-support`, `risk-triage`
 - **Runtime operations**: `theraskill-agent-operator`
 
+## Skill, task, workspace, and runtime
+
+These four terms describe different layers of the product:
+
+| Layer | What it does | When you use it |
+| --- | --- | --- |
+| **Skill** | A reusable method that defines a goal, inputs and outputs, tools, knowledge scope, and checks | Install, inspect, or improve a capability such as transcript normalization, knowledge extraction, or simulated-patient construction |
+| **Task** | One durable execution instance with its inputs, plan, tool calls, approvals, checkpoints, and result | Start an extraction, evaluation, skill run, or batch generation and follow it in the Tasks Center |
+| **Workspace** | A human-facing business entry point that organizes goals and results into an actionable page | Work in transcript analysis, knowledge extraction, simulation, expert review, and other domain screens |
+| **Runtime** | The execution foundation that selects skills, calls tools, persists state, waits for interaction, resumes, and audits | Usually used automatically; open **Agent task flows** when you need to inspect or control execution |
+
+The **Agent task flows** screen is therefore not another business workflow and not ordinary chat history. It is the runtime's operator view: create a Task from a goal, let the Agent choose or run a Skill, answer questions when it pauses, and inspect the full execution timeline. A workspace expresses *what needs to be done*, a Skill describes *how to do it*, and a Task records *what happened in this run*.
+
 ## Simulated patients and scenario training
 
 A simulated patient is an editable, reusable case revision rather than a fixed persona. A dossier can include:

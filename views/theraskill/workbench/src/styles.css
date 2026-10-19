@@ -81,3 +81,15 @@
 .home-main .panel-actions .secondary-action{font-size:12px;padding:7px 10px}
 @media(max-width:900px){.home-main{padding:0 22px}.home-main .setup-checklist .resource-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.home-main .service-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.home-main{padding:0 16px}.home-main .hero{padding-top:30px}.home-main .hero h1{font-size:34px}.home-main .hero-actions{margin-top:18px}.home-main .link-grid,.home-main .service-grid,.home-main .setup-checklist .resource-grid{grid-template-columns:1fr}.home-main .columns{grid-template-columns:1fr}.home-main .setup-checklist{padding:16px}.home-main .setup-checklist .resource-grid article{min-height:0}}
+
+/* Make the runtime model visible before users create a task. */
+.workflow-studio .workspace-title{max-width:900px}
+.workflow-studio .workspace-title>p:last-child{max-width:850px;color:#65766d;font-size:13px;line-height:1.65;margin:0}
+.runtime-concepts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0 0 16px}
+.runtime-concept{min-width:0;padding:15px 16px;background:#f8fbf9;border:1px solid #dbe8e0;border-radius:13px}
+.runtime-concept-tag{display:inline-flex;align-items:center;border-radius:999px;padding:4px 8px;background:#e6f3eb;color:#176d58;font-size:10px;font-weight:800;letter-spacing:.08em}
+.runtime-concept h2{display:block;margin:10px 0 6px;font-size:14px;color:#223b30}
+.runtime-concept p{margin:0;color:#6b7c73;font-size:12px;line-height:1.55}
+.workflow-studio .panel-intro{margin:-3px 0 2px;font-size:12px;color:#708178}
+.workflow-studio .skill-registry{margin-top:14px}
+@media(max-width:800px){.runtime-concepts{grid-template-columns:1fr}.workflow-studio .studio-grid{grid-template-columns:1fr}}
