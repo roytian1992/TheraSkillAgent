@@ -222,13 +222,33 @@ class LLMScenarioGenerator:
         config = merged_model_config(load_yaml(extraction_config), load_yaml(model_config))
         self.client = OpenAICompatibleClient(config)
         self.prompts = {
-            "zh": load_prompt(root / "prompts/Simulation/scenario_generation_zh.md"),
-            "en": load_prompt(root / "prompts/Simulation/scenario_generation_en.md"),
+            "zh": {
+                "plan": load_prompt(root / "prompts/Simulation/scenario_plan_zh.md"),
+                "patient": load_prompt(root / "prompts/Simulation/patient_dossier_zh.md"),
+                "package": load_prompt(root / "prompts/Simulation/scenario_package_zh.md"),
+                "review": load_prompt(root / "prompts/Simulation/scenario_review_zh.md"),
+                "repair": load_prompt(root / "prompts/Simulation/scenario_repair_zh.md"),
+            },
+            "en": {
+                "plan": load_prompt(root / "prompts/Simulation/scenario_plan_en.md"),
+                "patient": load_prompt(root / "prompts/Simulation/patient_dossier_en.md"),
+                "package": load_prompt(root / "prompts/Simulation/scenario_package_en.md"),
+                "review": load_prompt(root / "prompts/Simulation/scenario_review_en.md"),
+                "repair": load_prompt(root / "prompts/Simulation/scenario_repair_en.md"),
+            },
         }
         self.output_root = Path(output_root).resolve()
 
+    def _prompts_for(self, language: str) -> dict[str, str]:
+        """Return stage prompts, while accepting the old test/embedding shape."""
+        selected = self.prompts.get(str(language).lower(), self.prompts["zh"])
+        if isinstance(selected, str):
+            return {stage: selected for stage in ("plan", "patient", "package", "review", "repair")}
+        return selected
+
     def _prompt_for(self, language: str) -> str:
-        return self.prompts.get(str(language).lower(), self.prompts["zh"])
+        """Compatibility accessor for callers that only need a final prompt."""
+        return self._prompts_for(language)["package"]
 
     def _knowledge_context(self, request: ScenarioGenerationRequest) -> dict[str, Any]:
         if not request.use_knowledge:
@@ -248,21 +268,94 @@ class LLMScenarioGenerator:
             return {"status": "unavailable", "reason": redact_secrets(str(exc))[:500], "items": []}
 
     def generate(self, request: ScenarioGenerationRequest) -> dict[str, Any]:
+        """Generate a scenario through a staged, repairable workflow.
+
+        The browser endpoint remains compatible with the original synchronous
+        contract, but generation is split into planning, dossier construction,
+        runtime-package construction, and independent review. This gives smaller
+        Qwen-class models a narrower JSON task at each call and preserves a
+        trace that can later be surfaced as a durable Task timeline.
+        """
         from domains.theraskill.theraskill_llm import chat_json_with_repair
 
         knowledge = self._knowledge_context(request)
+        prompts = self._prompts_for(request.language)
+        base_payload = {**request.model_dump(mode="json"), "knowledge_context": knowledge}
+        trace: list[dict[str, Any]] = []
+
+        def call_stage(stage: str, payload: dict[str, Any], *, validate=None) -> dict[str, Any]:
+            value = chat_json_with_repair(
+                self.client,
+                prompts[stage],
+                payload,
+                parse_retries=1,
+                max_prompt_tokens=12000,
+                force_json_first=True,
+                validate=validate,
+            )
+            trace.append({"stage": stage, "status": "completed"})
+            return value if isinstance(value, dict) else {}
+
         def validate_patient(value: dict[str, Any]) -> None:
-            if isinstance(value.get("patient"), dict):
-                PatientDossier.model_validate(value["patient"])
-        result = chat_json_with_repair(
-            self.client,
-            self._prompt_for(request.language),
-            {**request.model_dump(mode="json"), "knowledge_context": knowledge},
-            parse_retries=1,
-            max_prompt_tokens=12000,
-            force_json_first=True,
+            patient_value = value.get("patient")
+            if not isinstance(patient_value, dict):
+                raise ValueError("patient dossier stage must return a patient object")
+            PatientDossier.model_validate(patient_value)
+
+        plan = call_stage("plan", {**base_payload, "workflow_stage": "plan"})
+        patient_result = call_stage(
+            "patient",
+            {**base_payload, "workflow_stage": "patient", "design_plan": plan},
             validate=validate_patient,
         )
+        package = call_stage(
+            "package",
+            {
+                **base_payload,
+                "workflow_stage": "package",
+                "design_plan": plan,
+                "patient_dossier": patient_result.get("patient"),
+            },
+        )
+
+        review_payload = {
+            **base_payload,
+            "workflow_stage": "review",
+            "design_plan": plan,
+            "patient_dossier": patient_result.get("patient"),
+            "scenario_package": package,
+        }
+        try:
+            review = call_stage("review", review_payload)
+        except Exception as exc:  # A review outage should not lose a usable draft.
+            review = {"status": "unavailable", "issues": [{"severity": "warning", "detail": str(exc)[:500]}]}
+            trace.append({"stage": "review", "status": "unavailable", "error": str(exc)[:500]})
+
+        # A reviewer can request one focused repair pass. Deterministic checks
+        # still run after repair and remain the final gate.
+        if str(review.get("status") or "pass").lower() == "repair":
+            try:
+                repaired = call_stage(
+                    "repair",
+                    {
+                        **base_payload,
+                        "workflow_stage": "repair",
+                        "design_plan": plan,
+                        "patient_dossier": patient_result.get("patient"),
+                        "scenario_package": package,
+                        "review": review,
+                    },
+                )
+                if isinstance(repaired.get("patient"), dict):
+                    PatientDossier.model_validate(repaired["patient"])
+                    patient_result = {**patient_result, "patient": repaired["patient"]}
+                package = {**package, **{key: value for key, value in repaired.items() if key != "patient"}}
+                review = {**review, "status": "pass_after_repair", "repaired": True}
+            except Exception as exc:  # Preserve the draft; deterministic checks remain the gate.
+                review = {**review, "repair_status": "unavailable", "repair_error": str(exc)[:500]}
+                trace.append({"stage": "repair", "status": "unavailable", "error": str(exc)[:500]})
+
+        result = {**package, "patient": patient_result.get("patient")}
         scenario_id = f"generated_{uuid.uuid4().hex}"
         case_id = f"generated_case_{uuid.uuid4().hex}"
         visible = result.get("visible_profile") or {}
@@ -291,6 +384,12 @@ class LLMScenarioGenerator:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "revision": 1,
             "grounding_status": knowledge["status"],
+            "generation_workflow": {
+                "mode": "staged_agentic_generation",
+                "stages": trace,
+                "review_status": str(review.get("status") or "pass"),
+                "repair_requested": bool(review.get("repaired")) or str(review.get("status") or "pass").lower() == "repair",
+            },
         }
         bundle = {
             "schema_version": "theraskill_generated_case_bundle_v1",
@@ -316,13 +415,20 @@ class LLMScenarioGenerator:
             "runtime_priors": {},
             "runtime_state_seed": {"initial_session_state": initial_state},
             "provenance": {
-                "generated_by": "theraskill_online_scenario_generator_v1",
+                "generated_by": "theraskill_online_scenario_agentic_v2",
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "request": request.model_dump(mode="json"),
                 "knowledge_grounding": knowledge,
+                "generation_workflow": {
+                    "mode": "staged_agentic_generation",
+                    "stages": trace,
+                    "plan": plan,
+                    "review": review,
+                },
             },
         }
-        patient = (PatientDossier.model_validate(result["patient"]) if isinstance(result.get("patient"), dict)
+        patient_value = result.get("patient")
+        patient = (PatientDossier.model_validate(patient_value) if isinstance(patient_value, dict)
                    else dossier_from_bundle(bundle, scenario))
         if request.patient is not None:
             # The user's supplied facts take precedence over model inventions;

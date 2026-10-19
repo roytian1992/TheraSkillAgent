@@ -246,6 +246,7 @@ def scenario_public_digest(row: dict[str, Any]) -> dict[str, Any]:
             "revision",
             "grounding_status",
             "parent_scenario_id",
+            "generation_workflow",
         )
     }
     if row.get("generated") is True:

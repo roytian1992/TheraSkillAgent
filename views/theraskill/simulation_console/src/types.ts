@@ -1,6 +1,12 @@
 export type Scenario = {
   revision?: number
   grounding_status?: string
+  generation_workflow?: {
+    mode?: string
+    stages?: Array<{ stage?: string; status?: string; error?: string }>
+    review_status?: string
+    repair_requested?: boolean
+  }
   parent_scenario_id?: string
   scenario_id: string
   scenario_family: string

@@ -54,6 +54,20 @@ Missing indexes, failed retrieval and no matches remain explicit; generation may
 still create an ungrounded synthetic draft. Retrieved guidance informs training
 design and disclosure, never patient biography. The form can disable retrieval.
 
+## Staged online generation
+
+**Generate and save patient draft** uses a staged workflow instead of asking one model call to fill every field at once:
+
+1. **Planning**: derive the training goal, recent-event design, hidden concerns, and disclosure path from the theme, difficulty, risk, and construction guidance.
+2. **Patient dossier**: generate only the `PatientDossier` fields: identity, presenting concern, background, recent experiences, hidden concerns, goals, and communication preferences.
+3. **Scenario package**: use the validated dossier to produce the public role card, hidden settings, continuity seeds, and initial session state.
+4. **Independent review**: check identity, timeline, public/hidden leakage, risk band, and training-objective alignment.
+5. **Focused repair**: when the review finds an error, repair only the named issue before deterministic checks run again.
+
+Each stage is a separate structured JSON call, so a Qwen-class local model solves smaller problems instead of placing the entire case schema in one prompt. The result still goes through dossier validation, Persona v2 compilation, duplicate checks, and draft governance. The case bundle stores stage status and the review summary so the workflow can later expose durable Task checkpoints.
+
+The browser button currently waits for the complete workflow and returns once; generation is staged, but each stage is not yet shown as a pausable Tasks Center step. When `simulated-patient-builder` is called through the Agent workflow, the outer Agent can clarify, call tools, and inspect/update the saved case while using this same staged generator underneath.
+
 ## Runtime and limits
 
 For Persona v2, fast mode interprets the actual therapist move and realizes a

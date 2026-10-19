@@ -906,6 +906,7 @@ export default function App() {
                         <span>{tr("结构检查")}{selected.quality_report?.score ?? '—'}{tr("分（不代表教学质量）")}</span>
                         <span>{selected.quality_report?.status === 'fail' ? tr('存在阻断问题') : selected.quality_report?.status === 'warn' ? tr('有提醒项') : tr('检查通过')}</span>
                         {selected.batch_id && <span>{tr("批次")}{selected.batch_index}/{selected.batch_size}</span>}
+                        {selected.generation_workflow && <span>{tr("分阶段生成")} · {(selected.generation_workflow.stages || []).filter(stage => stage.status === 'completed').length}/{(selected.generation_workflow.stages || []).length}{tr("阶段")}</span>}
                       </div>
                       {selected.quality_report?.duplicate_of && (
                         <p className="governance-warning">{tr("与已有草稿「")}{selected.quality_report.duplicate_of}{tr("」相似度")}{selected.quality_report.duplicate_similarity}{tr("，请先修改主题。")}</p>

@@ -54,7 +54,7 @@ export function PatientBuilder({ role, language, onSaved }: { role: CallerRole; 
     } catch (err) { setError(err instanceof Error ? err.message : String(err)) } finally { setBusy(false) }
   }
   return <section className="detail-band online-generation-band">
-    <h2>{tr('构建模拟患者')}</h2><p>{tr('输入主题生成患者，或自行填写档案。保存后可反复练习、编辑及复制；生成结果仍需教师审核。')}</p>
+    <h2>{tr('构建模拟患者')}</h2><p>{tr('输入主题生成患者，或自行填写档案。生成会分阶段完成规划、档案、场景和独立检查；保存后可反复练习、编辑及复制，结果仍需教师审核。')}</p>
     <label>{tr('训练主题（公开）')}<textarea aria-label={tr('训练主题（公开）')} rows={3} maxLength={1200} value={brief} onChange={e => setBrief(e.target.value)} placeholder={tr('例如：来访者因为工作绩效下降而持续自责，但暂时不愿讨论家庭关系')} /></label>
     <div className="patient-grid">
       <label>{tr('训练类型')}<select value={family} onChange={e => setFamily(e.target.value)}>{Object.entries({ supportive_exploration: '支持性探索', cognitive_reframing_probe: '认知重评', rupture_and_repair: '关系修复', risk_escalation_and_handoff: '风险与转介', rebt_belief_work: 'REBT 信念工作' }).map(([key, title]) => <option key={key} value={key}>{tr(title)}</option>)}</select></label>

@@ -19,9 +19,11 @@ patient has already disclosed or memories from a conversation. Preserve supplied
 facts and their sensitivity; do not invent acute risk or diagnoses to add drama.
 
 - For an open-ended theme, use `generate` with a brief and any supplied `patient`
-  seed. It retrieves construction knowledge when an active index is available;
-  report missing grounding rather than inventing evidence. The result remains
-  synthetic and draft regardless of retrieval or structural check scores.
+  seed. Generation runs through planning, dossier construction, scenario packaging,
+  independent review, and a focused repair when needed. It retrieves construction
+  knowledge when an active index is available; report missing grounding rather than
+  inventing evidence. The result remains synthetic and draft regardless of retrieval
+  or structural check scores.
 - For a fully authored patient, use `build` to compile and save without an LLM.
 - To revise, `inspect` first and use `update` with the returned revision as
   `expected_revision`. Send the complete patient object, preserving event IDs

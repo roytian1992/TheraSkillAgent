@@ -201,6 +201,45 @@ def test_generation_passes_grounding_and_preserves_user_experiences(tmp_path, mo
     assert bundle["_patient_persona_v2"] and Path(generated["scenario"]["case_bundle_path"]).exists()
 
 
+def test_generation_uses_staged_workflow_and_repairs_review_findings(tmp_path, monkeypatch):
+    from domains.theraskill import theraskill_llm
+
+    calls = []
+    seed = patient().model_dump(mode="json")
+
+    def model(client, prompt, payload, **kwargs):
+        stage = payload.get("workflow_stage")
+        calls.append(stage)
+        if stage == "plan":
+            return {"training_goal": "Practice validation", "disclosure_plan": ["start with surface facts"]}
+        if stage == "patient":
+            return {"patient": seed}
+        if stage == "package":
+            return {"scenario_brief": "Supportive exploration of work stress", "scenario_tags": ["validation"]}
+        if stage == "review":
+            return {"status": "repair", "issues": [{"code": "training_alignment", "severity": "error"}]}
+        if stage == "repair":
+            repaired = dict(seed)
+            repaired["training_objectives"] = ["Practice validation and open exploration"]
+            return {"patient": repaired, "scenario_tags": ["validation", "repair-complete"]}
+        raise AssertionError(stage)
+
+    monkeypatch.setattr(theraskill_llm, "chat_json_with_repair", model)
+    generator = LLMScenarioGenerator.__new__(LLMScenarioGenerator)
+    generator.client = object()
+    generator.prompts = {language: {stage: "prompt" for stage in ("plan", "patient", "package", "review", "repair")} for language in ("zh", "en")}
+    generator.output_root = tmp_path
+    generator._knowledge_context = lambda req: {"status": "grounded", "items": [{"retrieval_id": "unit::plan", "content": "Use gradual disclosure"}]}
+
+    generated = generator.generate(ScenarioGenerationRequest(brief="Explore recent work stress and coping.", language="en"))
+    assert calls == ["plan", "patient", "package", "review", "repair"]
+    workflow = generated["scenario"]["generation_workflow"]
+    assert workflow["mode"] == "staged_agentic_generation"
+    assert workflow["repair_requested"] is True
+    assert generated["case_bundle"]["provenance"]["generation_workflow"]["review"]["repaired"] is True
+    assert "repair-complete" in generated["scenario"]["scenario_tags"]
+
+
 def test_patient_skill_is_ready_and_routes_to_same_api(monkeypatch):
     from theraskill_agent.skill_readiness import check_skill
     from theraskill_agent.skill_execution import execute_tool
