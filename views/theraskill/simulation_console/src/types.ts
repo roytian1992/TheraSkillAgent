@@ -1,4 +1,7 @@
 export type Scenario = {
+  revision?: number
+  grounding_status?: string
+  parent_scenario_id?: string
   scenario_id: string
   scenario_family: string
   case_id?: string
@@ -36,6 +39,15 @@ export type Scenario = {
     current_context?: string
     training_objectives?: string[]
   }
+}
+
+export type PatientFact = { content: string; sensitivity: 'surface' | 'moderate' | 'sensitive' }
+export type PatientLifeEvent = PatientFact & { event_id: string; time_label: string; impact: string }
+export type PatientDossier = {
+  display_name: string; age: string; gender: string; occupation: string; relationship_status: string
+  presenting_concern: string; background: PatientFact[]; recent_events: PatientLifeEvent[]
+  hidden_concerns: PatientFact[]; current_emotions: string[]; goals: string[]; training_objectives: string[]
+  communication_style: string; disclosure_preferences: string
 }
 
 export type SessionLanguage = 'zh' | 'en' | 'mixed'

@@ -298,3 +298,16 @@ dt { color: var(--muted); } dd { margin: 0; font-weight: 650; }
 
 .review-gate.not-passed{background:#fff3dc;color:#72541e}.batch-generator [role=status]{display:flex;flex-direction:column;gap:8px;padding:10px;background:#f1f6f3}.batch-generator details button{display:block;width:100%;text-align:left;margin:5px 0}header a{color:inherit;text-decoration:none;font-weight:700}
 @media(max-width:760px){.topbar .brand-mark{display:none}.topbar .brand-block{min-width:0;gap:4px}.topbar .brand-block strong{font-size:12px}.topbar-actions{flex-shrink:0}.topbar{gap:4px}}
+.patient-editor { display: grid; gap: 16px; margin: 16px 0; }
+.patient-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+.patient-editor label, .online-generation-band > label, .patient-grid > label { display: grid; gap: 6px; font-size: 14px; }
+.patient-editor input, .patient-editor textarea, .patient-editor select, .patient-grid select { width: 100%; box-sizing: border-box; padding: 9px; border: 1px solid #cbd5d1; border-radius: 8px; background: #fff; color: #203f35; font: inherit; }
+.patient-editor fieldset { min-width: 0; border: 1px solid #dce5df; border-radius: 10px; padding: 14px; }
+.patient-editor legend { font-weight: 600; padding: 0 6px; }
+.patient-fact, .patient-event { display: grid; gap: 10px; padding: 12px 0; border-bottom: 1px solid #e5ebe7; margin-bottom: 12px; }
+.patient-event { border: 1px solid #dce5df; background: #f7faf8; border-radius: 10px; padding: 14px; }
+.patient-editor button { justify-self: start; }
+.online-generation-band details { margin: 16px 0; }
+.online-generation-band > .patient-grounding { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+.patient-design-band details { overflow-wrap: anywhere; }
+.patient-dossier-fields { border: 0; padding: 0; min-width: 0; }

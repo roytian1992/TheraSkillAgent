@@ -8,6 +8,7 @@ import os
 import secrets
 import uuid
 import asyncio
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +42,12 @@ from domains.theraskill.theraskill_simulation.scenario_generation import (
     ScenarioGenerationRequest,
     ScenarioGenerator,
     build_quality_report,
+    PatientBuildRequest,
+    ScenarioForkRequest,
+)
+from domains.theraskill.theraskill_simulation.patient_builder import (
+    PatientDossier, build_patient_scenario, compile_patient, dossier_from_bundle,
+    public_role_card, save_bundle_version,
 )
 from domains.theraskill.theraskill_simulation.batch_jobs import ScenarioBatchJobStore
 from domains.theraskill.theraskill_simulation.service import SessionOperationError, SimulationSessionService
@@ -236,6 +243,9 @@ def scenario_public_digest(row: dict[str, Any]) -> dict[str, Any]:
             "batch_id",
             "batch_index",
             "batch_size",
+            "revision",
+            "grounding_status",
+            "parent_scenario_id",
         )
     }
     if row.get("generated") is True:
@@ -303,6 +313,7 @@ def create_app(
             model_config=resolved.model_config_path,
         )
     resolved_scenario_generator = scenario_generator
+    scenario_edit_lock = threading.RLock()
     if resolved_scenario_generator is None and resolved.initialize_scenario_generator and resolved.initialize_llm_engine:
         resolved_scenario_generator = LLMScenarioGenerator(
             project_root=resolved.project_root,
@@ -452,7 +463,7 @@ def create_app(
         return f"{prefix}_{digest}"
 
     def generated_rows() -> list[dict[str, Any]]:
-        return registry.list(split_key="formal_split", split_value="generated", limit=500)
+        return registry.list(split_key="formal_split", split_value="generated", limit=500, language="mixed")
 
     def review_event(row: dict[str, Any], *, action: str, actor_role: ActorRole, reason: str = "") -> list[dict[str, Any]]:
         history = list(row.get("review_history") or [])
@@ -464,17 +475,23 @@ def create_app(
         })
         return history[-30:]
 
-    def update_case_bundle(row: dict[str, Any], updates: dict[str, Any]) -> None:
+    def update_case_bundle(row: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
         bundle_path = str(row.get("case_bundle_path") or "")
         if not bundle_path:
-            return
+            if "patient" in updates:
+                raise ValueError("Patient bundle is missing; create a new patient draft")
+            return updates
         path = Path(bundle_path)
         if not path.exists():
-            return
+            if "patient" in updates:
+                raise ValueError("Patient bundle is missing; restore its file before editing")
+            return updates
         try:
             bundle = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return
+            if "patient" in updates:
+                raise ValueError("Patient bundle could not be read")
+            return updates
         metadata = bundle.setdefault("metadata", {})
         for key in ("case_family", "difficulty_band", "risk_band", "scenario_tags"):
             if key in updates:
@@ -486,7 +503,14 @@ def create_app(
         if "scenario_brief" in updates:
             visible = authoritative.setdefault("visible_profile", {})
             visible["scenario_brief"] = updates["scenario_brief"]
-        path.write_text(json.dumps(bundle, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        revised = {**row, **updates, "revision": int(row.get("revision") or 1) + 1}
+        if "patient" in updates or bundle.get("patient_dossier"):
+            patient = PatientDossier.model_validate(updates["patient"]) if "patient" in updates else dossier_from_bundle(bundle, row)
+            bundle = compile_patient(bundle, revised, patient)
+            revised["learner_role_card"] = public_role_card(bundle, revised)
+        revised.pop("patient", None)
+        revised.pop("expected_revision", None)
+        return save_bundle_version(bundle, revised, resolved.generated_scenario_root)
 
     def simulation_context(snapshot, *, include_text: bool) -> tuple[dict[str, Any], bool]:
         events = service.repository.list_events(snapshot.session.session_id)
@@ -622,7 +646,7 @@ def create_app(
             "scenarios": [
                 {
                     **scenario_public_digest(row),
-                    "learner_role_card": service.learner_role_card_for_case(
+                    "learner_role_card": row.get("learner_role_card") or service.learner_role_card_for_case(
                         str(row.get("case_id") or ""), row
                     ),
                 }
@@ -688,6 +712,47 @@ def create_app(
             },
         }
 
+    @app.post("/scenarios/build-patient", status_code=201)
+    def build_patient(request: PatientBuildRequest, role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
+        if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
+            raise HTTPException(status_code=403, detail="patient building requires instructor or researcher role")
+        try:
+            generated = build_patient_scenario(request, resolved.generated_scenario_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        row = generated["scenario"]
+        row["quality_report"] = build_quality_report(row, generated_rows())
+        row = registry.register_generated(row)
+        return {"scenario": scenario_public_digest(row), "quality": row["quality_report"], "synthetic": True}
+
+    @app.get("/scenarios/{scenario_id}/patient")
+    def get_patient(scenario_id: str, role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
+        if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
+            raise HTTPException(status_code=403, detail="patient design contains private case facts")
+        row = registry.get(scenario_id)
+        bundle, _, _ = service._load_case_bundle(row, language=row.get("language") or "zh")
+        return {"scenario": scenario_public_digest(row), "revision": row.get("revision") or 1,
+                "patient": dossier_from_bundle(bundle, row).model_dump(mode="json"),
+                "grounding": (bundle.get("provenance") or {}).get("knowledge_grounding", {"status": "not_requested"}),
+                "bundle_sha256": row.get("bundle_sha256"), "synthetic": bool(row.get("synthetic"))}
+
+    @app.post("/scenarios/{scenario_id}/fork", status_code=201)
+    def fork_patient(scenario_id: str, request: ScenarioForkRequest, role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
+        if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
+            raise HTTPException(status_code=403, detail="patient copying requires instructor or researcher role")
+        source = registry.get(scenario_id)
+        bundle, _, _ = service._load_case_bundle(source, language=source.get("language") or "zh")
+        patient = dossier_from_bundle(bundle, source)
+        request = PatientBuildRequest(brief=request.brief or source["scenario_brief"], patient=patient,
+            scenario_family=source["scenario_family"], difficulty_band=source.get("difficulty_band") or "medium",
+            risk_band=source.get("risk_band") or "low", language=source.get("language") or "zh",
+            scenario_tags=source.get("scenario_tags") or [])
+        generated = build_patient_scenario(request, resolved.generated_scenario_root, bundle=bundle)
+        row = {**generated["scenario"], "parent_scenario_id": scenario_id, "parent_revision": source.get("revision") or 1}
+        row["quality_report"] = build_quality_report(row, generated_rows())
+        row = registry.register_generated(row)
+        return {"scenario": scenario_public_digest(row), "quality": row["quality_report"], "synthetic": True}
+
     @app.post("/scenarios/generate-batch", status_code=201)
     async def generate_scenario_batch(
         request: ScenarioGenerationBatchRequest,
@@ -749,23 +814,27 @@ def create_app(
     ) -> dict[str, Any]:
         if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
             raise HTTPException(status_code=403, detail="editing generated scenarios requires instructor or researcher role")
-        current = registry.get(scenario_id)
-        if current.get("generated") is not True:
-            raise HTTPException(status_code=400, detail="only generated drafts can be edited")
-        updates = request.model_dump(mode="json", exclude_none=True)
-        if not updates:
-            raise HTTPException(status_code=400, detail="at least one editable field is required")
-        merged = {**current, **updates}
-        update_case_bundle(current, updates)
-        merged["review_status"] = "draft"
-        merged["review_history"] = review_event(current, action="edit", actor_role=role)
-        merged["quality_report"] = build_quality_report(
-            merged,
-            [item for item in generated_rows() if item.get("scenario_id") != scenario_id],
-        )
-        saved = registry.update_generated(scenario_id, {
-            key: merged[key] for key in (*updates.keys(), "review_status", "review_history", "quality_report")
-        })
+        with scenario_edit_lock:
+            current = registry.get(scenario_id)
+            if current.get("generated") is not True:
+                raise HTTPException(status_code=400, detail="only generated drafts can be edited")
+            if request.expected_revision is not None and request.expected_revision != int(current.get("revision") or 1):
+                raise HTTPException(status_code=409, detail="Patient changed. Reload before saving your edits.")
+            updates = request.model_dump(mode="json", exclude_none=True, exclude={"expected_revision"})
+            if not updates:
+                raise HTTPException(status_code=400, detail="at least one editable field is required")
+            try:
+                merged = {**current, **update_case_bundle(current, updates)}
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            merged.pop("patient", None)
+            merged["revision"] = int(current.get("revision") or 1) + 1
+            merged["review_status"] = "draft"
+            merged["review_history"] = review_event(current, action="edit", actor_role=role)
+            merged["quality_report"] = build_quality_report(
+                merged, [item for item in generated_rows() if item.get("scenario_id") != scenario_id],
+            )
+            saved = registry.update_generated(scenario_id, merged)
         return {
             "schema_version": "theraskill_online_scenario_draft_v1",
             "scenario": scenario_public_digest(saved),
@@ -782,23 +851,24 @@ def create_app(
     ) -> dict[str, Any]:
         if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
             raise HTTPException(status_code=403, detail="reviewing generated scenarios requires instructor or researcher role")
-        current = registry.get(scenario_id)
-        if current.get("generated") is not True:
-            raise HTTPException(status_code=400, detail="only generated drafts can be reviewed")
-        if request.action == "reject" and not request.reason.strip():
-            raise HTTPException(status_code=422, detail="rejecting a draft requires a reason")
-        quality = build_quality_report(
-            current,
-            [item for item in generated_rows() if item.get("scenario_id") != scenario_id],
-        )
-        if request.action == "approve" and quality.get("status") == "fail":
-            raise HTTPException(status_code=422, detail="quality checks must pass before approval")
-        status = "approved" if request.action == "approve" else "rejected"
-        saved = registry.update_generated(scenario_id, {
-            "review_status": status,
-            "quality_report": quality,
-            "review_history": review_event(current, action=request.action, actor_role=role, reason=request.reason),
-        })
+        with scenario_edit_lock:
+            current = registry.get(scenario_id)
+            if current.get("generated") is not True:
+                raise HTTPException(status_code=400, detail="only generated drafts can be reviewed")
+            if request.action == "reject" and not request.reason.strip():
+                raise HTTPException(status_code=422, detail="rejecting a draft requires a reason")
+            quality = build_quality_report(
+                current,
+                [item for item in generated_rows() if item.get("scenario_id") != scenario_id],
+            )
+            if request.action == "approve" and quality.get("status") == "fail":
+                raise HTTPException(status_code=422, detail="quality checks must pass before approval")
+            status = "approved" if request.action == "approve" else "rejected"
+            saved = registry.update_generated(scenario_id, {
+                "review_status": status,
+                "quality_report": quality,
+                "review_history": review_event(current, action=request.action, actor_role=role, reason=request.reason),
+            })
         return {
             "schema_version": "theraskill_online_scenario_review_v1",
             "scenario": scenario_public_digest(saved),

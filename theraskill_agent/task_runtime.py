@@ -19,6 +19,7 @@ TERMINAL={'completed','cancelled'}
 def domain_call(service, path, payload=None, *, method=None):
     from .local_services import get_services
     roles={'extraction':{'X-Extraction-Role':'researcher'},
+           'simulation':{'X-Simulation-Role':'researcher'},
            'contribution':{'X-Contribution-Role':'knowledge_curator','X-Contribution-Subject':'local-user'}}
     response=get_services().request(service, method or ('POST' if payload is not None else 'GET'),
                                     path, json=payload, headers=roles.get(service,{}))

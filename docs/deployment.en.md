@@ -135,6 +135,15 @@ theraskill-agent provider check --kind llm --live
 theraskill-agent provider check --kind embedding --live
 ```
 
+
+## Configure and test models in the UI
+
+After starting `theraskill-agent ui`, use **Models & connections** in the top navigation. LLM and embedding are edited independently with their model IDs, base URLs, embedding endpoint, and API keys. Optional timeout, output budget, and reasoning settings can also be supplied.
+
+**Test current values** calls both services without writing a file. **Save configuration** writes to the project-local `configs/theraskill/providers.local.yaml`. **Test then save** writes only when both live checks pass. API keys are masked in responses, the page, test results, and logs; leaving a key blank preserves the existing machine-local key.
+
+The **Workspace** is the primary entry point. **Tasks Center** is the durable task record and recovery view for completed, running, input/approval waiting, failed, and retryable skill, extraction, expert-review, and scenario-batch jobs; it is not ordinary chat history.
+
 ## Start and stop the workbench
 
 Start the complete application:

@@ -37,7 +37,6 @@ import {
   createComparison,
   addAnnotation,
   generatePatientOpening,
-  generateScenario,
   generateScenarioBatch,
   getBatchJob, listBatchJobs, retryBatchJob, retrySessionUpdate, retrySessionReview,
   getSession,
@@ -69,6 +68,7 @@ import type {
   TurnAnnotation,
 } from './types'
 import { useLocale } from './i18n'
+import { PatientBuilder, PatientDesigner } from './PatientDesigner'
 import type { BatchJob } from './api'
 
 const FAMILY_LABELS: Record<string, string> = {
@@ -118,9 +118,6 @@ export default function App() {
   const [family, setFamily] = useState('')
   const [risk, setRisk] = useState('')
   const [difficulty, setDifficulty] = useState('')
-  const [onlineBrief, setOnlineBrief] = useState('')
-  const [onlineGenerating, setOnlineGenerating] = useState(false)
-  const [onlineGenerated, setOnlineGenerated] = useState(false)
   const [draftEditOpen, setDraftEditOpen] = useState(false)
   const [draftBrief, setDraftBrief] = useState('')
   const [draftTags, setDraftTags] = useState('')
@@ -384,22 +381,10 @@ export default function App() {
     }
   }
 
-  async function runOnlineScenarioGeneration() {
-    if (!canGenerateOnline || onlineBrief.trim().length < 8 || onlineGenerating) return
-    setOnlineGenerating(true)
-    setError('')
-    try {
-      const result = await generateScenario(role, onlineBrief.trim(), 'supportive_exploration', 'medium', 'low', locale)
-      setScenarios((current) => [result.scenario, ...current.filter((row) => row.scenario_id !== result.scenario.scenario_id)])
-      setSelected(result.scenario)
-      setOnlineGenerated(true)
-      setOnlineBrief('')
-      setTrainingMode('human_therapist_vs_patient')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setOnlineGenerating(false)
-    }
+  function acceptPatientScenario(row: Scenario) {
+    setScenarios(current => [row, ...current.filter(item => item.scenario_id !== row.scenario_id)])
+    setSelected(row)
+    setTrainingMode('human_therapist_vs_patient')
   }
 
   async function saveGeneratedDraft() {
@@ -409,6 +394,7 @@ export default function App() {
     try {
       const result = await updateGeneratedScenario(role, selected.scenario_id, {
         scenario_brief: draftBrief.trim(),
+        expected_revision: selected.revision || 1,
         scenario_tags: draftTags.split(/[、,，]/).map((item) => item.trim()).filter(Boolean),
         difficulty_band: draftDifficulty,
         risk_band: draftRisk,
@@ -877,6 +863,7 @@ export default function App() {
           {error && <div className="error-banner">{error}</div>}
           {!activeSession ? (
             <section className="scenario-detail">
+              {canGenerateOnline && <PatientBuilder role={role} language={locale} onSaved={acceptPatientScenario} />}
               {selected ? (
                 <>
                   <div className="detail-heading">
@@ -908,6 +895,7 @@ export default function App() {
                       )}
                     </section>
                   )}
+                  {canGenerateOnline && <PatientDesigner key={selected.scenario_id} scenario={selected} role={role} onSaved={acceptPatientScenario} />}
                   {selected.generated && canGovernGenerated && (
                     <section className="detail-band governance-band">
                       <div className="role-card-heading"><ClipboardCheck size={20} /><h2>{tr("生成草稿治理")}</h2></div>
@@ -945,24 +933,6 @@ export default function App() {
                   )}
                   {canGenerateOnline && !session && (
                     <section className="detail-band online-generation-band">
-                      <div className="role-card-heading"><Sparkles size={20} /><h2>{tr("在线生成训练情景")}</h2></div>
-                      <p>{tr("输入一个训练主题，生成仅用于研究和演示的 synthetic draft。生成结果会带有可追踪的病例状态，确认后即可开始训练，不会写入正式测试集。")}</p>
-                      <textarea
-                        value={onlineBrief}
-                        onChange={(event) => setOnlineBrief(event.target.value)}
-                        placeholder={tr("例如：来访者因为工作绩效下降而持续自责，但暂时不愿讨论家庭关系")}
-                        rows={3}
-                        maxLength={1200}
-                      />
-                      <button
-                        className="secondary-button"
-                        onClick={() => void runOnlineScenarioGeneration()}
-                        disabled={onlineGenerating || onlineBrief.trim().length < 8}
-                      >
-                        {onlineGenerating ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}
-                        {onlineGenerating ? tr('正在生成情景…') : tr('生成 synthetic draft')}
-                      </button>
-                      {onlineGenerated && <small className="online-generation-note">{tr("草稿已生成。开始训练前请确认场景描述、难度和风险带。")}</small>}
                       <div className="batch-generator">
                         <h3>{tr("批量生成课程场景")}</h3>
                         <input value={batchTitle} onChange={(event) => setBatchTitle(event.target.value)} placeholder={tr("课程标题")} maxLength={200} />

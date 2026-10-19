@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 type Task = { id: string; kind: string; title: string; status: string; created: string; href: string }
-export default function TaskCenter({ locale }: { locale: 'zh' | 'en' }) {
+export default function TaskCenter({ locale, compact = true }: { locale: 'zh' | 'en'; compact?: boolean }) {
   const statusLabel = (status: string) => locale === 'zh' ? (({queued:'排队中',pending:'处理中',running:'运行中',completed:'已完成',complete:'已完成',idle:'已完成',failed:'失败，可重试',partial:'部分完成',unavailable:'暂时无法读取状态',needs_input:'等待输入',needs_approval:'等待确认',interrupted:'已中断，可恢复',cancelled:'已取消'} as Record<string,string>)[status] || status) : (status === 'idle' ? 'completed' : status.replaceAll('_',' '))
   const [tasks, setTasks] = useState<Task[]>([])
   const [errors, setErrors] = useState<string[]>([])
@@ -24,5 +24,5 @@ export default function TaskCenter({ locale }: { locale: 'zh' | 'en' }) {
     setBusy(false)
   }
   useEffect(() => { void refresh() }, [locale])
-  return <><button onClick={() => void refresh()} disabled={busy}>{locale === 'zh' ? '刷新任务' : 'Refresh tasks'}</button>{errors.map(error => <p key={error} role="alert">{error}</p>)}<div className="task-history">{tasks.slice(0, 20).map(task => <a className="resource-item" key={task.id} href={task.href}><strong>{task.title}</strong><span>{task.kind} · {statusLabel(task.status)} · {new Date(task.created).toLocaleString()}</span></a>)}{tasks.length === 0 && !busy && <p>{locale === 'zh' ? '暂无保存的任务。开始一次抽取、审核或课程场景生成后，可在这里继续。' : 'No saved tasks. Start extraction, a review or a course batch, then return here to continue.'}</p>}</div></>
+  return <><button onClick={() => void refresh()} disabled={busy}>{locale === 'zh' ? '刷新任务' : 'Refresh tasks'}</button>{errors.map(error => <p key={error} role="alert">{error}</p>)}<div className="task-history">{tasks.slice(0, compact ? 4 : 1000).map(task => <a className="resource-item" key={task.id} href={task.href}><strong>{task.title}</strong><span>{task.kind} · {statusLabel(task.status)} · {new Date(task.created).toLocaleString()}</span></a>)}{tasks.length === 0 && !busy && <p>{locale === 'zh' ? '暂无保存的任务。开始一次抽取、审核或课程场景生成后，可在这里继续。' : 'No saved tasks. Start extraction, a review or a course batch, then return here to continue.'}</p>}</div></>
 }

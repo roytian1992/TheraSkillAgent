@@ -611,17 +611,26 @@ class DeferredLLMPatientEngine:
         language: str,
         runtime: dict[str, Any],
     ) -> AgentTurnResult:
-        from run_patient_single_session_loop import run_json_step, trim_case_bundle_for_runtime
+        from run_patient_single_session_loop import run_json_step, trim_case_bundle_for_runtime, build_move_payload
 
         started = time.monotonic()
         persona = case_bundle.get("_patient_persona_v2")
         compiled = None
+        move_result: dict[str, Any] = {}
+        move_audit: dict[str, Any] = {}
         if isinstance(persona, dict):
+            public_context = self.persona_compiler.compile_for_move(persona)
+            move_result, move_audit = run_json_step(
+                runtime["client"], runtime["prompts"]["move"],
+                build_move_payload(runtime_bundle_with_context(case_bundle, public_context), private_state.runtime_state,
+                    [{"role": row.role, "text": row.text} for row in transcript[-6:]], therapist_utterance),
+                parse_retries=int(runtime["parse_retries"]), max_prompt_tokens=int(runtime["max_prompt_tokens"]),
+            )
             compiled = self.persona_compiler.compile_for_turn(
                 persona,
                 private_state.runtime_state,
                 private_state.disclosed_fact_ids,
-                {"validation_signal": "unknown", "challenge_level": "low"},
+                move_result,
             )
         runtime_bundle = runtime_bundle_with_context(case_bundle, compiled) if compiled else case_bundle
         payload = {
@@ -647,10 +656,11 @@ class DeferredLLMPatientEngine:
             raise SimulationEngineError("fast patient runtime returned no patient utterance")
         plan = result.get("patient_turn_plan") or {}
         hidden_delta = result.get("hidden_state_delta") or {}
+        response_contract = self._response_contract(result, {}, compiled)
         next_private = private_state.model_copy(update={
             "disclosed_fact_ids": list(dict.fromkeys([
                 *private_state.disclosed_fact_ids,
-                *[str(item) for item in (result.get("used_fact_ids") or []) if item],
+                *response_contract["used_fact_ids"],
             ])),
         })
         evidence_ids = self._evidence_ids(private_state, case_bundle)
@@ -662,12 +672,16 @@ class DeferredLLMPatientEngine:
                 "fast_mode": True,
                 "latency_seconds": round(time.monotonic() - started, 3),
                 "prompt_audit": prompt_audit,
-                "response_contract": {
-                    "used_fact_ids": [str(item) for item in result.get("used_fact_ids") or [] if item],
-                    "applied_principle_ids": [],
-                    "realized_disclosure_level": plan.get("disclosure_mode") or "unknown",
-                    "withheld_fact_ids": compiled.forbidden_fact_ids if compiled else [],
-                    "uncertainty_or_hallucination_flags": [],
+                "response_contract": response_contract,
+                "persona_compiler": compiled.decision_trace if compiled else {"policy": "legacy_v1_bundle"},
+                "deferred_update_id": f"patient-update-{time.time_ns()}",
+                "deferred_update": {
+                    "therapist_utterance": therapist_utterance,
+                    "therapist_move_interpretation": move_result,
+                    "disclosure_decision": {"disclosure_decision": {"disclose_fact_ids": response_contract["used_fact_ids"]}},
+                    "patient_turn_result": {**result, "used_fact_ids": response_contract["used_fact_ids"]},
+                    "foreground_prompt_audits": {"move": move_audit, "turn": prompt_audit},
+                    "response_contract": response_contract,
                 },
                 "hidden_state_delta": hidden_delta,
             },

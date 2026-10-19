@@ -1,58 +1,97 @@
 # TheraSkillAgent
 
-TheraSkillAgent is a local, skill-based workspace for therapeutic text and
-knowledge workflows. It combines deterministic text processing with optional
-OpenAI-compatible LLM and embedding services, so the same project can ingest
-messy dialogue transcripts, run structured extraction and review, build
-traceable knowledge indexes, and support scenario practice.
+TheraSkillAgent is a local agent workbench for **psychotherapy and counseling training, research, and therapeutic knowledge engineering**.
 
-The project is designed for human-controlled workflows. Model outputs remain
-reviewable artifacts or governed candidates until an explicit approval step
-publishes them. Model weights, private conversations, credentials, and full
-knowledge releases are kept outside the source repository.
+It connects therapeutic knowledge, dialogue processing, simulated patients, counseling-skill practice, expert review, and course evaluation in one reusable workflow. Researchers can organize and extract knowledge from authorized conversations or other sources. Instructors can create courses and simulated patients. Learners can practice sessions and receive structured feedback. Developers can extend the system through skills, knowledge indexes, and configurable model providers.
 
-[中文说明](README.zh.md) · [English deployment guide](docs/deployment.en.md) ·
-[中文部署说明](docs/deployment.zh.md) · [Workflow guide](docs/workflows.en.md) ·
-[Resource ZIP installation](docs/resource_installation.en.md) · [Changelog](CHANGELOG.md)
+TheraSkillAgent is more than a chat interface that generates replies. It models the **process, evidence, interaction, and reflection** involved in psychotherapy training: an agent can ask for clarification, call tools, wait for approval, preserve checkpoints, and record the knowledge release, skill version, model configuration, and evaluation evidence used by a task.
 
-## What it provides
+[中文 README](README.zh.md) · [Deployment guide](docs/deployment.en.md) · [中文部署说明](docs/deployment.zh.md) · [Simulated patients](docs/simulated_patients.en.md) · [Resource installation](docs/resource_installation.en.md)
 
-| Workflow | Main capabilities |
-| --- | --- |
-| Transcript workbench | Ingest TXT/JSON/CSV/Markdown/SRT/VTT or pasted text, normalize turns, inspect speaker roles, analyze risk signals, run skill reviews, and package evidence-preserving artifacts. |
-| Interactive extraction | Inspect sources, propose and edit schemas, confirm sample/full runs, hand off to governance, and build and activate reviewed knowledge versions. |
-| Knowledge and retrieval | Accept compatible JSONL, build portable lexical or hybrid indexes, verify checksums, search, activate, roll back, and package resources. |
-| Skills and agent tasks | Model-directed tools, interactive questions and approvals, durable checkpoints, retries/cancellation, local skill installation, evolution drafts and rollback. |
-| Behavioral evaluation | Run the production task engine on 12 editable bilingual cases, including tool calls and clarification; inspect citations, score explanations, baseline comparisons and human-reviewed version gates. |
-| Courses and progress | Define objectives, assign approved scenarios, link real practice and debriefs, record instructor reviews and track observations across attempts. |
-| Practice and review | Run support, simulation, expert review, contribution, and extraction services from the same workbench and skill/tool surface. |
+## What it is for
 
-The browser workbench is served by the project itself. It exposes the main
-workbench plus support, simulation, and expert views. All six business modules
-run inside one process and share one browser port; no separate domain servers
-are needed. The workspaces support Chinese/English switching while preserving
-source text and evidence quotations.
+Psychotherapy training usually involves four connected activities:
 
-## From source dialogue to reusable knowledge
+1. **Understand conversations**: turn speech transcripts and inconsistent files into analyzable turns, speaker roles, and evidence spans.
+2. **Organize therapeutic knowledge**: extract intervention principles, process rules, therapist skills, and case evidence from authorized conversations, teaching materials, research sources, or structured data, then make them searchable.
+3. **Practice and review**: use editable simulated patients to practice empathy, open questions, cognitive reframing, risk awareness, and other skills, then evaluate the process and the response.
+4. **Improve courses over time**: version scenarios, knowledge, skills, evaluation cases, and instructor feedback so that training material can be reviewed and refined.
+
+The project puts these activities in one agent runtime, reducing manual handoffs between data work, training applications, and evaluation.
+
+## Core workflow
 
 ```mermaid
 flowchart LR
-  A[Text or dialogue files] --> B[Inspect and normalize]
-  B --> C[Interactive schema and extraction]
-  C --> D[Review and approve candidates]
-  D --> E[Build and evaluate a knowledge index]
-  E --> F[Support, practice and expert review]
+  A[Conversation, teaching material, or research source] --> B[Normalize and check quality]
+  B --> C[Clarify goal and schema]
+  C --> D[Extract therapeutic knowledge and evidence]
+  D --> E[Review quality, duplicates, and expert approval]
+  E --> F[Build a knowledge index]
+  F --> G[Simulated sessions, response review, and course practice]
+  G --> H[Evaluate, debrief, and iterate versions]
+  H --> E
 ```
 
-Skills coordinate tools and pause for decisions when a task needs schema choices,
-source clarification or approval. Transcript analysis and review can also run
-directly. Model-generated knowledge and skill drafts stay reviewable; replacing
-an active index or an existing skill requires a reviewed behavior comparison.
+Every step can be started from the browser workbench, CLI, or a skill. When a task needs a schema decision, sample approval, candidate review, or conflict resolution, it pauses with a checkpoint and can resume later.
 
-## Quick start from source
+## Main capabilities
 
-Use Python 3.11 or newer. Node 22.12 or newer is needed only when building the
-browser interfaces from a source checkout.
+| Workspace | Input | Output |
+| --- | --- | --- |
+| **Transcript analysis** | TXT, Markdown, JSON, CSV, SRT, VTT, or pasted text | Normalized turns, speaker mapping, risk cues, quality reviews, and traceable analysis bundles |
+| **Knowledge extraction** | Conversation files, directories, JSONL, or registered source adapters | Extraction goals, editable schemas, sample results, evidence references, candidate packages, and governance tasks |
+| **Knowledge and indexes** | Approved JSONL knowledge | Lexical or hybrid indexes, manifests, retrieval results, activation, and rollback records |
+| **Simulated patients** | Training topic, patient dossier, recent events, and learning goals | Versioned patients, gradual-disclosure rules, reusable scenarios, and practice sessions |
+| **Skills and tasks** | A natural-language goal, skills, tools, and a knowledge scope | Durable tasks with clarification, tool traces, approvals, checkpoints, retry, and recovery |
+| **Expert review** | Therapist responses, conversations, knowledge candidates, or skill drafts | Structured evaluations, evidence citations, quality findings, duplicate checks, and release gates |
+| **Courses and evaluation** | Course goals, scenario sets, learner attempts, and instructor feedback | Batch scenarios, practice records, debriefs, behavioral evaluations, regression cases, and learning progress |
+
+## Why an agent and skills are useful here
+
+Psychotherapy training is not a one-shot text-generation problem:
+
+- Risk review, response review, and simulated-patient generation require different knowledge scopes.
+- Conversation analysis often needs a speaker mapping, language choice, correction policy, and output schema before it can run.
+- Knowledge extraction needs sampling, human confirmation, and governance before a result becomes a release.
+- Simulated patients need a background, recent events, hidden concerns, disclosure levels, and an immutable case revision.
+- Evaluation needs the original input, tool calls, citations, provider settings, and scoring evidence for later review.
+
+A skill describes a task's purpose, inputs, outputs, tools, knowledge scope, and checks. The agent selects and executes the skill, then interacts with the user when a decision is needed. Built-in skills include:
+
+- **Conversation and text**: `transcript-normalizer`, `transcript-evaluator`, `transcript-quality-reviewer`
+- **Knowledge engineering**: `dynamic-knowledge-extraction`, `knowledge-index-manager`
+- **Simulation training**: `simulated-patient-builder`, `synthetic-dialogue-builder`
+- **Therapeutic response and support**: `therapy-response-reviewer`, `emotional-support`, `cognitive-reframing-support`, `rebt-belief-work-support`, `risk-triage`
+- **Runtime operations**: `theraskill-agent-operator`
+
+## Simulated patients and scenario training
+
+A simulated patient is an editable, reusable case revision rather than a fixed persona. A dossier can include:
+
+- background and current concerns;
+- life context and recent events;
+- patient goals, training goals, and hidden concerns;
+- communication style and disclosure preferences;
+- event timing, impact, stable IDs, and disclosure levels.
+
+During a session, the patient model receives only the facts allowed at the current interaction state. Instructors can create or edit a patient, fork it into a new scenario, save a new revision, and assign the scenario to a course. See the [simulated patient guide](docs/simulated_patients.en.md).
+
+## Interface and runtime
+
+The unified workbench provides:
+
+- **Workspace**: professional work areas and runtime status;
+- **Tasks Center**: view and resume extraction, review, skill, and scenario-batch tasks;
+- **Models & connections**: configure, test, and save LLM and embedding settings separately;
+- **Transcript, extraction, and knowledge workspaces**: process source material and indexes;
+- **Simulation Console, Expert Studio, and Support Assistant**: practice sessions, response review, and text-support tasks.
+
+All modules are managed by one local application process. Open `http://127.0.0.1:5176/`; the business modules do not need separate service startup commands.
+
+## Quick start
+
+Python 3.11 or newer is required. Node 22.12 or newer is required only when building the browser interface from a source checkout; a wheel installation already contains built assets.
 
 ```bash
 git clone https://github.com/roytian1992/TheraSkillAgent.git
@@ -62,41 +101,23 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e .
 
-# Build the browser workspaces in a source checkout.
+# Required for a source checkout
 npm ci
 npm run build
 
-# Create a writable project layout, then start the local workbench.
 theraskill-agent project init .
 cp configs/theraskill/providers.local.example.yaml \
   configs/theraskill/providers.local.yaml
 chmod 600 configs/theraskill/providers.local.yaml
-# Edit that file with your LLM and embedding model names, URLs and keys.
-theraskill-agent provider check --kind llm
-theraskill-agent provider check --kind embedding
+
 theraskill-agent ui
 ```
 
-Open <http://127.0.0.1:5176/>. A wheel installation already contains built
-interfaces and does not require Node. See [Deployment](docs/deployment.en.md)
-for installation, startup, checks, and upgrades.
+Open `http://127.0.0.1:5176/`, then use **Models & connections** to configure and test the providers. See the [deployment guide](docs/deployment.en.md) for installation, upgrades, and troubleshooting.
 
-## Install the full resources
+## Model configuration
 
-The maintainer supplies **TheraSkillAgent-resources-phase6-20261019.zip** separately.
-It includes a 0.5.0 application wheel, allowing installation without Node.
-Extract that outer ZIP, follow its README, then install the two inner resource packages using its local catalog.
-The resource folder includes checksums and provenance; it contains 2,196,286 knowledge
-records and simulation assets, without model weights or prebuilt vector indexes.
-See the [step-by-step resource installation guide](docs/resource_installation.en.md)
-for CLI commands, browser uploads, disk requirements and building your own index.
-No public download link is published yet.
-
-## Configure models directly
-
-The only supported provider file shape is `active` plus one direct `llm` block
-and one direct `embedding` block. The model names, URLs, and credentials are
-independent:
+LLM and embedding use separate direct configuration blocks. Their model IDs, URLs, and credentials are independent:
 
 ```yaml
 active:
@@ -115,14 +136,9 @@ embedding:
   api_key: "EMBEDDING_API_KEY"
 ```
 
-Put machine-specific values in the ignored
-`configs/theraskill/providers.local.yaml`. The shared
-`configs/theraskill/providers.yaml` contains safe local defaults. There is no
-provider catalog to edit and no environment-variable model switch. A legacy
-`profiles` registry is rejected with an actionable configuration error.
+Keep machine-specific settings in the Git-ignored `configs/theraskill/providers.local.yaml`. The project supports local services and OpenAI-compatible APIs, including local Qwen/BGE deployments and remote LLM or embedding services.
 
-Use the provider commands to inspect redacted metadata or make a bounded live
-request:
+You can inspect or test providers from the CLI:
 
 ```bash
 theraskill-agent provider list
@@ -130,93 +146,18 @@ theraskill-agent provider check --kind llm --live
 theraskill-agent provider check --kind embedding --live
 ```
 
-## Try a model-free knowledge workflow
+## Knowledge resources and indexes
 
-The included six-record bilingual JSONL file is synthetic and only demonstrates
-the schema. Lexical indexing does not call a model and does not require FAISS:
+The repository includes `examples/knowledge/demo.jsonl`, a small format example that can be indexed lexically without a model:
 
 ```bash
 theraskill-agent index plan --knowledge examples/knowledge/demo.jsonl
 theraskill-agent index build --knowledge examples/knowledge/demo.jsonl --id demo-v1
 theraskill-agent index verify --index demo-v1
 theraskill-agent index search --index demo-v1 --query uncertainty
-theraskill-agent knowledge activate --index demo-v1
 ```
 
-For hybrid retrieval, install the optional extra and use the active embedding
-block from `providers.yaml`:
-
-```bash
-python -m pip install -e '.[retrieval]'
-theraskill-agent index build --knowledge examples/knowledge/demo.jsonl \
-  --id demo-hybrid --mode hybrid
-```
-
-Use `--resume` after an interrupted build with the same input and direct model
-configuration. Changing the embedding model or dimensions requires a new
-index. See [Knowledge, indexes, and resource packages](docs/knowledge_and_indexes.en.md)
-for mappings, eligibility rules, manifests, installation, and rollback.
-
-## Retrieval follows the task
-
-Shared query understanding identifies language, concepts, task and risk cues.
-Advanced agent retrieval adds real LLM planning, then combines lexical, label,
-vector and required-family evidence within the selected skill's knowledge scope.
-User filters remain hard constraints during scope relaxation and backfill.
-
-Independent channels run in parallel. Index-versioned metadata caches avoid
-repeated corpus scans, and scoped FAISS searches read Flat indexes through
-read-only memory mapping. Cached metadata does not replace model planning.
-Timings, evidence roles and warnings are saved with the result. Broad queries
-and provider latency can still be slow; see the
-[retrieval validation record (Chinese)](docs/retrieval_optimization_20261018.zh.md)
-for measured cases and limits.
-
-The evaluation workspace also tests the production retrieval pipeline with 13
-editable cases, concurrency controls and optional human relevance judgments.
-Unjudged Recall/nDCG remain unavailable. Known gaps, including the lack of English
-synthetic-construction records, are reported without relaxing explicit filters.
-
-## Transcript and task examples
-
-```bash
-# Deterministic operations are local and do not call a model.
-theraskill-agent text normalize dialogue.txt
-theraskill-agent text sections dialogue.txt
-theraskill-agent transcript inspect dialogue.txt
-theraskill-agent transcript analyze dialogue.txt
-
-# Review first creates a plan. Model review is a separate, explicit step.
-theraskill-agent transcript review dialogue.txt --mode plan \
-  --skill transcript-quality-reviewer
-theraskill-agent transcript review dialogue.txt --mode model \
-  --skill transcript-quality-reviewer
-```
-
-The browser workbench exposes the same operations and provides approval points
-for model-backed review and resource activation. Skills use the same tool and
-task contracts whether they are invoked by the CLI, UI, or a local agent task.
-
-## Repository and data boundaries
-
-The repository contains the agent kernel, domain services, built-in skills,
-prompts, schemas, indexing code, UI source, configuration templates, and small
-synthetic examples. Full extracted knowledge, prebuilt indexes, persona and
-scenario collections, model weights, raw research data, credentials, sessions,
-logs, and runtime state are separate resources.
-
-`releases/catalog.json` records whether public downloads are available. Full
-knowledge and simulation collections are supplied in separate ZIPs for manual
-distribution; their local catalog supports installation without a public URL. Do not treat the demo records as clinical guidance or a validated
-knowledge base.
-
-Useful references:
-
-- [Knowledge formats and index packages](docs/knowledge_and_indexes.en.md)
-- [English deployment guide](docs/deployment.en.md)
-- [中文部署说明](docs/deployment.zh.md)
-- [Source/release boundaries](docs/source_release.zh.md)
-- [Extraction datasets and outputs](extraction/docs/datasets_and_outputs.zh.md)
+Full knowledge and simulation collections are distributed as separate resource packages. Install them through the browser or CLI, then build an index for the active embedding model. Keeping large resources separate makes data licensing, versioning, and machine capacity easier to manage. See [Knowledge, indexes, and resource packages](docs/knowledge_and_indexes.en.md) and the [resource installation guide](docs/resource_installation.en.md).
 
 ## Development and validation
 
@@ -224,13 +165,17 @@ Useful references:
 python -m pip install -e '.[dev,retrieval]'
 python -m pytest -q -o addopts='' \
   tests/test_standalone_kernel.py tests/test_theraskill*.py \
-  tests/smoke_theraskill_install.py \
   --ignore=tests/test_theraskill_agent_regression.py
+
+cd views/theraskill/workbench
+npm ci
 npm run build
-python -m build
 ```
 
-The base installation intentionally avoids heavyweight model and retrieval
-frameworks. Install the `retrieval` extra only when FAISS-backed hybrid indexes
-are needed. Software is MIT licensed; dataset, model, and source-conversation
-terms remain separate.
+The repository contains the agent kernel, domain services, prompts, skills, index builders, and browser source. Model weights, original patient material, institutional data, and full knowledge resources are supplied separately for each deployment.
+
+## Scope
+
+TheraSkillAgent is designed for research, teaching, training, and content engineering around counseling and psychotherapy. Real clinical use requires institutional processes, data authorization, and professional supervision; the repository does not include real patient records or present synthetic scenarios as diagnoses or treatment conclusions.
+
+The software is released under the MIT License. Dataset, research-material, model, and mental-health-content terms remain governed by their respective sources.

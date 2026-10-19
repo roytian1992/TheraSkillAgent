@@ -1,58 +1,97 @@
 # TheraSkillAgent
 
-TheraSkillAgent 是一个面向治疗文本和知识流程的本地 skill-based agent
-工作台。它把确定性的文本处理、可配置的 LLM/embedding 服务、知识抽取、
-对话评估、情景训练、审核和知识索引放在同一个项目里。
+TheraSkillAgent 是一个面向**心理咨询与心理治疗训练、研究和知识工程**的本地 Agent 工作台。
 
-项目强调人工可控：模型输出先保存为可追溯的产物或候选，经过质量检查和
-明确审批后才进入正式知识发布。模型权重、患者对话、密钥和完整知识库均
-不随源码仓库分发。
+它把心理治疗知识、咨询对话处理、模拟来访者、咨询技能练习、专家审阅和课程评估连接成一条可复用的工作流。研究者可以从对话或其他授权材料中整理和抽取知识，教师可以创建课程和模拟患者，学习者可以进行会谈练习并获得结构化反馈，开发者可以通过 Skill、知识索引和可配置模型扩展整个平台。
 
-[English README](README.md) · [English deployment guide](docs/deployment.en.md) ·
-[中文部署说明](docs/deployment.zh.md) · [工作流使用说明](docs/workflows.zh.md) ·
-[资源 ZIP 安装](docs/resource_installation.zh.md) · [更新记录](CHANGELOG.md)
+TheraSkillAgent 不是一个只会生成回复的聊天界面。它关注的是心理治疗训练中的**过程、证据、交互和复盘**：模型需要在合适的阶段提问、澄清、调用工具、等待确认，并把输入、知识来源、技能版本和评估结果保存下来。
 
-## 能做什么
+[English README](README.md) · [中文部署说明](docs/deployment.zh.md) · [English deployment guide](docs/deployment.en.md) · [模拟患者说明](docs/simulated_patients.zh.md) · [资源安装说明](docs/resource_installation.zh.md)
 
-| 工作流 | 能力 |
-| --- | --- |
-| 对话工作台 | 导入 TXT/JSON/CSV/Markdown/SRT/VTT 或粘贴文本，整理轮次和说话人，分析风险信号，执行多 skill review，打包保留证据链的结果。 |
-| 交互式抽取 | 检查来源，按目标建议和编辑 schema，确认试抽/全量，交接治理，构建并启用经过审核的知识版本。 |
-| 知识与检索 | 接收合格 JSONL，构建词法或 hybrid 索引，校验清单，检索、启用、回滚和打包资源。 |
-| Skill 与任务 | 模型驱动工具调用、交互提问与确认、持久检查点、重试/取消，以及技能安装、优化草稿和回滚。 |
-| 效果回归 | 生产 TaskEngine 实际执行 12 个可编辑中英文案例，保留工具与交互轨迹、引用、评分、基线对比和人工门禁。 |
-| 课程与进展 | 定义目标、分配已审核场景、关联真实练习与复盘，记录教师复核并查看历次观察。 |
-| 训练与审核 | 从同一个工作台启动支持、情景模拟、专家审核、贡献和抽取服务。 |
+## 它解决什么问题
 
-界面由项目自身提供：主工作台、支持、模拟、专家页面与六个业务模块共用
-一个进程、一个网页端口，启动时无需分别管理领域服务。各工作区支持中英文
-切换，原文和证据引文保持原样。
+心理咨询训练通常需要同时处理四类工作：
 
-## 安装完整知识和情景资源
+1. **理解对话**：把语音转录或格式不统一的咨询对话整理成可分析的轮次、说话人和证据片段。
+2. **组织治疗知识**：从授权的对话、教材、研究资料或结构化数据中抽取干预原则、过程规则、治疗师技能和案例证据，并建立可检索索引。
+3. **练习和反馈**：用可编辑、可复用的模拟来访者练习共情、开放式提问、认知重构、风险识别等技能，再对过程和回应进行评估。
+4. **持续改进课程**：把场景、知识、Skill、评估案例和教师反馈放在同一个版本化流程中，支持复盘和迭代。
 
-维护者另外提供 **TheraSkillAgent-resources-phase6-20261019.zip**。内附 0.5.0 安装 wheel，无需 Node。先解压外层交付包，再按包内 README / 本地 catalog 安装两个内层资源 ZIP。包内包括 **2,196,286 条知识发布记录与情景素材**，附清单、SHA-256 和来源说明；不包含模型权重或预构建向量索引。
+项目把这四类工作放在同一个 Agent 运行时里，减少从数据处理到训练应用之间的手工交接。
 
-完整命令、界面上传方式、空间需求和索引构建见[资源安装说明](docs/resource_installation.zh.md)。当前尚无公共下载链接，由维护者手动提供。
-
-## 从原始对话到可复用知识
+## 核心工作流
 
 ```mermaid
 flowchart LR
-  A[文本或对话文件] --> B[检查与整理]
-  B --> C[交互确定 schema 并抽取]
-  C --> D[审核和批准候选]
-  D --> E[构建并评估知识索引]
-  E --> F[支持对话、情景训练与专家审核]
+  A[咨询对话、教材或研究材料] --> B[规范化与质量检查]
+  B --> C[交互确定目标和 Schema]
+  C --> D[抽取治疗知识与证据]
+  D --> E[重复度、质量和专家审阅]
+  E --> F[构建知识索引]
+  F --> G[模拟会谈、回应审阅与课程训练]
+  G --> H[评估、复盘和版本迭代]
+  H --> E
 ```
 
-Skills 协调工具执行，在需要确定 schema、澄清来源或审批时暂停交互。
-也可以直接进行对话分析和审核。模型生成的知识和技能草稿保留待复核状态；
-替换活动索引或已有技能需要人工复核的效果对比报告。
+每一步都可以由界面、CLI 或 Skill 触发。需要用户决定 Schema、确认试抽结果、批准候选或处理冲突时，任务会暂停并保存检查点，之后可以继续执行。
+
+## 主要能力
+
+| 工作区 | 输入 | 输出 |
+| --- | --- | --- |
+| **对话分析** | TXT、Markdown、JSON、CSV、SRT、VTT、粘贴文本 | 规范化轮次、说话人映射、风险线索、质量审阅和可追溯分析包 |
+| **知识抽取** | 对话文件、目录、JSONL 或其他可注册数据适配器 | 抽取目标、可编辑 Schema、样例结果、证据引用、候选知识包和治理任务 |
+| **知识与索引** | 通过审核的 JSONL 知识 | 词法或 hybrid 索引、清单、检索结果、版本激活和回滚记录 |
+| **模拟患者** | 训练主题、患者档案、近期经历、训练目标 | 可版本化的模拟患者、渐进披露规则、可复用情景和练习会话 |
+| **技能与任务** | 自然语言目标、Skill、工具和知识范围 | 带澄清、工具轨迹、审批、检查点、重试和恢复的持久任务 |
+| **专家审阅** | 治疗师回应、对话、知识候选或 Skill 草稿 | 结构化评估、证据引用、质量意见、重复度检查和发布门禁 |
+| **课程与评估** | 课程目标、场景集合、学习者练习和教师反馈 | 批量场景、练习记录、复盘、行为评估、回归案例和学习进展 |
+
+## 为什么需要 Agent 和 Skill
+
+心理治疗训练不是一次性生成文本：
+
+- 不同任务需要不同知识范围，例如风险识别、治疗回应审阅和模拟患者生成不能共用同一组检索结果。
+- 对话分析经常需要先确认说话人、语言、文本修正策略和输出 Schema。
+- 知识抽取需要试抽、人工确认和治理；不能把一次模型输出直接当作正式知识。
+- 模拟患者需要维护背景、近期事件、隐藏顾虑、披露层级和病例版本。
+- 评估任务需要保留原始输入、工具调用、引用、模型配置和评分依据，方便复盘。
+
+Skill 描述任务目标、输入输出、工具、知识范围和检查要求；Agent 负责选择和执行 Skill，并在需要时与用户交互。当前内置 Skill 包括：
+
+- **对话与文本**：`transcript-normalizer`、`transcript-evaluator`、`transcript-quality-reviewer`
+- **知识工程**：`dynamic-knowledge-extraction`、`knowledge-index-manager`
+- **模拟训练**：`simulated-patient-builder`、`synthetic-dialogue-builder`
+- **治疗回应与支持**：`therapy-response-reviewer`、`emotional-support`、`cognitive-reframing-support`、`rebt-belief-work-support`、`risk-triage`
+- **运行管理**：`theraskill-agent-operator`
+
+## 模拟患者和情景训练
+
+模拟患者不是一段固定人设，而是一个可编辑、可复用的病例版本。档案可以包含：
+
+- 基本背景与当前困扰；
+- 生活背景和近期经历；
+- 患者目标、训练目标和隐藏顾虑；
+- 表达习惯、沟通风格和披露偏好；
+- 事件时间、影响、稳定 ID 和披露层级。
+
+训练时，患者模型只接收当前允许披露的事实。教师可以从界面构建或修改患者、复制为新场景、保存新版本，并把场景分配到课程中。详见[模拟患者使用说明](docs/simulated_patients.zh.md)。
+
+## 界面和运行方式
+
+启动后，统一工作台提供以下入口：
+
+- **工作台**：进入专业工作区和运行状态；
+- **任务中心**：查看并恢复抽取、审核、技能和批量情景任务；
+- **模型与连接**：分别配置、测试和保存 LLM 与 embedding；
+- **对话分析、知识抽取、知识与索引**：完成数据、知识和检索流程；
+- **情景控制台、专家工作台、支持助手**：进行模拟训练、回应审阅和文本支持任务。
+
+所有模块由一个本地应用进程管理，浏览器默认访问 `http://127.0.0.1:5176/`。不需要为每个业务模块单独启动一组服务。
 
 ## 快速开始
 
-Python 需要 3.11+。从源码构建界面需要 Node 22.12+；安装 wheel 时不需要
-Node。
+Python 需要 3.11+。从源码构建浏览器界面需要 Node 22.12+；使用 wheel 时不需要 Node。
 
 ```bash
 git clone https://github.com/roytian1992/TheraSkillAgent.git
@@ -62,7 +101,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e .
 
-# 源码安装需要构建浏览器界面
+# 源码安装需要构建界面
 npm ci
 npm run build
 
@@ -70,20 +109,15 @@ theraskill-agent project init .
 cp configs/theraskill/providers.local.example.yaml \
   configs/theraskill/providers.local.yaml
 chmod 600 configs/theraskill/providers.local.yaml
-# 编辑该文件，填写 LLM 和 embedding 各自的模型名、URL 和密钥
-theraskill-agent provider check --kind llm
-theraskill-agent provider check --kind embedding
+
 theraskill-agent ui
 ```
 
-浏览器打开 `http://127.0.0.1:5176/`。完整的 wheel 安装、启动、检查、
-升级和故障检查见 [英文部署文档](docs/deployment.en.md) 或
-[中文部署文档](docs/deployment.zh.md)。
+打开 `http://127.0.0.1:5176/`，在“模型与连接”页面配置模型并测试连接。完整的安装、升级和故障排查见[中文部署说明](docs/deployment.zh.md)。
 
 ## 模型配置
 
-项目只支持一种 provider 配置结构：`active` 加两个直接配置块 `llm` 和
-`embedding`。两类模型的模型名、URL 和密钥相互独立：
+LLM 和 embedding 使用两个独立的直接配置块，模型名、URL 和密钥可以分别设置：
 
 ```yaml
 active:
@@ -102,10 +136,9 @@ embedding:
   api_key: "EMBEDDING_API_KEY"
 ```
 
-机器相关配置放到被 Git 忽略的
-`configs/theraskill/providers.local.yaml`。共享的
-`configs/theraskill/providers.yaml` 只提供安全的本地默认值。旧的
-`profiles` 注册表会直接报错，不会被静默转换。
+本机配置放在被 Git 忽略的 `configs/theraskill/providers.local.yaml`。项目兼容本地服务和 OpenAI-compatible API，例如本地 Qwen/BGE 或远程 LLM/embedding 服务。
+
+也可以使用 CLI 检查配置：
 
 ```bash
 theraskill-agent provider list
@@ -113,94 +146,36 @@ theraskill-agent provider check --kind llm --live
 theraskill-agent provider check --kind embedding --live
 ```
 
-不加 `--live` 时不会访问网络；展示结果会隐藏密钥。
+## 知识资源和索引
 
-## 不启动模型也能试用知识流程
-
-仓库包含 6 条中英双语 synthetic JSONL 记录，仅用于演示格式。词法索引
-不调用模型，也不需要 FAISS：
+仓库内的 `examples/knowledge/demo.jsonl` 是一个小型格式示例，可以在没有模型的情况下建立词法索引：
 
 ```bash
 theraskill-agent index plan --knowledge examples/knowledge/demo.jsonl
 theraskill-agent index build --knowledge examples/knowledge/demo.jsonl --id demo-v1
 theraskill-agent index verify --index demo-v1
 theraskill-agent index search --index demo-v1 --query uncertainty
-theraskill-agent knowledge activate --index demo-v1
 ```
 
-需要 hybrid 检索时安装可选依赖，系统会使用 `providers.yaml` 的
-`embedding` 块：
+完整的知识和情景素材作为独立资源包提供，安装后可以通过界面或 CLI 构建索引。资源包不与源码仓库混在一起，便于按数据授权、版本和机器容量管理。详见[知识、索引和资源包说明](docs/knowledge_and_indexes.zh.md)与[资源安装说明](docs/resource_installation.zh.md)。
 
-```bash
-python -m pip install -e '.[retrieval]'
-theraskill-agent index build --knowledge examples/knowledge/demo.jsonl \
-  --id demo-hybrid --mode hybrid
-```
-
-中断后使用相同输入和直接模型配置加 `--resume`。更换 embedding 模型或
-维度后应新建索引。字段映射、候选资格、索引清单、资源安装和回滚见
-[知识、索引与资源包](docs/knowledge_and_indexes.zh.md)。
-
-## 按任务检索知识
-
-共享查询理解识别语言、概念、任务与风险线索。高级 Agent 检索继续调用真实
-LLM 规划，在选定技能的知识范围内融合词法、标签、向量和必要知识家族。
-用户指定的过滤条件在放宽模型建议范围和回填候选时始终生效。
-
-独立召回通道并行执行，按索引版本缓存元数据以减少重复扫描；FAISS 通过
-只读映射和范围选择器读取 Flat 索引。元数据缓存不会替代模型规划。
-结果保存耗时、证据用途与警告；宽泛查询和模型服务仍可能较慢。
-真实测量及边界见[检索优化验收](docs/retrieval_optimization_20261018.zh.md)。
-
-## 对话与任务示例
-
-```bash
-# 确定性操作只在本地执行
-theraskill-agent text normalize dialogue.txt
-theraskill-agent text sections dialogue.txt
-theraskill-agent transcript inspect dialogue.txt
-theraskill-agent transcript analyze dialogue.txt
-
-# 先生成 review 计划，再显式执行模型 review
-theraskill-agent transcript review dialogue.txt --mode plan \
-  --skill transcript-quality-reviewer
-theraskill-agent transcript review dialogue.txt --mode model \
-  --skill transcript-quality-reviewer
-```
-
-CLI、界面和 skill/tool 调用共用相同的任务和结果契约，
-审核和资源启用都保留明确的人工操作节点。
-
-## 仓库与数据边界
-
-源码仓库包含 agent 内核、领域服务、内置 skills、提示词、schema、索引代码、
-界面源码、配置模板和小型 synthetic 示例。完整知识库、预构建索引、persona、
-情景素材、模型权重、原始研究数据、密钥、会话、日志和运行状态均作为独立
-资源管理。
-
-`releases/catalog.json` 记录可下载资源的发布状态。完整知识和模拟素材
-没有公开下载地址；示例数据不代表临床指南或经过验证的知识库。
-
-参考文档：
-
-- [知识格式、索引和资源包](docs/knowledge_and_indexes.zh.md)
-- [英文部署文档](docs/deployment.en.md)
-- [中文部署文档](docs/deployment.zh.md)
-- [源码发布边界](docs/source_release.zh.md)
-- [数据集抽取与产出说明](extraction/docs/datasets_and_outputs.zh.md)
-
-## 开发与验证
+## 开发和验证
 
 ```bash
 python -m pip install -e '.[dev,retrieval]'
 python -m pytest -q -o addopts='' \
   tests/test_standalone_kernel.py tests/test_theraskill*.py \
-  tests/smoke_theraskill_install.py \
   --ignore=tests/test_theraskill_agent_regression.py
+
+cd views/theraskill/workbench
+npm ci
 npm run build
-python -m build
 ```
 
-基础安装不包含重量较大的模型和检索框架；只有需要 FAISS hybrid 索引时才
-安装 `retrieval` extra。软件采用 MIT 许可证，数据、模型和患者对话的授权
-需要分别确认。
+代码、提示词、Skill、索引构建器和界面源码都在本仓库中。模型权重、原始患者资料、机构数据和完整知识资源按项目部署单独提供。
+
+## 项目边界
+
+TheraSkillAgent 面向心理咨询与心理治疗的研究、教学、训练和内容工程。真实临床使用需要机构流程、数据授权和专业人员参与；仓库不包含真实患者资料，也不把合成场景当作临床诊断或治疗结论。
+
+软件采用 MIT License。数据集、研究材料、模型和心理健康内容的授权条款分别由其来源决定。

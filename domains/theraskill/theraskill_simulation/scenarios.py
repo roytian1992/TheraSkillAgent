@@ -128,6 +128,8 @@ class ScenarioRegistry:
             with self.registry_path.open("r", encoding="utf-8") as handle:
                 source_rows.extend(json.loads(line) for line in handle if line.strip())
         for row in source_rows:
+            if row.get("generated") and language in {"zh", "en"} and row.get("language") not in {None, language, "mixed"}:
+                continue
             if str(language) == "en" and str(row.get("scenario_id")) not in self._overlay(language):
                 if row.get("generated") is not True:
                     continue
@@ -142,8 +144,7 @@ class ScenarioRegistry:
                 approved_generated = (
                     row.get("generated") is True
                     and row.get("review_status") == "approved"
-                    and split_key == "formal_split"
-                    and split_value == "test"
+                    and (split_key, split_value) in {("formal_split", "test"), ("pilot_split", "pilot_train")}
                 )
                 if not approved_generated and (row.get("split_labels") or {}).get(split_key) != split_value:
                     continue

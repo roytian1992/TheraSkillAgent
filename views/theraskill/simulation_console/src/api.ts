@@ -10,6 +10,7 @@ import type {
   SessionView,
   TrainingAssignment,
   TurnAnnotation,
+  PatientDossier,
 } from './types'
 
 const API_URL = (import.meta.env.VITE_SIMULATION_API_URL || '/api/plugins/theraskill-simulation').replace(/\/$/, '')
@@ -84,6 +85,11 @@ export async function generateScenario(
     }),
   })
 }
+
+export type PatientDesign = { patient: PatientDossier; revision: number; grounding: { status: string; reason?: string; items?: Array<{ retrieval_id: string; content: string }> }; scenario: Scenario }
+export const inspectPatient = (role: CallerRole, id: string) => request<PatientDesign>(`/scenarios/${encodeURIComponent(id)}/patient`, role)
+export const forkPatient = (role: CallerRole, id: string) => request<{ scenario: Scenario }>(`/scenarios/${encodeURIComponent(id)}/fork`, role, { method: 'POST', body: '{}' })
+export const buildPatient = (role: CallerRole, payload: Record<string, unknown>, generate: boolean) => request<{ scenario: Scenario }>(generate ? '/scenarios/generate' : '/scenarios/build-patient', role, { method: 'POST', body: JSON.stringify(payload) })
 
 export type ScenarioQualityReport = {
   status: 'pass' | 'warn' | 'fail' | string

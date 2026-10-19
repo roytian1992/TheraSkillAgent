@@ -118,6 +118,16 @@ class SimulationSessionService:
             return path
         return (self.scenario_registry.registry_path.parent.parent / path).resolve()
 
+    def _session_scenario_row(self, snapshot: SessionSnapshot) -> dict[str, Any]:
+        """Keep an ongoing/reviewed conversation on its original patient version."""
+        row = dict(self.scenario_registry.get(snapshot.session.scenario.scenario_id, language=str(snapshot.session.language)))
+        row.update(snapshot.session.scenario.model_dump(mode="json"))
+        if snapshot.session.metadata.get("case_bundle_path"):
+            row["case_bundle_path"] = snapshot.session.metadata["case_bundle_path"]
+        row["revision"] = snapshot.session.metadata.get("patient_revision") or 1
+        row["bundle_sha256"] = snapshot.session.metadata.get("case_bundle_sha256")
+        return row
+
     @staticmethod
     def _deep_merge_overlay(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
         merged = dict(base)
@@ -206,6 +216,9 @@ class SimulationSessionService:
         language: str = "zh",
     ) -> tuple[dict[str, Any], dict[str, Any] | None, Path | None]:
         case_bundle = read_json(self._resolve_case_bundle_path(scenario_row["case_bundle_path"]))
+        embedded = case_bundle.get("_patient_persona_v2")
+        if isinstance(embedded, dict):
+            return case_bundle, embedded, None
         explicit_path = scenario_row.get("patient_persona_v2_path")
         case_id = str(scenario_row.get("case_id") or case_bundle.get("case_id") or "")
         if language == "en" and case_id:
@@ -250,6 +263,8 @@ class SimulationSessionService:
         return "65岁及以上"
 
     def learner_role_card_for_case(self, case_id: str, scenario_row: dict[str, Any] | None = None) -> dict[str, Any]:
+        if scenario_row and scenario_row.get("generated") and scenario_row.get("learner_role_card"):
+            return dict(scenario_row["learner_role_card"])
         persona_path = self.persona_dir / f"{case_id}.json"
         if not persona_path.exists():
             return {}
@@ -402,6 +417,13 @@ class SimulationSessionService:
             if str(source_snapshot.public_view.scenario.scenario_id) != str(scenario_id):
                 raise SessionOperationError("review source and scenario_id must match")
         scenario_row = self.scenario_registry.get(scenario_id, language=str(language))
+        if source_snapshot is not None:
+            scenario_row = self._session_scenario_row(source_snapshot)
+        elif parent_session_id:
+            parent = self.repository.get_latest_snapshot(parent_session_id)
+            if parent.session.scenario.case_id == scenario_row.get("case_id"):
+                pinned = self._session_scenario_row(parent)
+                scenario_row = {**scenario_row, **{key: pinned.get(key) for key in ("case_bundle_path", "revision", "bundle_sha256")}}
         scenario = _scenario_public(scenario_row)
         now = utc_now()
         resolved_id = session_id or f"sim_{uuid.uuid4().hex}"
@@ -417,6 +439,8 @@ class SimulationSessionService:
             knowledge_release_id=self.knowledge_release_id,
             metadata={
                 "case_bundle_path": scenario_row.get("case_bundle_path"),
+                "patient_revision": scenario_row.get("revision") or 1,
+                "case_bundle_sha256": scenario_row.get("bundle_sha256"),
                 "scenario_registry_path": str(self.scenario_registry.registry_path),
                 "language": resolved_language.value,
                 **({
@@ -711,10 +735,7 @@ class SimulationSessionService:
         if snapshot.private_patient_state is None:
             raise SessionOperationError("patient private state is missing")
 
-        scenario_row = self.scenario_registry.get(
-            snapshot.session.scenario.scenario_id,
-            language=str(snapshot.session.language),
-        )
+        scenario_row = self._session_scenario_row(snapshot)
         case_bundle, _, _ = self._load_case_bundle(
             scenario_row,
             language=str(snapshot.session.language),
@@ -852,10 +873,7 @@ class SimulationSessionService:
             raise ValueError("turn text cannot be empty")
         if snapshot.private_patient_state is None:
             raise SessionOperationError("patient private state is missing")
-        scenario_row = self.scenario_registry.get(
-            session.scenario.scenario_id,
-            language=str(session.language),
-        )
+        scenario_row = self._session_scenario_row(snapshot)
         case_bundle, _, _ = self._load_case_bundle(
             scenario_row,
             language=str(session.language),
@@ -1001,10 +1019,7 @@ class SimulationSessionService:
         deferred_update = foreground_trace.get("deferred_update")
         if not isinstance(deferred_update, dict):
             raise SessionOperationError("deferred patient state payload is missing")
-        scenario_row = self.scenario_registry.get(
-            snapshot.session.scenario.scenario_id,
-            language=str(snapshot.session.language),
-        )
+        scenario_row = self._session_scenario_row(snapshot)
         case_bundle, _, _ = self._load_case_bundle(
             scenario_row,
             language=str(snapshot.session.language),
@@ -1178,10 +1193,7 @@ class SimulationSessionService:
         clean_text = " ".join(text.split())
         if not clean_text:
             raise ValueError("turn text cannot be empty")
-        scenario_row = self.scenario_registry.get(
-            snapshot.session.scenario.scenario_id,
-            language=str(snapshot.session.language),
-        )
+        scenario_row = self._session_scenario_row(snapshot)
         next_index = snapshot.public_view.current_turn_index
         result = self.therapist_engine.generate_turn(
             session_id=snapshot.session.session_id,
@@ -1492,13 +1504,11 @@ class SimulationSessionService:
             therapist_input = transcript[-1].text
             patient_history = transcript[:-1]
 
-        scenario_row = self.scenario_registry.get(
-            session.scenario.scenario_id,
-            language=str(session.language),
-        )
+        scenario_row = self._session_scenario_row(snapshot)
+        case_bundle, _, _ = self._load_case_bundle(scenario_row, language=str(session.language))
         patient_result = self.patient_engine.generate_turn(
             scenario=scenario_row,
-            case_bundle=read_json(self._resolve_case_bundle_path(scenario_row["case_bundle_path"])),
+            case_bundle=case_bundle,
             transcript=patient_history,
             private_state=snapshot.private_patient_state,
             therapist_utterance=therapist_input,
@@ -1513,6 +1523,14 @@ class SimulationSessionService:
             created_at=utc_now(),
         )
         new_turns.append(patient_turn)
+        if patient_result.runtime_trace.get("deferred_update") and hasattr(self.patient_engine, "finalize_turn"):
+            finalized = self.patient_engine.finalize_turn(
+                case_bundle=case_bundle, transcript=transcript + new_turns,
+                private_state=patient_result.patient_state or snapshot.private_patient_state,
+                deferred_update=patient_result.runtime_trace["deferred_update"], language=str(session.language),
+            )
+            patient_result.patient_state = finalized.patient_state or patient_result.patient_state
+            patient_result.runtime_trace["completed_state_update"] = finalized.runtime_trace
 
         therapist_history = transcript + new_turns[:-1]
         therapist_result = self.therapist_engine.generate_turn(
@@ -1532,6 +1550,13 @@ class SimulationSessionService:
             created_at=utc_now(),
         )
         new_turns.append(therapist_turn)
+        if therapist_result.runtime_trace.get("deferred_update") and hasattr(self.therapist_engine, "finalize_turn"):
+            finalized = self.therapist_engine.finalize_turn(
+                private_state=PrivateTherapistState.model_validate(therapist_result.therapist_state or snapshot.private_therapist_state.model_dump(mode="json")),
+                deferred_update=therapist_result.runtime_trace["deferred_update"], language=str(session.language),
+            )
+            therapist_result.therapist_state = finalized.therapist_state or therapist_result.therapist_state
+            therapist_result.runtime_trace["completed_memory_update"] = finalized.runtime_trace
         next_patient = patient_result.patient_state or snapshot.private_patient_state
         next_therapist = PrivateTherapistState.model_validate(
             therapist_result.therapist_state
@@ -2043,12 +2068,15 @@ class SimulationSessionService:
         }
         if (
             resolved_scope in {ExportScope.INSTRUCTOR, ExportScope.RESEARCHER}
-            and persona_path
+            and (persona_path or snapshot.session.metadata.get("case_bundle_path"))
             and (terminal or resolved_scope == ExportScope.RESEARCHER)
         ):
-            resolved_persona_path = Path(str(persona_path))
-            if resolved_persona_path.exists():
-                persona = read_json(resolved_persona_path)
+            persona = None
+            if persona_path and Path(str(persona_path)).exists():
+                persona = read_json(Path(str(persona_path)))
+            elif snapshot.session.metadata.get("case_bundle_path"):
+                _, persona, _ = self._load_case_bundle(self._session_scenario_row(snapshot), language=str(snapshot.session.language))
+            if persona:
                 payload["instructor_persona_reveal"] = self._instructor_persona_reveal(persona)
                 if resolved_scope == ExportScope.RESEARCHER:
                     payload["reference_patient_persona"] = persona

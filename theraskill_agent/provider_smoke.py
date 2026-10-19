@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 from .text import redact_secrets
 
@@ -19,12 +19,12 @@ def list_providers() -> dict[str, dict[str, Any]]:
     return result
 
 
-def check_provider(kind: str, *, live: bool = False) -> dict[str, Any]:
+def check_provider(kind: str, *, live: bool = False, config: Mapping[str, Any] | None = None) -> dict[str, Any]:
     from domains.theraskill.provider_config import resolve_embedding_config, resolve_model_config
 
     if kind not in {"llm", "embedding"}:
         raise ValueError(f"unsupported provider kind: {kind}")
-    resolved = resolve_model_config() if kind == "llm" else resolve_embedding_config()
+    resolved = resolve_model_config(config) if kind == "llm" else resolve_embedding_config(config)
     safe = {
         "kind": kind,
         "model": resolved.get("model") or resolved.get("name"),

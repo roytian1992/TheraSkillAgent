@@ -27,6 +27,8 @@ result.answer is required. Output language does not restrict source language:
 only add a language filter when the user explicitly requests that source scope.
 For transcript tasks, cite actual turn_id values or the document_id returned
 by the transcript tool. evidence_ids is an array of ID strings, not objects.
+For patient construction, cite the actual scenario_id or case_id returned by
+theraskill_patient. These identify saved synthetic artifacts, not clinical evidence.
 '''
 
 
@@ -193,6 +195,12 @@ def evidence_ids_from_history(history):
         if not isinstance(result,dict):continue
         data=result.get('data',result)
         if not isinstance(data,dict):continue
+        if entry.get('tool')=='theraskill_patient':
+            scenario=data.get('scenario') or {}
+            for key in ('scenario_id','case_id'):
+                if scenario.get(key):ids.add(str(scenario[key]))
+            for item in (data.get('grounding') or {}).get('items',[]):
+                if item.get('retrieval_id'):ids.add(str(item['retrieval_id']))
         for hit in data.get('matches',[]):
             key=hit.get('retrieval_id') or hit.get('unit_id') or hit.get('id')
             if key:ids.add(str(key))
@@ -223,6 +231,7 @@ def finish_errors(output,history):
 
 # Domain tool names used in the bundled SKILL.md files share the same catalog.
 TOOLS.update({
+ 'theraskill_patient':'{operation:build|generate|inspect|update|fork,scenario_id:string,parameters:object}. Build or generate a reusable synthetic patient with background, recent_events and disclosure levels. inspect returns private design to the author; update requires expected_revision. Saved versions do not change ongoing sessions.',
  'theraskill_transcript':'{operation:inspect|analyze|review,path:string,language:zh|en,speaker_role_overrides:object}. Inspect before asking the user to confirm speaker roles; review calls real review skills.',
  'theraskill_extraction':'{operation:design|validate_plan|start|status|preview|handoff|cancel,goal:string,path:string,plan:object,job_id:string,limit:integer}. Design from up to 5 samples; start/handoff require user approval.',
  'theraskill_resources':'{operation:list|plan|build|search|verify|activate|rollback,parameters:object}. Managed knowledge/index operations. Mutations require user approval; activation also needs report_id.',
@@ -238,6 +247,20 @@ def tool_requires_approval(name,args):
 
 def execute_tool(name,args,*,skill_path=None):
     if name in CUSTOM_TOOLS:return CUSTOM_TOOLS[name]['handler'](args)
+    if name=='theraskill_patient':
+        from urllib.parse import quote
+        from .task_runtime import domain_call
+        op=args.get('operation');parameters=args.get('parameters') or {}
+        if op in {'build','generate'}:
+            return domain_call('simulation','/scenarios/'+('build-patient' if op=='build' else 'generate'),parameters)
+        sid=quote(str(args.get('scenario_id') or ''),safe='')
+        if not sid:raise ValueError('scenario_id is required')
+        if op=='inspect':return domain_call('simulation',f'/scenarios/{sid}/patient')
+        if op=='fork':return domain_call('simulation',f'/scenarios/{sid}/fork',parameters)
+        if op=='update':
+            if 'expected_revision' not in parameters:raise ValueError('Inspect the patient and supply expected_revision before updating')
+            return domain_call('simulation',f'/scenarios/generated/{sid}',parameters,method='PATCH')
+        raise ValueError('Unknown patient operation')
     if name=='theraskill_transcript':
         from .transcript import load_transcript,analyze_transcript
         doc,_=load_transcript(args.get('path') or args.get('source_path'),language=args.get('language','auto'),speaker_role_overrides=args.get('speaker_role_overrides'))

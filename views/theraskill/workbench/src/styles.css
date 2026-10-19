@@ -37,3 +37,47 @@
 .workspace-page .button-row{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
 
 .field-editor fieldset,.case-editor details{border:1px solid #dbe5df;border-radius:8px;margin:10px 0;padding:12px;min-width:0}.field-editor label,.case-editor label,.retrieval-evaluation label{display:flex;flex-direction:column;gap:6px;margin:8px 0}.setup-checklist,.retrieval-evaluation{margin:20px auto}.setup-checklist .resource-grid,.retrieval-evaluation .resource-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}.case-editor textarea{min-height:80px}.workspace-page select,.workspace-page input{max-width:100%;min-width:0}summary{cursor:pointer}.field-editor .checkbox-line{flex-direction:row}fieldset button{margin-top:8px}article,section,fieldset{min-width:0}.readable-output,code{overflow-wrap:anywhere}@media(max-width:600px){.setup-checklist .resource-grid,.retrieval-evaluation .resource-grid{grid-template-columns:1fr}}
+
+/* Primary navigation keeps the Workspace visible first; Tasks Center is a durable
+   job history/recovery view and model settings are a separate local-only screen. */
+.main-nav{display:flex;align-items:center;gap:4px;margin-left:auto;margin-right:18px}.main-nav button{display:inline-flex;align-items:center;gap:6px;border:1px solid transparent;background:transparent;color:#60746a;border-radius:8px;padding:8px 10px;font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}.main-nav button:hover,.main-nav button.active{color:#176d58;background:#edf6f1;border-color:#d4e7dc}.provider-settings{max-width:1440px;margin:0 auto}.provider-actions{display:flex;flex-wrap:wrap;gap:9px;margin:0 0 18px}.provider-actions button{display:inline-flex;align-items:center;gap:7px}.provider-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.provider-card,.provider-test-result{background:#fff;border:1px solid #dbe5df;border-radius:12px;padding:18px;box-shadow:0 4px 18px #214e3e0b}.provider-card-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border-bottom:1px solid #edf2ef;padding-bottom:10px;margin-bottom:12px;color:#176d58}.provider-card-title h2,.provider-test-result h2{display:flex;align-items:center;gap:7px;font-size:16px;margin:0;color:#1d2926}.provider-card-title p{font-size:12px;color:#687a70;margin:5px 0 0}.provider-field{display:flex;flex-direction:column;gap:6px;margin:11px 0;color:#52675b;font-size:12px}.provider-field>span{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.provider-field em{font-style:normal;color:#7d9186;font-size:11px}.provider-field input{font:inherit;font-size:13px;border:1px solid #bdcfc4;border-radius:8px;padding:9px 10px;background:#fff;color:#243d31;width:100%;box-sizing:border-box}.secret-input{display:flex;align-items:center}.secret-input input{border-radius:8px 0 0 8px}.secret-input button{display:grid;place-items:center;min-width:38px;height:37px;border:1px solid #bdcfc4;border-left:0;border-radius:0 8px 8px 0;background:#f7faf8;color:#557063;cursor:pointer}.provider-optional-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.provider-optional-grid .provider-field{min-width:0}.provider-notice{border-radius:8px;padding:11px 13px;margin:0 0 16px;font-size:13px}.provider-notice.ok{background:#eaf6ef;color:#16613f;border:1px solid #c9e6d3}.provider-notice.error{background:#fff1ef;color:#9d2e24;border:1px solid #f1c9c4}.provider-notice.info{background:#eef5fb;color:#285b82;border:1px solid #c9dfef}.provider-test-result{margin-top:14px}.provider-test-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:10px}.provider-test-item{display:flex;flex-direction:column;gap:5px;border:1px solid #dbe5df;border-radius:8px;padding:11px;background:#f7faf8;font-size:12px}.provider-test-item.ok{border-color:#b9ddc7;background:#f2fbf5}.provider-test-item.error{border-color:#efc7c2;background:#fff8f7}.provider-test-item span,.provider-test-item small{color:#687a70;overflow-wrap:anywhere}.provider-test-item.error small{color:#9d2e24}.provider-footnote{font-size:11px;color:#82928a;overflow-wrap:anywhere;margin-top:14px}.task-center-page{max-width:100%;}.task-center-page .task-history{max-height:60vh}@media(max-width:900px){.provider-grid{grid-template-columns:1fr}.provider-optional-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.topbar{padding:0 20px}.main-nav{margin-right:8px}}@media(max-width:700px){.topbar{height:auto;min-height:68px;flex-wrap:wrap;gap:8px;padding-top:10px;padding-bottom:10px}.main-nav{order:3;width:100%;margin:0;overflow-x:auto;justify-content:flex-start}.main-nav button{padding:7px 9px}.provider-optional-grid,.provider-test-grid{grid-template-columns:1fr}.provider-actions button{flex:1 1 auto}.provider-field{min-width:0}}
+
+.panel-actions{display:flex;justify-content:flex-end;margin-top:12px}.panel-actions .secondary-action{font-size:12px;padding:7px 10px}
+
+/* Home dashboard layout: the workspaces lead, operational details stay compact. */
+.home-main{max-width:1280px;padding:0 32px}
+.home-main .hero{max-width:none;padding:44px 0 28px}
+.home-main .hero h1{font-size:42px}
+.home-main .hero-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.home-main .hero-primary{display:inline-flex;align-items:center;gap:7px}
+.home-main .section{padding-left:0;padding-right:0;padding-bottom:30px}
+.home-main .workspace-section .section-heading{margin-bottom:14px}
+.home-main .section-heading h2{font-size:17px}
+.home-main .section-heading p{margin:5px 0 0;color:#72837a;font-size:12px;line-height:1.5}
+.home-main .link-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.home-main .link-grid a,.home-main .workspace-link{min-height:76px;padding:16px;border-radius:14px;box-shadow:0 3px 12px #214e3e08}
+.home-main .workspace-link span,.home-main .link-grid a span{font-weight:600}
+.home-main .workspace-link svg:first-child,.home-main .link-grid a svg:first-child{color:#176d58}
+.home-main .setup-checklist{margin:0 0 28px;max-width:none;padding:18px 20px;border-radius:16px}
+.home-main .setup-checklist>h2{font-size:17px}
+.home-main .setup-checklist>p{margin:7px 0;color:#72837a}
+.home-main .setup-checklist .resource-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:16px 0 12px}
+.home-main .setup-checklist .resource-grid article{padding:14px;border:1px solid #dbe8e0;border-radius:12px;background:#f8fbf9;min-height:132px}
+.home-main .setup-checklist .resource-grid article h3{margin:0 0 8px;font-size:13px;color:#223b30}
+.home-main .setup-checklist .resource-grid article p{margin:5px 0;font-size:12px;line-height:1.45;color:#6b7c73;overflow-wrap:anywhere}
+.home-main .setup-checklist .resource-grid article a{display:inline-block;margin-top:6px;color:#176d58;font-size:12px;line-height:1.4}
+.home-main .setup-checklist button{font:inherit;font-size:12px;border:1px solid #bfd4c8;border-radius:7px;padding:6px 9px;background:#fff;color:#285744;cursor:pointer}
+.home-main .setup-checklist button:hover:not(:disabled){background:#edf7f1;border-color:#73a48c}
+.home-main .setup-checklist [role=status]:empty{display:none}
+.home-main .setup-checklist .resource-grid+ p{font-size:11px}
+.home-main .runtime-section{padding-bottom:28px}
+.home-main .service-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.home-main .service-card{min-height:126px;border-radius:14px;padding:15px 16px}
+.home-main .service-card p{margin:12px 0 10px}
+.home-main .columns{grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);align-items:start;padding-left:0;padding-right:0}
+.home-main .columns .panel{border-radius:16px}
+.home-main .task-history{max-height:300px}
+.home-main .panel-actions{display:flex;justify-content:flex-end;margin-top:12px}
+.home-main .panel-actions .secondary-action{font-size:12px;padding:7px 10px}
+@media(max-width:900px){.home-main{padding:0 22px}.home-main .setup-checklist .resource-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.home-main .service-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.home-main{padding:0 16px}.home-main .hero{padding-top:30px}.home-main .hero h1{font-size:34px}.home-main .hero-actions{margin-top:18px}.home-main .link-grid,.home-main .service-grid,.home-main .setup-checklist .resource-grid{grid-template-columns:1fr}.home-main .columns{grid-template-columns:1fr}.home-main .setup-checklist{padding:16px}.home-main .setup-checklist .resource-grid article{min-height:0}}

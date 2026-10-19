@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Add a native `simulated-patient-builder` skill and a bilingual patient editor
+  for background, recent life events, goals, hidden concerns and disclosure levels.
+- Compile authored/generated patients into Persona v2 and record actual retrieval
+  grounding or its absence. Patient construction also works without an LLM.
+- Save immutable case revisions, reject stale edits, copy cases, and pin existing
+  conversations and review sessions to their original case bundle.
+- Repair fast-mode state/memory writeback and validate reported fact IDs against
+  permitted context. Persona v2 uses the current therapist move for disclosure;
+  dual-model cycles complete deferred updates as well.
+
 ## 0.5.0 — 2026-10-19
 
 - Behavioral evaluation now drives the production TaskEngine, tools, saved states

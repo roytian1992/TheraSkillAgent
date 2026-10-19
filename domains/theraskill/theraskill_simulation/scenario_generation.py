@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
+from .patient_builder import PatientDossier, compile_patient, dossier_from_bundle, public_role_card, save_bundle_version
 
 
 class ScenarioGenerationRequest(BaseModel):
@@ -23,6 +24,16 @@ class ScenarioGenerationRequest(BaseModel):
     language: str = "zh"
     scenario_tags: list[str] = Field(default_factory=list)
     constraints: str = Field(default="", max_length=2000)
+    patient: PatientDossier | None = None
+    use_knowledge: bool = True
+
+
+class PatientBuildRequest(ScenarioGenerationRequest):
+    patient: PatientDossier
+
+
+class ScenarioForkRequest(BaseModel):
+    brief: str | None = Field(default=None, min_length=8, max_length=1200)
 
 
 class ScenarioGenerationBatchRequest(BaseModel):
@@ -52,6 +63,8 @@ class ScenarioDraftUpdateRequest(BaseModel):
     scenario_tags: list[str] | None = None
     recommended_turn_budget: int | None = Field(default=None, ge=2, le=12)
     learner_role_card: dict[str, Any] | None = None
+    patient: PatientDossier | None = None
+    expected_revision: int | None = Field(default=None, ge=1)
 
 
 class ScenarioDraftReviewRequest(BaseModel):
@@ -78,6 +91,19 @@ def _scenario_text(row: dict[str, Any]) -> str:
             tags,
         ) if part
     )
+
+
+def _patient_signature(row: dict[str, Any]) -> str | None:
+    """Compare authored facts, ignoring identifiers assigned during copying."""
+    try:
+        patient = json.loads(Path(row["case_bundle_path"]).read_text(encoding="utf-8")).get("patient_dossier")
+        if not patient:
+            return None
+        patient = dict(patient)
+        patient["recent_events"] = [{k: v for k, v in event.items() if k != "event_id"} for event in patient.get("recent_events", [])]
+        return json.dumps(patient, ensure_ascii=False, sort_keys=True)
+    except (KeyError, OSError, ValueError, TypeError):
+        return None
 
 
 def build_quality_report(
@@ -118,11 +144,19 @@ def build_quality_report(
             check("visible_profile", bool(authoritative.get("visible_profile")), severity="warning", detail="公开病例信息为空")
             check("hidden_profile", bool(authoritative.get("hidden_profile")), severity="warning", detail="隐藏状态为空，可能降低连续性")
             check("continuity_seed", bool(authoritative.get("continuity_seed")), severity="warning", detail="连续性种子为空")
+            if bundle.get("patient_dossier") is not None:
+                patient = PatientDossier.model_validate(bundle["patient_dossier"])
+                check("patient_concern", bool(patient.presenting_concern), detail="患者当前困扰为空")
+                check("recent_experiences", bool(patient.recent_events), severity="warning", detail="尚未补充近期经历")
+                check("patient_persona", bool(bundle.get("_patient_persona_v2")), detail="尚未编译患者人设与披露图")
+                check("training_objectives", bool(patient.training_objectives), severity="warning", detail="建议补充训练目标")
+                # This is a setup check, never a claim of clinical realism.
         except (OSError, ValueError, TypeError):
             check("case_bundle_json", False, detail="合成病例状态包不是有效 JSON")
 
     duplicates: list[dict[str, Any]] = []
     current_text = _normalise_text(_scenario_text(row))
+    current_patient = _patient_signature(row)
     for other in existing_rows or []:
         if str(other.get("scenario_id")) == str(row.get("scenario_id")):
             continue
@@ -131,11 +165,13 @@ def build_quality_report(
             continue
         similarity = SequenceMatcher(None, current_text, other_text).ratio()
         if similarity >= 0.72:
-            duplicates.append({"scenario_id": other.get("scenario_id"), "similarity": round(similarity, 3)})
-    duplicates.sort(key=lambda item: float(item["similarity"]), reverse=True)
+            other_patient = _patient_signature(other)
+            duplicates.append({"scenario_id": other.get("scenario_id"), "similarity": round(similarity, 3),
+                               "different_patient_facts": bool(current_patient and other_patient and current_patient != other_patient)})
+    duplicates.sort(key=lambda item: (float(item["similarity"]) >= 0.9 and not item["different_patient_facts"], float(item["similarity"])), reverse=True)
     duplicate = duplicates[0] if duplicates else None
     if duplicate:
-        severity = "error" if float(duplicate["similarity"]) >= 0.9 else "warning"
+        severity = "error" if float(duplicate["similarity"]) >= 0.9 and not duplicate["different_patient_facts"] else "warning"
         check(
             "duplicate_similarity",
             False,
@@ -194,16 +230,38 @@ class LLMScenarioGenerator:
     def _prompt_for(self, language: str) -> str:
         return self.prompts.get(str(language).lower(), self.prompts["zh"])
 
+    def _knowledge_context(self, request: ScenarioGenerationRequest) -> dict[str, Any]:
+        if not request.use_knowledge:
+            return {"status": "disabled", "items": []}
+        from plugins.theraskill.retrieval import search_managed_knowledge
+        from theraskill_agent.text import redact_secrets
+        try:
+            found = search_managed_knowledge(request.brief, skill="synthetic-dialogue-builder", limit=4)
+            if found is None:
+                return {"status": "unavailable", "reason": "No active knowledge index", "items": []}
+            items = [{"retrieval_id": hit.get("retrieval_id") or hit.get("unit_id"),
+                      "content": json.dumps(hit, ensure_ascii=False)[:2400]} for hit in found.get("matches", [])[:4]
+                     if hit.get("retrieval_id") or hit.get("unit_id")]
+            return {"status": "grounded" if items else "no_matches", "index_id": found.get("index_id"),
+                    "items": items, "warnings": found.get("warnings", [])}
+        except Exception as exc:
+            return {"status": "unavailable", "reason": redact_secrets(str(exc))[:500], "items": []}
+
     def generate(self, request: ScenarioGenerationRequest) -> dict[str, Any]:
         from domains.theraskill.theraskill_llm import chat_json_with_repair
 
+        knowledge = self._knowledge_context(request)
+        def validate_patient(value: dict[str, Any]) -> None:
+            if isinstance(value.get("patient"), dict):
+                PatientDossier.model_validate(value["patient"])
         result = chat_json_with_repair(
             self.client,
             self._prompt_for(request.language),
-            request.model_dump(mode="json"),
+            {**request.model_dump(mode="json"), "knowledge_context": knowledge},
             parse_retries=1,
-            max_prompt_tokens=6000,
+            max_prompt_tokens=12000,
             force_json_first=True,
+            validate=validate_patient,
         )
         scenario_id = f"generated_{uuid.uuid4().hex}"
         case_id = f"generated_case_{uuid.uuid4().hex}"
@@ -231,6 +289,8 @@ class LLMScenarioGenerator:
             "review_status": "draft",
             "review_history": [],
             "generated_at": datetime.now(timezone.utc).isoformat(),
+            "revision": 1,
+            "grounding_status": knowledge["status"],
         }
         bundle = {
             "schema_version": "theraskill_generated_case_bundle_v1",
@@ -246,7 +306,7 @@ class LLMScenarioGenerator:
                 "language": request.language,
             },
             "authoritative_layer": {
-                "source_unit_ids": {},
+                "source_unit_ids": {str(i): item["retrieval_id"] for i, item in enumerate(knowledge["items"])},
                 "visible_profile": visible,
                 "hidden_profile": hidden,
                 "continuity_seed": continuity,
@@ -259,12 +319,19 @@ class LLMScenarioGenerator:
                 "generated_by": "theraskill_online_scenario_generator_v1",
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "request": request.model_dump(mode="json"),
+                "knowledge_grounding": knowledge,
             },
         }
-        case_path = self.output_root / f"{case_id}.json"
-        case_path.parent.mkdir(parents=True, exist_ok=True)
-        case_path.write_text(json.dumps(bundle, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        scenario["case_bundle_path"] = str(case_path)
+        patient = (PatientDossier.model_validate(result["patient"]) if isinstance(result.get("patient"), dict)
+                   else dossier_from_bundle(bundle, scenario))
+        if request.patient is not None:
+            # The user's supplied facts take precedence over model inventions;
+            # empty seed fields may be completed by the generator.
+            supplied = {key: value for key, value in request.patient.model_dump(mode="json").items() if value}
+            patient = PatientDossier.model_validate({**patient.model_dump(mode="json"), **supplied})
+        bundle = compile_patient(bundle, scenario, patient)
+        scenario["learner_role_card"] = public_role_card(bundle, scenario)
+        scenario = save_bundle_version(bundle, scenario, self.output_root)
         return {"scenario": scenario, "case_bundle": bundle}
 
     def generate_batch(self, request: ScenarioGenerationBatchRequest) -> list[dict[str, Any]]:
