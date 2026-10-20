@@ -247,6 +247,10 @@ channels remain available. Provider and network latency also affect request time
 See the [retrieval validation record (Chinese)](retrieval_optimization_20261018.zh.md)
 for measured cases, comparison limits and reproduction commands.
 
+## Restart after a source upgrade
+
+After updating source and rebuilding the frontend, stop the existing `theraskill-agent ui` process with Ctrl+C in its terminal, then start it again with the same port arguments and refresh the browser. A running Python process can keep old API routes while serving newly built browser files. If the learning page reports that micro-practice endpoints are unavailable, restart the application; refreshing the browser alone cannot load new backend code.
+
 ## Model output troubleshooting
 
 Normal setup only requires model names, URLs, and keys. The shared model client

@@ -6,6 +6,10 @@ type Row = Record<string, any>
 type Props = {locale: Locale; onBack: () => void}
 type CourseDraft = {language: Locale; title: string; description: string; objectives: Row[]; selected: string[]; blueprint: Row | null; knowledge_cards: Row[]; micro_practices: Row[]; saved_at?: string}
 type MicroAnswer = {response_text: string; self_reflection: string; hint_used: boolean; skipReflection: boolean; request_id: string}
+type MicroLoadError = {title: string; message: string}
+class LearningApiError extends Error {
+  constructor(readonly status: number, readonly detail: unknown, message: string) {super(message)}
+}
 const draftKey = (locale: Locale) => `theraskill-learning-course-draft:v2:${locale}`
 const blankDraft = (language: Locale): CourseDraft => ({language, title: '', description: '', objectives: [], selected: [], blueprint: null, knowledge_cards: [], micro_practices: []})
 function readDraft(locale: Locale): CourseDraft {
@@ -34,6 +38,7 @@ export default function LearningStudio({locale, onBack}: Props) {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [micro, setMicro] = useState<Record<string, Row>>({})
+  const [microErrors, setMicroErrors] = useState<Record<string, MicroLoadError>>({})
   const [answers, setAnswers] = useState<Record<string, MicroAnswer>>({})
   const [reflections, setReflections] = useState<Record<string, string>>({})
   const [reflectionUnlocked, setReflectionUnlocked] = useState<Record<string, boolean>>({})
@@ -51,33 +56,77 @@ export default function LearningStudio({locale, onBack}: Props) {
   const [microScore, setMicroScore] = useState('')
   const mounted = useRef(true)
   const loadVersion = useRef(0)
+  const microScope = useRef('')
   const call = useCallback(async (path: string, body?: any) => {
     const response = await fetch('/api/simulation' + path, {method: body === undefined ? 'GET' : 'POST', headers: {'Content-Type': 'application/json', 'X-Simulation-Role': role, 'X-Simulation-User': 'local-user'}, body: body === undefined ? undefined : JSON.stringify(body)})
-    const result = response.status === 204 ? {} : await response.json()
-    if (!response.ok) throw new Error(asText(result.detail || result))
+    const result = response.status === 204 ? {} : await response.json().catch(() => null)
+    if (!response.ok) {
+      const detail = result?.detail
+      const message = Array.isArray(detail) ? detail.map(item => `${(item.loc || []).join('.')}: ${item.msg || ''}`).join('; ') : typeof detail === 'string' ? detail : response.statusText || `HTTP ${response.status}`
+      throw new LearningApiError(response.status, detail, message)
+    }
+    if (result === null) throw new Error('Invalid JSON response')
     return result
   }, [role])
   const act = async (fn: () => Promise<any>) => {setBusy(true); setError(''); setNotice(''); try {await fn()} catch (e) {if (mounted.current) setError(e instanceof Error ? e.message : String(e))} finally {if (mounted.current) setBusy(false)}}
   const resetReview = () => {setOpenReview(''); setReviewer(''); setComment(''); setRatings({}); setPerformanceLevel('guided'); setTransferContext(''); setReviewEvidence([]); setSafetyIssue(false); setBehaviorObservations({}); setMicroScore('')}
   const chooseReview = (key: string) => {const next = openReview === key ? '' : key; resetReview(); setOpenReview(next)}
+  const microLoadMessage = (reason: unknown) => {
+    if (reason instanceof LearningApiError && reason.status === 404 && reason.detail === 'Not Found') return t('当前运行的服务尚未提供微练习接口。更新代码后请重启 TheraSkillAgent 服务，再重试加载。', 'The running service does not provide the micro-practice API. After updating the code, restart TheraSkillAgent, then retry loading.')
+    const detail = reason instanceof Error ? reason.message : String(reason)
+    const status = reason instanceof LearningApiError ? ` (HTTP ${reason.status})` : ''
+    return t('微练习加载失败：', 'Micro-practices could not load: ') + detail + status
+  }
+  const recoveredJobs = (value: Row): Record<string, Row> => {
+    const recovered: Record<string, Row> = {}
+    for (const submission of value.submissions || []) if (submission.latest_judge_job) recovered['submission:' + submission.submission_id] = submission.latest_judge_job
+    for (const [attemptId, history] of Object.entries(value.attempt_judge_jobs || {})) {const rows = history as Row[]; if (rows.length) recovered['attempt:' + attemptId] = rows[rows.length - 1]}
+    return recovered
+  }
+  const retryMicro = (assignmentId: string) => act(async () => {
+    const version = loadVersion.current
+    try {
+      const value = await call('/assignments/' + encodeURIComponent(assignmentId) + '/micro-practices')
+      if (!mounted.current || version !== loadVersion.current) return
+      setMicro(previous => ({...previous, [assignmentId]: value}))
+      setJobs(previous => ({...previous, ...recoveredJobs(value)}))
+      setMicroErrors(previous => {const next = {...previous}; delete next[assignmentId]; return next})
+    } catch (reason) {
+      if (mounted.current && version === loadVersion.current) setMicroErrors(previous => ({...previous, [assignmentId]: {...previous[assignmentId], message: microLoadMessage(reason)}}))
+    }
+  })
   const refresh = async () => {
     const version = ++loadVersion.current
+    const scope = JSON.stringify([role, locale, assignee.trim()])
+    const cachedMicro = microScope.current === scope ? micro : {}
+    if (microScope.current !== scope) {setMicro({}); setMicroErrors({}); setJobs({})}
     const [r, s, c] = await Promise.all([call('/learning/report' + (assignee.trim() ? '?assignee=' + encodeURIComponent(assignee.trim()) : '')), call('/scenarios?language=' + locale), role === 'instructor' ? call('/courses') : Promise.resolve(null)])
     if (!mounted.current || version !== loadVersion.current) return
     setReport(r); setScenarios((s.scenarios || []).filter((item: Row) => !item.generated || item.review_status === 'approved')); setCourses(c?.courses || r.assignments.map((item: Row) => item.course).filter(Boolean)); if (courseId && !assignmentTitle) setAssignmentTitle((c?.courses || []).find((item: Row) => item.course_id === courseId)?.title || '')
-    const rows = await Promise.allSettled((r.assignments || []).map(async (item: Row) => [item.assignment.assignment_id, await call('/assignments/' + item.assignment.assignment_id + '/micro-practices')] as const))
+    const assignments: Row[] = r.assignments || []
+    const rows = await Promise.allSettled(assignments.map(async item => [item.assignment.assignment_id, await call('/assignments/' + encodeURIComponent(item.assignment.assignment_id) + '/micro-practices')] as const))
     if (!mounted.current || version !== loadVersion.current) return
-    const nextMicro: Record<string, Row> = {}; const recovered: Record<string, Row> = {}
-    for (const result of rows) if (result.status === 'fulfilled') {const [id, value] = result.value; nextMicro[id] = value; for (const submission of value.submissions || []) if (submission.latest_judge_job) recovered['submission:' + submission.submission_id] = submission.latest_judge_job; for (const [attemptId, history] of Object.entries(value.attempt_judge_jobs || {})) {const rows = history as Row[]; if (rows.length) recovered['attempt:' + attemptId] = rows[rows.length - 1]}}
+    const nextMicro: Record<string, Row> = {}; const recovered: Record<string, Row> = {}; const failures: Record<string, MicroLoadError> = {}
+    rows.forEach((result, index) => {
+      const assignment = assignments[index].assignment; const id = assignment.assignment_id
+      if (result.status === 'fulfilled') nextMicro[id] = result.value[1]
+      else {if (cachedMicro[id]) nextMicro[id] = cachedMicro[id]; failures[id] = {title: assignment.title || id, message: microLoadMessage(result.reason)}}
+      if (nextMicro[id]) Object.assign(recovered, recoveredJobs(nextMicro[id]))
+    })
     for (const assignment of r.assignments || []) for (const attempt of assignment.attempts || []) if (attempt.latest_judge_job) recovered['attempt:' + attempt.id] = attempt.latest_judge_job
-    setMicro(nextMicro); setJobs(recovered)
-    if (rows.some(result => result.status === 'rejected')) setError(t('部分微练习暂时无法加载，请重新加载进展。', 'Some micro-practices could not load. Reload progress to retry.'))
+    const retainJobKeys = assignments.filter(item => failures[item.assignment.assignment_id]).flatMap(item => [
+      ...(nextMicro[item.assignment.assignment_id]?.submissions || []).map((submission: Row) => 'submission:' + submission.submission_id),
+      ...(item.attempts || []).map((attempt: Row) => 'attempt:' + attempt.id),
+    ])
+    microScope.current = scope; setMicro(nextMicro)
+    setJobs(previous => {const next = {...recovered}; for (const key of retainJobKeys) if (previous[key]) next[key] = previous[key]; return next})
+    setMicroErrors(failures)
   }
   useEffect(() => {mounted.current = true; return () => {mounted.current = false; loadVersion.current += 1}}, [])
   useEffect(() => {const saved = readDraft(locale); setDraft(saved); setStarterCount(saved.blueprint?.scenario_constraints?.count || 3); setDifficultyBand(saved.blueprint?.scenario_constraints?.difficulty_band || 'low'); setRiskBand(saved.blueprint?.scenario_constraints?.risk_band || 'low')}, [locale])
   useEffect(() => {if (draft.language === locale) try {localStorage.setItem(draftKey(locale), JSON.stringify({...draft, saved_at: new Date().toISOString()}))} catch {setError(t('浏览器无法保存课程草稿，请在离开前保存课程。', 'The browser cannot save this draft. Save the course before leaving.'))}}, [draft, locale])
   useEffect(() => {
-    resetReview(); setJobs({}); setAnswers({}); setReflections({}); setReflectionUnlocked({}); setReport(null); setMicro({}); setTab(role === 'instructor' ? 'design' : 'practice')
+    resetReview(); setJobs({}); setAnswers({}); setReflections({}); setReflectionUnlocked({}); setReport(null); setMicro({}); setMicroErrors({}); setTab(role === 'instructor' ? 'design' : 'practice')
     if (role === 'instructor' || assignee.trim()) void act(refresh)
     return () => {loadVersion.current += 1}
   }, [role, locale])
@@ -166,6 +215,7 @@ export default function LearningStudio({locale, onBack}: Props) {
     <div className="learning-toolbar"><label>{role === 'instructor' ? t('学员标签（留空查看全部）', 'Learner label (blank for all)') : t('你的学员标签', 'Your learner label')}<input value={assignee} onChange={e => setAssignee(e.target.value)} placeholder={t('例如：学习小组 A', 'e.g. Study group A')} /></label><button disabled={busy || (role !== 'instructor' && !assignee.trim())} onClick={() => void act(refresh)}>{t('加载进展', 'Load progress')}</button><small>{t('使用教师分配课程时填写的同一标签。', 'Use the same label your instructor used for the assignment.')}</small></div>
     <nav className="learning-tabs" aria-label={t('课程导航', 'Course navigation')}>{(role === 'instructor' ? ['design', 'practice', 'progress'] : ['practice', 'progress']).map(value => <button key={value} aria-current={tab === value ? 'page' : undefined} className={tab === value ? 'active' : ''} onClick={() => setTab(value as typeof tab)}>{value === 'design' ? t('设计与分配', 'Design & assign') : value === 'practice' ? t('学习与练习', 'Learn & practise') : t('观察与进展', 'Observations & progress')}</button>)}</nav>
     {error && <p className="error-box" role="alert">{error}</p>}{notice && <p className="learning-notice" role="status">{notice}</p>}
+    {Object.entries(microErrors).map(([id, failure]) => <section key={id} className="error-box learning-load-error" role="alert"><strong>{failure.title}</strong><p>{failure.message}</p>{micro[id] && <p>{t('已保留上次加载的回应与反馈，可能尚未包含最新记录。', 'Previously loaded responses and feedback are retained; recent changes may be missing.')}</p>}<button disabled={busy} onClick={() => void retryMicro(id)} aria-label={t('重试加载：', 'Retry loading: ') + failure.title}>{t('重试此任务', 'Retry this assignment')}</button></section>)}
     {role === 'instructor' && tab === 'design' && <>
       <section className="panel learning-template"><div className="learning-heading"><h2>{t('1. 选择一个教学起点', '1. Choose a teaching starting point')}</h2><small>{t('教师可以修改所有内容', 'Every part is editable')}</small></div><p>{t('模板包含能力目标、行为标准、知识卡和微练习。已有草稿会自动保存；重新创建模板会替换当前编辑内容。', 'Templates include objectives, observable behaviours, knowledge cards, and micro-practices. Drafts save automatically; creating another starter replaces the current draft.')}</p><div className="button-row"><label>{t('教学模板', 'Teaching template')}<select aria-label={t('教学模板', 'Teaching template')} value={starterTemplate} onChange={e => {setStarterTemplate(e.target.value); setRiskBand(e.target.value === 'risk_and_safety_basics' ? 'elevated' : 'low')}}><option value="foundation_first_session">{t('首次会谈基础', 'First-session foundations')}</option><option value="risk_and_safety_basics">{t('风险识别与安全沟通', 'Risk and safety communication')}</option><option value="integrated_case_formulation">{t('从评估到工作假设', 'Assessment to working formulation')}</option></select></label><label>{t('生成案例数量', 'Cases to generate')}<select aria-label={t('生成案例数量', 'Cases to generate')} value={starterCount} onChange={e => setStarterCount(Number(e.target.value))}>{[1, 2, 3, 4, 5, 6].map(value => <option key={value} value={value}>{value}</option>)}</select></label><label>{t('沟通难度', 'Communication difficulty')}<select aria-label={t('沟通难度', 'Communication difficulty')} value={difficultyBand} onChange={e => setDifficultyBand(e.target.value)}><option value="low">{t('基础', 'Foundational')}</option><option value="medium">{t('中等', 'Intermediate')}</option><option value="high">{t('进阶', 'Advanced')}</option></select></label><label>{t('情境风险', 'Scenario risk')}<select aria-label={t('情境风险', 'Scenario risk')} value={riskBand} onChange={e => setRiskBand(e.target.value)}><option value="low">{t('低风险', 'Low')}</option><option value="elevated">{t('需关注', 'Elevated')}</option><option value="high">{t('高风险', 'High')}</option></select></label><button className="primary" disabled={busy} onClick={() => void buildBlueprint()}>{t('创建课程起点', 'Create course starter')}</button></div></section>
       {(draft.objectives.length > 0 || draft.title) && <section className="panel learning-course-editor"><div className="learning-heading"><h2>{t('2. 调整教学内容', '2. Shape the learning content')}</h2><small>{t('草稿自动保存在此浏览器', 'Draft saves in this browser')}</small></div><label>{t('课程标题', 'Course title')}<input value={draft.title} onChange={e => patchDraft({title: e.target.value})} /></label><label>{t('课程说明', 'Course description')}<textarea aria-label={t('课程说明', 'Course description')} value={draft.description} onChange={e => patchDraft({description: e.target.value})} /></label>

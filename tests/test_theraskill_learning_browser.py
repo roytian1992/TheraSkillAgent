@@ -139,3 +139,94 @@ def test_course_draft_micro_feedback_and_isolated_reflection(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=3)
+
+
+def test_micro_load_failure_identifies_assignment_and_retries_without_losing_history(tmp_path):
+    playwright = pytest.importorskip("playwright.sync_api")
+    assets = Path(__file__).parents[1] / "views/theraskill/workbench/dist"
+    if not (assets / "index.html").is_file():
+        pytest.skip("Build the workbench before running its browser regression")
+    exercise = {"practice_id": "micro1", "title": "情绪回应", "prompt": "回应来访者的担忧", "target_behavior": "反映情绪"}
+    submission = {"submission_id": "sub1", "practice_id": "micro1", "response_text": "已保存的回应保持可见", "created_at": "2026-10-20T01:00:00Z"}
+    rows = []
+    for assignment_id, title in [("good", "已加载任务"), ("missing_api", "旧服务任务"), ("deleted", "已删除任务")]:
+        rows.append({"assignment": {"assignment_id": assignment_id, "title": title, "assignee": "学习小组 A", "scenario_ids": []}, "course": {"learning_units": {"micro_practices": [exercise]}}, "completion": {"completed": 0, "required": 0}, "completed_scenarios": [], "attempts": []})
+    failures = {"missing_api": (404, "Not Found"), "deleted": (404, "Assignment no longer exists")}
+    requests = []
+
+    def handle(route):
+        path = route.request.url.split("/api/simulation")[-1].split("?")[0]
+        requests.append(path)
+        status, data = 200, {}
+        if path == "/learning/report":
+            data = {"assignments": rows, "trends": []}
+        elif path == "/scenarios":
+            data = {"scenarios": []}
+        elif path == "/courses":
+            data = {"courses": []}
+        elif path.endswith("/micro-practices"):
+            assignment_id = path.split("/")[2]
+            if assignment_id in failures:
+                status, detail = failures[assignment_id]
+                data = {"detail": detail}
+            else:
+                data = {"exercises": [exercise], "submissions": [submission] if assignment_id == "good" else [], "attempt_judge_jobs": {}}
+        elif path == "/learning/submissions/sub1/judge":
+            data = {"job_id": "fresh-feedback", "status": "completed", "result": {"objectives": [{"objective_id": "empathy", "observation": "observed", "rationale": "回应具体表达了感受"}], "next_practice": ["保留刚完成的反馈"]}}
+        route.fulfill(status=status, content_type="application/json", body=json.dumps(data, ensure_ascii=False))
+
+    class QuietHandler(SimpleHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(QuietHandler, directory=str(assets)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with playwright.sync_playwright() as p:
+            try:
+                browser = p.chromium.launch(headless=True)
+            except playwright.Error as exc:
+                pytest.skip(f"Playwright Chromium is unavailable: {exc}")
+            page = browser.new_page(viewport={"width": 1360, "height": 1000})
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.route("**/api/**", handle)
+            page.goto(f"http://127.0.0.1:{server.server_port}/?workspace=learning")
+            old_service = page.locator(".learning-load-error").filter(has_text="旧服务任务")
+            deleted = page.locator(".learning-load-error").filter(has_text="已删除任务")
+            old_service.get_by_text("当前运行的服务尚未提供微练习接口。更新代码后请重启 TheraSkillAgent 服务，再重试加载。", exact=True).wait_for()
+            deleted.get_by_text("微练习加载失败：Assignment no longer exists (HTTP 404)", exact=True).wait_for()
+            assert "重启" not in deleted.inner_text()
+            page.get_by_role("button", name="学习与练习", exact=True).click()
+            page.get_by_text(submission["response_text"], exact=True).wait_for()
+            page.get_by_role("button", name="获取练习反馈", exact=True).click()
+            page.get_by_text("保留刚完成的反馈", exact=True).wait_for()
+            good_reads = requests.count("/assignments/good/micro-practices")
+            del failures["missing_api"]
+            old_service.get_by_role("button", name="重试加载：旧服务任务", exact=True).click()
+            old_service.wait_for(state="detached")
+            assert requests.count("/assignments/good/micro-practices") == good_reads
+            assert deleted.count() == 1
+            failures["deleted"] = (503, "Practice records are temporarily unavailable")
+            deleted.get_by_role("button", name="重试加载：已删除任务", exact=True).click()
+            deleted.get_by_text("微练习加载失败：Practice records are temporarily unavailable (HTTP 503)", exact=True).wait_for()
+            failures.clear()
+            failures["good"] = (503, "Practice records are temporarily unavailable")
+            page.get_by_role("button", name="加载进展", exact=True).click()
+            retained = page.locator(".learning-load-error").filter(has_text="已加载任务")
+            retained.get_by_text("已保留上次加载的回应与反馈，可能尚未包含最新记录。", exact=True).wait_for()
+            assert page.get_by_text(submission["response_text"], exact=True).is_visible()
+            assert page.get_by_text("保留刚完成的反馈", exact=True).is_visible()
+            assert page.locator(".learning-load-error").count() == 1
+            failures.clear()
+            retained.get_by_role("button", name="重试加载：已加载任务", exact=True).click()
+            retained.wait_for(state="detached")
+            assert page.get_by_text(submission["response_text"], exact=True).is_visible()
+            page.screenshot(path=str(tmp_path / "recovered-micro-practices.png"), full_page=True)
+            assert not errors, errors
+            browser.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
