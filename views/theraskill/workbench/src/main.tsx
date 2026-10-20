@@ -5,6 +5,7 @@ import './styles.css'
 import TranscriptStudio from './TranscriptStudio'
 import ExtractionStudio from './ExtractionStudio'
 import KnowledgeStudio from './KnowledgeStudio'
+import KnowledgeUnitEditor from './KnowledgeUnitEditor'
 import TaskCenter from './TaskCenter'
 import WorkflowStudio from './WorkflowStudio'
 import EvaluationStudio from './EvaluationStudio'
@@ -31,15 +32,18 @@ function App() {
     return ['tasks', 'settings', 'transcript', 'extraction', 'knowledge', 'workflow', 'evaluation', 'learning'].includes(value || '') ? value as 'tasks' | 'settings' | 'transcript' | 'extraction' | 'knowledge' | 'workflow' | 'evaluation' | 'learning' : 'home'
   })
   const [providerInfo, setProviderInfo] = useState<any>(null)
+  const [, refreshRoute] = useState(0)
+  const [knowledgeDirty, setKnowledgeDirty] = useState(false)
   function setWorkspace(value: 'home' | 'tasks' | 'settings' | 'transcript' | 'extraction' | 'knowledge' | 'workflow' | 'evaluation' | 'learning') {
+    if (knowledgeDirty && !window.confirm(language === 'zh' ? '知识草稿还有未保存的修改。放弃修改并离开？' : 'This knowledge draft has unsaved changes. Discard them and leave?')) return
     const url = new URL(location.href)
     if (value === 'home') url.searchParams.delete('workspace'); else url.searchParams.set('workspace', value)
-    url.searchParams.delete('job_id'); url.searchParams.delete('task_id'); url.searchParams.delete('report_id')
-    window.history.pushState({}, '', url); updateWorkspace(value)
+    url.searchParams.delete('job_id'); url.searchParams.delete('task_id'); url.searchParams.delete('report_id'); url.searchParams.delete('knowledge_id'); url.searchParams.delete('index_id'); url.searchParams.delete('knowledge_sha256'); url.searchParams.delete('index')
+    window.history.pushState({}, '', url); updateWorkspace(value); setKnowledgeDirty(false); refreshRoute(version => version + 1)
   }
   useEffect(() => { localStorage.setItem('theraskill-locale', language) }, [language])
   useEffect(() => {
-    const restore = () => { const value = new URLSearchParams(location.search).get('workspace'); updateWorkspace(['tasks','settings','transcript','extraction','knowledge','workflow','evaluation','learning'].includes(value || '') ? value as any : 'home') }
+    const restore = () => { refreshRoute(version => version + 1); const value = new URLSearchParams(location.search).get('workspace'); updateWorkspace(['tasks','settings','transcript','extraction','knowledge','workflow','evaluation','learning'].includes(value || '') ? value as any : 'home') }
     window.addEventListener('popstate', restore)
     fetch('/api/resources/providers').then(response => response.ok ? response.json() : null).then(setProviderInfo).catch(() => {})
     return () => window.removeEventListener('popstate', restore)
@@ -68,7 +72,7 @@ function App() {
   if (workspace === 'settings') return <div className="shell">{topbar}<main><ProviderSettings locale={language} onBack={() => setWorkspace('home')} /></main></div>
   if (workspace === 'transcript') return <div className="shell">{topbar}<main><TranscriptStudio locale={language} onBack={() => setWorkspace('home')} /></main></div>
   if (workspace === 'extraction') return <div className="shell">{topbar}<main><ExtractionStudio locale={language} onBack={() => setWorkspace('home')} /></main></div>
-  if (workspace === 'knowledge') return <div className="shell">{topbar}<main><KnowledgeStudio locale={language} onBack={() => setWorkspace('home')} /></main></div>
+  if (workspace === 'knowledge') { const params = new URLSearchParams(location.search); const knowledgeId = params.get('knowledge_id'); const knowledgeIndexId = params.get('index_id'); return <div className="shell">{topbar}<main>{knowledgeId ? <KnowledgeUnitEditor id={knowledgeId} indexId={knowledgeIndexId || undefined} checksum={params.get('knowledge_sha256') || undefined} locale={language} onDirtyChange={setKnowledgeDirty} onBack={() => setWorkspace('knowledge')} /> : <KnowledgeStudio locale={language} onBack={() => setWorkspace('home')} />}</main></div> }
 
   const focusedUrl = (path: string, port: number) => import.meta.env.DEV ? `${window.location.protocol}//${window.location.hostname}:${port}/` : path
   const openLinks = [

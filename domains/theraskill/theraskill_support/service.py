@@ -283,6 +283,10 @@ class SupportSessionService:
             presentation_mode=result.presentation_mode,
             structured_content=result.structured_content,
             evidence_summary=result.evidence_summary,
+            retrieval_summary={key: result.retrieval_summary[key] for key in (
+                "retrieval_mode", "retrieval_skipped", "skip_reason", "hit_count",
+                "source_index_id", "knowledge_sha256",
+            ) if key in result.retrieval_summary},
             created_at=now,
         )
         first_user_text = next(

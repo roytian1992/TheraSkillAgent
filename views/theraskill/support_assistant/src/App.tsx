@@ -6,6 +6,7 @@ import {
   BookOpen,
   Check,
   Download,
+  ExternalLink,
   ListChecks,
   LoaderCircle,
   Menu,
@@ -21,6 +22,7 @@ import {
   X,
 } from 'lucide-react'
 import MemoryDrawer from './MemoryDrawer'
+import KnowledgeEntry from '../../shared/KnowledgeEntry'
 import {
   completeSession,
   createSession,
@@ -38,7 +40,7 @@ import {
   updatePlan,
   withdrawContribution,
 } from './api'
-import type { ContributionSummary, FeedbackConsent, SupportMessage, SupportSession } from './types'
+import type { ContributionSummary, EvidenceSummary, FeedbackConsent, SupportMessage, SupportSession } from './types'
 import { useLocale } from './i18n'
 
 function downloadJson(filename: string, value: unknown) {
@@ -83,6 +85,48 @@ function StructuredContent({ value }: { value: Record<string, unknown> }) {
       ))}
     </div>
   )
+}
+
+function KnowledgeDetailDrawer({ item, onClose }: { item: EvidenceSummary | null; onClose: () => void }) {
+  const { locale } = useLocale()
+  const t = (zh: string, en: string) => locale === 'zh' ? zh : en
+  const dialog = useRef<HTMLElement>(null)
+  const close = useRef(onClose)
+  const dirty = useRef(false)
+  const [dismiss, setDismiss] = useState(false)
+  close.current = onClose
+  const requestClose = () => { if (dirty.current) setDismiss(true); else close.current() }
+  useEffect(() => {
+    if (!item) return
+    const previous = document.activeElement as HTMLElement | null
+    const bodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    dialog.current?.focus()
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); if (dirty.current) setDismiss(true); else close.current(); return }
+      if (event.key !== 'Tab' || !dialog.current) return
+      const elements = Array.from(dialog.current.querySelectorAll<HTMLElement>('button:not(:disabled),a[href],textarea:not(:disabled),input:not(:disabled),select:not(:disabled),summary,[tabindex="0"]')).filter(node => node.getClientRects().length > 0)
+      const first = elements[0], last = elements[elements.length - 1]
+      if (!first) { event.preventDefault(); dialog.current.focus(); return }
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { event.preventDefault(); last.focus() }
+      if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog.current)) { event.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = bodyOverflow; previous?.focus() }
+  }, [item])
+  if (!item) return null
+  const unitId = item.unit_id || item.source_id || ''
+  const indexId = item.source_index_id || item.index_id
+  return <>
+    <button className="drawer-scrim" tabIndex={-1} onClick={requestClose} aria-label={t('关闭知识详情', 'Close knowledge details')} />
+    <aside ref={dialog} className="knowledge-drawer" tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="knowledge-detail-title">
+      <header><div><span className="drawer-kicker">{t('参考依据', 'Evidence')}</span><h2 id="knowledge-detail-title">{item.label}</h2></div><button className="icon-button" onClick={requestClose} aria-label={t('关闭知识详情', 'Close knowledge details')}><X size={17} /></button></header>
+      <div className="knowledge-drawer-body">
+        {dismiss && <div className="ke-dismiss" role="alert"><p>{t('草稿还有未保存的修改。', 'Your draft has unsaved changes.')}</p><button onClick={() => setDismiss(false)}>{t('继续编辑', 'Keep editing')}</button><button onClick={() => close.current()}>{t('放弃修改并关闭', 'Discard changes and close')}</button></div>}
+        {unitId ? <KnowledgeEntry key={[unitId,indexId,item.knowledge_sha256].join(':')} id={unitId} indexId={indexId} checksum={item.knowledge_sha256} citation={item} locale={locale} onDirtyChange={value => { dirty.current = value }} /> : <div className="ke-citation"><h3>{t('对话中保存的引用', 'Citation saved with the response')}</h3><blockquote>{item.excerpt || item.label}</blockquote><p>{t('该历史条目没有可定位的知识 ID。', 'This historical citation has no knowledge entry ID.')}</p></div>}
+      </div>
+    </aside>
+  </>
 }
 
 const feedbackReasons = [
@@ -176,13 +220,16 @@ function FeedbackControls({ sessionId, messageId, onError, onSubmitted }: {
   )
 }
 
-function Message({ message, sessionId, onError, onFeedbackSubmitted }: {
+function Message({ message, sessionId, onError, onFeedbackSubmitted, onOpenEvidence }: {
   message: SupportMessage
   sessionId: string
   onError: (message: string) => void
   onFeedbackSubmitted: () => void
+  onOpenEvidence: (item: EvidenceSummary) => void
 }) {
   useTranslationSubscription()
+  const { locale } = useLocale()
+  const t = (zh: string, en: string) => locale === 'zh' ? zh : en
 
   const isUser = message.role === 'user'
   return (
@@ -194,22 +241,34 @@ function Message({ message, sessionId, onError, onFeedbackSubmitted }: {
       <div className="message-body">
         <p>{message.text}</p>
         {!isUser && <StructuredContent value={message.structured_content} />}
+        {!isUser && message.retrieval_summary?.retrieval_skipped && (
+          <div className="retrieval-status" role="status">
+            <BookOpen size={13} />
+            <span>{t('本轮为简单对话，未检索知识', 'Lightweight turn; no knowledge retrieval was needed')}</span>
+          </div>
+        )}
+        {!isUser && !message.retrieval_summary?.retrieval_skipped && message.retrieval_summary?.retrieval_mode && message.evidence_summary.length === 0 && (
+          <div className="retrieval-status" role="status">
+            <BookOpen size={13} />
+            <span>{t('本轮未找到可用参考依据', 'No usable reference evidence was returned for this turn')}</span>
+          </div>
+        )}
         {!isUser && message.evidence_summary.length > 0 && (
           <details className="evidence-details">
-            <summary><BookOpen size={15} />{tr("参考依据")}</summary>
+            <summary><BookOpen size={15} />{tr("参考依据")} <span className="evidence-count">{message.evidence_summary.length}</span></summary>
             <div className="evidence-list">
               {message.evidence_summary.map((item, index) => (
-                <div className="evidence-row" key={`${item.label}-${index}`}>
+                <button className="evidence-row" key={`${item.label}-${index}`} onClick={() => onOpenEvidence(item)} title={tr('查看知识详情')}>
                   <div>
-                    <span>{item.label.replaceAll('_', ' ')}</span>
+                    <span className="evidence-row-title">{item.label.replaceAll('_', ' ')}</span>
                     {item.excerpt && <blockquote style={{whiteSpace:'pre-wrap'}}>{item.excerpt}</blockquote>}
-                    {(item.dataset || item.source_id) && <small className="evidence-row-detail">{item.dataset} · {item.source_id}</small>}
+                    {(item.dataset || item.source_id) && <small className="evidence-row-detail">{item.dataset || tr('知识库')} · {item.source_id ? `${item.source_id.slice(0, 18)}…` : ''}</small>}
                     {item.used_for && <small className="evidence-row-detail">{tr("用途：")}{item.used_for}</small>}
                     {item.boundary && <small className="evidence-row-detail">{tr("边界：")}{item.boundary}</small>}
                     {item.inference && <small className="evidence-row-detail">{item.inference}</small>}
                   </div>
-                  <small>{readableRole(item.role)}{item.source_type ? ` · ${item.source_type}` : ''}</small>
-                </div>
+                  <small className="evidence-row-role">{readableRole(item.role)}{item.source_type ? ` · ${item.source_type}` : ''}<ExternalLink size={12} /></small>
+                </button>
               ))}
             </div>
           </details>
@@ -325,6 +384,7 @@ export default function App() {
   const [contributionOpen, setContributionOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [contributions, setContributions] = useState<ContributionSummary[]>([])
+  const [selectedEvidence, setSelectedEvidence] = useState<EvidenceSummary | null>(null)
   const [contributionLoading, setContributionLoading] = useState(false)
   const transcriptEnd = useRef<HTMLDivElement>(null)
 
@@ -546,13 +606,14 @@ export default function App() {
               sessionId={session.session_id}
               onError={setError}
               onFeedbackSubmitted={() => { if (contributionOpen) void openContributions() }}
+              onOpenEvidence={setSelectedEvidence}
               key={message.message_id}
             />
           ))}
           {pending && (
             <article className="message assistant-message pending-message">
               <div className="message-meta">TheraSkillAgent</div>
-              <div className="message-body"><span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" /><p>{locale === 'zh' ? tr('正在理解问题、检索依据并生成回应。任务在后台继续，稍后可从会话历史找回。') : 'Understanding your message, retrieving evidence and preparing a response. The job continues in the background; you can return through conversation history.'}</p></div>
+              <div className="message-body"><span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" /><p>{locale === 'zh' ? tr('正在准备回应。任务在后台继续，稍后可从会话历史找回。') : 'Preparing a response. The job continues in the background; you can return through conversation history.'}</p></div>
             </article>
           )}
           {failed && (
@@ -610,6 +671,7 @@ export default function App() {
         </>
       )}
       {memoryOpen && <MemoryDrawer onClose={() => setMemoryOpen(false)} onError={setError} />}
+      <KnowledgeDetailDrawer key={selectedEvidence ? [selectedEvidence.unit_id || selectedEvidence.source_id,selectedEvidence.source_index_id || selectedEvidence.index_id].join(':') : 'closed'} item={selectedEvidence} onClose={() => setSelectedEvidence(null)} />
     </main>
   )
 }

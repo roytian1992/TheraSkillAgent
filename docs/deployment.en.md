@@ -340,3 +340,9 @@ The home page shows provider configuration, explicit live connection checks, act
 ## Course feedback
 
 Course and micro-practice feedback uses the existing LLM and active knowledge index, in the same application process. No extra endpoint or package is needed. See the [learning guide](learning.en.md) for the teacher/learner workflow and the data directories to back up.
+
+## Support turns and knowledge details
+
+Greetings, acknowledgements and explicit product-navigation questions can skip the routing model and knowledge retrieval and generate a brief response directly. Psychological support requests and conversations with safety context retain the regular flow. Messages distinguish skipped retrieval from a search with no usable evidence. Searching existing knowledge is separate from extracting new knowledge; a support message does not start an extraction job.
+
+Click a response citation to read its content, open the knowledge editor, save a draft and submit a rebuild. The first visit to a large source prepares a lookup catalog in the background. This uses the same application process and port, without an additional dependency. Rebuild browser assets and restart the application after upgrading source. See [knowledge editing and indexes](knowledge_and_indexes.en.md#inspect-and-edit-cited-knowledge) for candidate activation and backup details.

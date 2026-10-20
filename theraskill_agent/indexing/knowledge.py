@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from .projection import retrieval_row
 
-PROJECTION_VERSION = 'theraskill_projection_v2'
+PROJECTION_VERSION = 'theraskill_projection_v3'
 
 
 def _field(row, path, default=None):
@@ -19,6 +19,7 @@ def _field(row, path, default=None):
 def project(row, line, mapping=None):
     if not isinstance(row, dict):
         raise ValueError(f'line {line}: knowledge must be an object')
+    editor = row.get('_theraskill_editor')
     if 'release_unit_id' not in row:
         mapping = mapping or {}
         get = lambda key, default=None: _field(row, mapping.get(key, key), default)
@@ -43,6 +44,8 @@ def project(row, line, mapping=None):
                                  'embedding_eligible': approved and policy.get('embedding_eligible') is True,
                                  'default_route': policy.get('default_route', 'reviewed_cluster_retrieval' if approved else 'accounting_only_requires_review')},
         }
+    if isinstance(editor, dict):
+        row = {**row, '_theraskill_editor': editor}
     if not isinstance(row.get('release_unit_id'), str) or not row['release_unit_id'].strip():
         raise ValueError(f'line {line}: nonempty stable knowledge ID required')
     for key in ('content', 'retrieval_policy'):

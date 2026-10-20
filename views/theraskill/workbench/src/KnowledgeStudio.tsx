@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { KnowledgeJobView } from '../../shared/KnowledgeEntry'
+import type { KnowledgeJob } from '../../shared/knowledge'
 
 type Job = { id: string; operation: string; status: string; parameters: Record<string, unknown>; progress?: unknown; result?: unknown; error?: string }
 type Resource = { id: string; manifest: { counts?: Record<string, number>; input?: { mode: string }; embedding?: { name?: string; dimension?: number } } }
@@ -22,10 +24,33 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [detail, setDetail] = useState<unknown>(null)
-  const [selectedJob, setSelectedJob] = useState('')
+  const [selectedJob, setSelectedJob] = useState(() => new URLSearchParams(location.search).get('job_id') || '')
+  const [linkedJob, setLinkedJob] = useState<Job | null>(null)
   const [behaviorReport, setBehaviorReport] = useState('')
   useEffect(() => { const job = catalog.jobs.find(item => item.id === selectedJob); if (job) setDetail(job.result ?? null) }, [catalog, selectedJob])
-  const operationName = (name: string) => zh ? ({plan: '构建计划', build: '索引构建', verify: '完整性验证', search: '检索测试', activate: '启用索引', rollback: '恢复索引', install: '安装资源'}[name] ?? name) : name
+  useEffect(() => {
+    setLinkedJob(null)
+    if (!selectedJob) return
+    let cancelled = false, timer: number | undefined
+    const controller = new AbortController()
+    const poll = async () => {
+      try {
+        const response = await fetch('/api/resources/jobs/' + encodeURIComponent(selectedJob), { signal: controller.signal })
+        const value = await response.json()
+        if (!response.ok) throw new Error(typeof value.detail === 'string' ? value.detail : 'Unable to load resource job')
+        if (cancelled) return
+        setLinkedJob(value); setDetail(value.result ?? null)
+        if (['queued', 'running'].includes(value.status)) timer = window.setTimeout(poll, 1500)
+      } catch (reason) { if (!cancelled) { setError(String(reason)); timer = window.setTimeout(poll, 3000) } }
+    }
+    void poll()
+    return () => { cancelled = true; controller.abort(); if (timer) window.clearTimeout(timer) }
+  }, [selectedJob])
+  const linkedCandidate = linkedJob?.operation === 'reindex' ? (linkedJob.result as { index_directory_id?: string } | undefined)?.index_directory_id || String(linkedJob.parameters?.index_id || '') : ''
+  const installedCandidate = catalog.indexes.some(item => item.id === linkedCandidate)
+  const selectJob = (id: string) => { setSelectedJob(id); const url = new URL(location.href); url.searchParams.set('job_id', id); history.replaceState({}, '', url) }
+
+  const operationName = (name: string) => zh ? ({plan: '构建计划', build: '索引构建', verify: '完整性验证', search: '检索测试', activate: '启用索引', rollback: '恢复索引', install: '安装资源', reindex: '修订知识索引', catalog: '原始知识目录'}[name] ?? name) : name
   const statusName = (name: string) => zh ? ({queued: '等待中', running: '进行中', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断'}[name] ?? name) : name
   const result = detail as { counts?: Record<string, number>; hits?: RetrievalHit[]; matches?: RetrievalHit[]; query_understanding?: QueryUnderstanding; retrieval_mode?: string; count?: number; warnings?: string[]; embedding_requests_estimate?: number } | null
   const resultMatches = result?.matches ?? result?.hits ?? []
@@ -45,7 +70,7 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
   }, [])
   async function submit(operation: string, parameters: Record<string, unknown>) {
     setBusy(true); setError('')
-    try { const job = await request('/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation, parameters }) }); setSelectedJob(job.id); setDetail(null); await refresh() }
+    try { const job = await request('/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation, parameters }) }); selectJob(job.id); setDetail(null); await refresh() }
     catch (e) { setError(String(e)) } finally { setBusy(false) }
   }
   const searchFilters = languageFilter ? { language: languageFilter } : undefined
@@ -55,6 +80,7 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
     <p>{zh ? '导入知识，构建检索索引，验证后启用。词法检索无需模型；混合检索使用你配置的 embedding 服务。' : 'Import knowledge, build an index, verify it and activate it. Lexical retrieval needs no model; hybrid retrieval uses your configured embedding service.'}</p>
     {error && <p role="alert" className="resource-error">{error}</p>}
     <p>{zh ? '当前索引：' : 'Active index: '}{catalog.active ? `${catalog.active.index.split('/').pop()} (${catalog.active.mode})` : (zh ? '尚未选择新索引' : 'No managed index selected')}</p>
+    {linkedJob?.operation === 'reindex' && <div className="knowledge-entry"><KnowledgeJobView job={{ ...linkedJob, result: linkedJob.result as KnowledgeJob['result'], progress: linkedJob.progress as KnowledgeJob['progress'], resources_url: undefined }} locale={locale} />{linkedCandidate && <p className="ke-notice">{installedCandidate ? <>{zh ? '下方已定位本次候选索引，可先验证，再评估与启用。' : 'The candidate index is highlighted below. Verify it, evaluate it, then activate it.'} <a href={'#resource-index-' + encodeURIComponent(linkedCandidate)}>{linkedCandidate}</a></> : <>{zh ? '候选索引准备就绪后，将在下方显示验证与启用入口：' : 'Verification and activation will appear below when the candidate index is ready: '}{linkedCandidate}</>}</p>}</div>}
     <article className="panel resource-form"><h2>{zh?'安装资源 ZIP':'Install resource ZIP'}</h2><p>{zh?'选择收到的知识包或情景素材包。安装会校验清单、文件大小和 SHA-256；大型包也可按 README 使用命令行安装。':'Choose a knowledge or simulation package. Installation checks its inventory, sizes and SHA-256. For large files, the README also provides CLI commands.'}</p><input aria-label="Resource ZIP" type="file" accept=".zip" disabled={busy} onChange={e=>{const file=e.target.files?.[0];if(file){setBusy(true);setError('');void fetch('/api/resources/upload-package',{method:'POST',body:file}).then(async response=>{const r=await response.json();if(!response.ok)throw new Error(r.detail);setSelectedJob(r.id);await refresh()}).catch(e=>setError(String(e))).finally(()=>setBusy(false))}}}/><p role="status">{busy?(zh?'正在上传或处理，请勿关闭页面…':'Uploading or processing; keep this page open…'):''}</p></article><div className="columns">
       <article className="panel resource-form"><h2>{zh ? '从知识构建' : 'Build from knowledge'}</h2>
         <label>{zh ? '知识文件路径或已安装知识 ID' : 'Knowledge file path or installed ID'}<input value={source} onChange={e => setSource(e.target.value)} placeholder="examples/knowledge/demo.jsonl" /></label>
@@ -84,12 +110,12 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
       <label>{zh ? '功能路由' : 'Feature route'}<select value={skill} onChange={e => setSkill(e.target.value)}><option value="emotional-support">{zh ? '支持对话' : 'Emotional support'}</option><option value="risk-triage">{zh ? '风险分流' : 'Risk triage'}</option><option value="cognitive-reframing-support">{zh ? '认知重构支持' : 'Cognitive reframing'}</option><option value="rebt-belief-work-support">REBT</option><option value="synthetic-dialogue-builder">{zh ? '情景生成' : 'Synthetic dialogue'}</option><option value="therapy-response-reviewer">{zh ? '回复审核' : 'Response review'}</option></select></label>
       <label>{zh ? '语言过滤（可选）' : 'Language filter (optional)'}<select value={languageFilter} onChange={e => setLanguageFilter(e.target.value)}><option value="">{zh ? '全部语言' : 'All languages'}</option><option value="zh">中文</option><option value="en">English</option></select></label>
       {catalog.indexes.length === 0 && <p>{zh ? '还没有索引，可以先用自编小样例构建。' : 'No indexes yet. Start with the synthetic demo.'}</p>}
-      {catalog.indexes.map(item => <div className="resource-item" key={item.id}><strong>{item.id}</strong><span>{item.manifest.input?.mode} · {item.manifest.counts?.indexed ?? 0} {zh ? '条可检索记录' : 'searchable records'}</span><div className="resource-actions"><button disabled={busy} onClick={() => void submit('verify', { index: item.id })}>{zh ? '验证' : 'Verify'}</button><button disabled={busy} onClick={() => void submit('activate', { index: item.id, report_id:behaviorReport||undefined })}>{zh ? '启用' : 'Activate'}</button><button disabled={busy || !query} onClick={() => void submit('search', { index: item.id, query, skill, production:true, ...(searchFilters ? { filters: searchFilters } : {}) })}>{zh ? '检索测试' : 'Test retrieval'}</button></div></div>)}
+      {catalog.indexes.map(item => <div className={"resource-item" + (linkedCandidate === item.id ? " selected-candidate" : "")} id={"resource-index-" + encodeURIComponent(item.id)} key={item.id}><strong>{item.id}</strong><span>{item.manifest.input?.mode} · {item.manifest.counts?.indexed ?? 0} {zh ? '条可检索记录' : 'searchable records'}</span><div className="resource-actions"><button disabled={busy} onClick={() => void submit('verify', { index: item.id })}>{zh ? '验证' : 'Verify'}</button><button disabled={busy} onClick={() => void submit('activate', { index: item.id, report_id:behaviorReport||undefined })}>{zh ? '启用' : 'Activate'}</button><button disabled={busy || !query} onClick={() => void submit('search', { index: item.id, query, skill, production:true, ...(searchFilters ? { filters: searchFilters } : {}) })}>{zh ? '检索测试' : 'Test retrieval'}</button></div></div>)}
       <button disabled={busy || !catalog.previous} onClick={() => void submit('rollback', {})}>{zh ? '恢复上一个索引' : 'Restore previous index'}</button>
     </article>
-    <article className="panel"><h2>{zh ? '任务与结果' : 'Jobs & results'}</h2>{catalog.jobs.map(job => <div className="resource-item" key={job.id}><strong>{operationName(job.operation)} · {statusName(job.status)}</strong>{job.error && <p role="alert">{job.error}</p>}{job.progress !== undefined && <details><summary>{zh ? '构建进度详情' : 'Progress details'}</summary><pre>{JSON.stringify(job.progress, null, 2)}</pre></details>}<div className="resource-actions"><button onClick={() => { setSelectedJob(job.id); setDetail(job.result ?? null) }}>{zh ? '查看结果' : 'View result'}</button>{['running', 'queued'].includes(job.status) && <button onClick={() => void request(`/jobs/${job.id}/cancel`, { method: 'POST' }).then(refresh).catch(e => setError(String(e)))}>{zh ? '取消' : 'Cancel'}</button>}{['failed', 'cancelled', 'interrupted'].includes(job.status) && job.operation === 'build' && <button onClick={() => void submit('build', { ...job.parameters, resume: true })}>{zh ? '重试 / 继续' : 'Retry / resume'}</button>}</div></div>)}{result && <div className="resource-result">{result.counts && <p>{zh ? '记录总数' : 'Total records'}: {result.counts.total} · {zh ? '允许检索' : 'Eligible'}: {result.counts.eligible} · {zh ? '已构建向量' : 'Vectors built'}: {result.counts.vectors ?? 0}</p>}{result.embedding_requests_estimate !== undefined && <p>{zh ? '预计 embedding 请求次数' : 'Estimated embedding requests'}: {result.embedding_requests_estimate}</p>}
+    <article className="panel"><h2>{zh ? '任务与结果' : 'Jobs & results'}</h2>{catalog.jobs.map(job => <div className="resource-item" key={job.id}><strong>{operationName(job.operation)} · {statusName(job.status)}</strong>{job.error && <p role="alert">{job.error}</p>}{job.progress !== undefined && job.operation !== 'reindex' && <details><summary>{zh ? '构建进度详情' : 'Progress details'}</summary><pre>{JSON.stringify(job.progress, null, 2)}</pre></details>}<div className="resource-actions"><button onClick={() => { selectJob(job.id); setDetail(job.result ?? null) }}>{zh ? '查看结果' : 'View result'}</button>{['running', 'queued'].includes(job.status) && <button onClick={() => void request(`/jobs/${job.id}/cancel`, { method: 'POST' }).then(refresh).catch(e => setError(String(e)))}>{zh ? '取消' : 'Cancel'}</button>}{['failed', 'cancelled', 'interrupted'].includes(job.status) && job.operation === 'build' && <button onClick={() => void submit('build', { ...job.parameters, resume: true })}>{zh ? '重试 / 继续' : 'Retry / resume'}</button>}</div></div>)}{result && <div className="resource-result">{result.counts && <p>{zh ? '记录总数' : 'Total records'}: {result.counts.total} · {zh ? '允许检索' : 'Eligible'}: {result.counts.eligible} · {zh ? '已构建向量' : 'Vectors built'}: {result.counts.vectors ?? 0}</p>}{result.embedding_requests_estimate !== undefined && <p>{zh ? '预计 embedding 请求次数' : 'Estimated embedding requests'}: {result.embedding_requests_estimate}</p>}
       {understanding && <section aria-label={zh ? '查询理解' : 'Query understanding'}><h3>{zh ? '查询理解' : 'Query understanding'}</h3><p>{understanding.normalized_query}</p><p>{zh ? '语言' : 'Language'}: {understanding.language} · {result.retrieval_mode} · {result.count ?? resultMatches.length} {zh ? '条命中' : 'matches'}</p><p>{zh ? '优先知识' : 'Preferred knowledge'}: {understanding.route.preferred_families.map(familyName).join(' → ') || (zh ? '通用检索' : 'General search')}</p>{understanding.concepts.length > 0 && <p>{zh ? '识别概念' : 'Detected concepts'}: {understanding.concepts.join(', ')}</p>}{understanding.needs_clarification && <p>{zh ? '问题信息不足，请补充主题或具体需求。' : 'Add a topic or a more specific request to improve retrieval.'}</p>}{resultMatches.length === 0 && <p>{zh ? '当前问题和过滤条件没有命中知识，可补充问题或检查索引内容。' : 'No knowledge matched this query and its filters. Add detail or check the index contents.'}</p>}</section>}
       {result.warnings?.map(warning => <p key={warning} role="status">{warning}</p>)}
-      {resultMatches.map(hit => <div className="resource-item" key={hit.release_unit_id}><strong>{hit.canonical_label || hit.release_unit_id}</strong><span>{[hit.dedup_family ? familyName(hit.dedup_family) : '', hit.primary_language, hit.primary_evidence_tier].filter(Boolean).join(' · ')}</span><p>{hit.retrieval_text}</p></div>)}<details><summary>{zh ? '查看完整结果' : 'View full result'}</summary><pre className="resource-detail">{JSON.stringify(detail, null, 2)}</pre></details></div>}</article>
+      {resultMatches.map(hit => <div className="resource-item" key={hit.release_unit_id}><strong>{hit.canonical_label || hit.release_unit_id}</strong><span>{[hit.dedup_family ? familyName(hit.dedup_family) : '', hit.primary_language, hit.primary_evidence_tier].filter(Boolean).join(' · ')}</span><p>{hit.retrieval_text}</p></div>)}<details><summary>{zh ? '查看完整结果' : 'View full result'}</summary>{linkedJob?.operation === 'reindex' ? <p>{zh ? '候选索引与进度见本页顶部的索引重建记录。' : 'The candidate index and progress are shown in the index rebuild record above.'}</p> : <pre className="resource-detail">{JSON.stringify(detail, null, 2)}</pre>}</details></div>}</article>
   </section>
 }

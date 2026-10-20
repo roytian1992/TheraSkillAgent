@@ -110,6 +110,12 @@ The unified workbench provides:
 
 All modules are managed by one local application process. Open `http://127.0.0.1:5176/`; the business modules do not need separate service startup commands.
 
+### Support responses and evidence
+
+The Support Assistant does not run a knowledge extraction job for every turn. Greetings, acknowledgements, and explicit product-navigation questions use a bounded lightweight route with normally one response-model call and no retrieval. A psychological question or a turn with safety context keeps the normal safety screen, skill routing, policy-aware retrieval, and grounded response flow. The public message shows whether retrieval was skipped or returned no usable evidence.
+
+When a response cites knowledge, open **Reference evidence** to read a structured entry. The drawer distinguishes the cited indexed passage from editable source fields, and links to the Knowledge & indexes workspace. A saved correction creates a revision-scoped draft; **Rebuild index** creates a durable candidate job. The immutable active index is never changed in place. Verify and evaluate the candidate before activation, and use the job link to resume or inspect a failed rebuild.
+
 ## Quick start
 
 Python 3.11 or newer is required. Node 22.12 or newer is required only when building the browser interface from a source checkout; a wheel installation already contains built assets.

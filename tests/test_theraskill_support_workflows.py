@@ -30,7 +30,12 @@ class _RiskEngine(SupportEngine):
             ),
             retrieval_report_path="/tmp/retrieval.json",
             retrieved_unit_ids=["unit-1"],
-            retrieval_summary={},
+            retrieval_summary={
+                "retrieval_mode": "hybrid_v3",
+                "hit_count": 1,
+                "source_index_id": "test-index",
+                "knowledge_sha256": "test-knowledge",
+            },
             model_config_id="test-model",
             prompt_release_id="test-prompt",
         )
@@ -54,6 +59,14 @@ def test_risk_response_creates_safety_state_and_follow_up_plan(tmp_path: Path) -
         idempotency_key="turn-1",
     )
     service.finalize_response(session.session_id, job_id=submitted.job_id)
+
+    generated = service.get_public(session.session_id, owner_id="user-1")
+    assert generated.messages[-1].retrieval_summary == {
+        "retrieval_mode": "hybrid_v3",
+        "hit_count": 1,
+        "source_index_id": "test-index",
+        "knowledge_sha256": "test-knowledge",
+    }
 
     updated = service.update_plan(
         session.session_id,
@@ -186,3 +199,21 @@ def test_retry_restores_expert_workflow_without_adding_another_user_turn(tmp_pat
     record = service.repository.get(session.session_id)
     assert record.workflow == 'response_review' and record.output_language == 'en'
     assert len(record.public.messages) == 1 and record.public.generation.status == 'pending'
+
+
+def test_public_message_excludes_private_retrieval_diagnostics(tmp_path):
+    class DiagnosticEngine(_RiskEngine):
+        def generate(self, record, job_id):
+            result = super().generate(record, job_id)
+            result.retrieval_summary.update(warnings=["private path /private/knowledge"], structured_filter={"internal": "metadata"}, timings={"internal": 1})
+            return result
+    service = _service(tmp_path)
+    service.engine = DiagnosticEngine()
+    session = service.create_session(owner_id="user")
+    submitted = service.submit_message(session.session_id, text="Synthetic question", owner_id="user", idempotency_key="private-diagnostics")
+    service.finalize_response(session.session_id, job_id=submitted.job_id)
+    record = service.repository.get(session.session_id)
+    assert "warnings" in record.turn_traces[-1].retrieval_summary
+    public = record.public.messages[-1].retrieval_summary
+    assert public["source_index_id"] == "test-index"
+    assert not ({"warnings", "structured_filter", "timings"} & public.keys())

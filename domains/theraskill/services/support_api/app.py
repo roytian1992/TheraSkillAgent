@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -32,6 +33,8 @@ from domains.theraskill.runtime import runtime_root
 from theraskill_agent.paths import active_release_id
 from domains.theraskill.observability import RequestMetrics
 from domains.theraskill.metrics_middleware import MetricsMiddleware
+from domains.theraskill.knowledge_editor import KnowledgeEditor, KnowledgeRevisionConflict, KnowledgeUnitNotFound
+from theraskill_agent import resource_jobs
 
 
 from theraskill_agent.paths import resource_root, resource_path
@@ -140,6 +143,26 @@ class SupportPlanRequest(BaseModel):
     goals: list[str] | None = Field(default=None, max_length=10)
     action_items: list[str] | None = Field(default=None, max_length=10)
     next_check_in_at: datetime | None = None
+
+
+class KnowledgeUnitUpdateRequest(BaseModel):
+    """A revision-guarded correction; the release itself remains immutable."""
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int | None = Field(default=None, ge=0)
+    expected_index_id: str | None = Field(default=None, min_length=1, max_length=128)
+    canonical_label: str | None = Field(default=None, min_length=1, max_length=100000)
+    summary: str | None = Field(default=None, max_length=100000)
+    applicable_context: str | list[str] | None = Field(default=None)
+    evidence_source: str | list[str] | None = Field(default=None)
+    allowed_use: str | list[str] | None = Field(default=None)
+    forbidden_use: str | list[str] | None = Field(default=None)
+    contraindications: str | list[str] | None = Field(default=None)
+
+
+class KnowledgeUnitReindexRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int | None = Field(default=None, ge=0)
+    expected_index_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class SafetyActionRequest(BaseModel):
@@ -315,6 +338,64 @@ def create_app(
             "knowledge_release_id": resolved.knowledge_release_id,
             "llm_engine_enabled": service.engine is not None,
         }
+
+    @app.get("/knowledge/{unit_id}")
+    def get_knowledge_unit(
+        unit_id: str,
+        index_id: str | None = Query(default=None, min_length=1, max_length=128),
+        _actor: tuple[str, str] = Depends(identity),
+    ) -> dict[str, Any]:
+        """Return source fields and a separately labelled indexed passage."""
+        try:
+            return KnowledgeEditor().get(unit_id, index_id=index_id)
+        except KnowledgeRevisionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except KnowledgeUnitNotFound as exc:
+            raise HTTPException(status_code=404, detail="knowledge unit not found") from exc
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.patch("/knowledge/{unit_id}")
+    def update_knowledge_unit(
+        unit_id: str,
+        request: KnowledgeUnitUpdateRequest,
+        actor: tuple[str, str] = Depends(identity),
+    ) -> dict[str, Any]:
+        _owner, role = actor
+        if role not in {"user", "researcher", "system"}:
+            raise HTTPException(status_code=403, detail="support knowledge editing is unavailable for this role")
+        if request.expected_revision is None or not request.expected_index_id:
+            raise HTTPException(status_code=428, detail="expected_revision and expected_index_id are required")
+        try:
+            values = request.model_dump(mode="json", exclude_none=True)
+            values.pop("expected_revision", None); values.pop("expected_index_id", None)
+            return KnowledgeEditor().update(unit_id, values, expected_revision=request.expected_revision, expected_index_id=request.expected_index_id)
+        except KnowledgeRevisionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except KnowledgeUnitNotFound as exc:
+            raise HTTPException(status_code=404, detail="knowledge unit not found") from exc
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/knowledge/{unit_id}/reindex", status_code=202)
+    def reindex_knowledge_unit(
+        unit_id: str,
+        request: KnowledgeUnitReindexRequest,
+        actor: tuple[str, str] = Depends(identity),
+    ) -> dict[str, Any]:
+        _owner, role = actor
+        if role not in {"user", "researcher", "system"}:
+            raise HTTPException(status_code=403, detail="support knowledge reindexing is unavailable for this role")
+        if request.expected_revision is None or not request.expected_index_id:
+            raise HTTPException(status_code=428, detail="expected_revision and expected_index_id are required")
+        try:
+            return KnowledgeEditor().submit_reindex(unit_id, expected_revision=request.expected_revision, expected_index_id=request.expected_index_id)
+        except KnowledgeRevisionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except KnowledgeUnitNotFound as exc:
+            raise HTTPException(status_code=404, detail="knowledge unit not found") from exc
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/sessions", status_code=201)
     def create_session(

@@ -24,27 +24,41 @@ def normalize_text(value: Any) -> str:
     return " ".join(text.split())
 
 
+def effective_content(row: dict[str, Any]) -> dict[str, Any]:
+    content = dict(row.get('content') or {})
+    registry = dict(content.get('registry_fields') or {})
+    edits = (row.get('_theraskill_editor') or {}).get('fields') or {}
+    for key, value in edits.items():
+        if key in {'canonical_label', 'summary', 'evidence_source'}:
+            content[key] = value
+        elif key in {'applicable_context', 'allowed_use', 'forbidden_use', 'contraindications'}:
+            registry[key] = value
+    content['registry_fields'] = registry
+    return content
+
+
+def _text(value: Any) -> str:
+    if isinstance(value, list): return ' '.join(_text(item) for item in value)
+    if isinstance(value, dict): return ' '.join(_text(item) for item in value.values())
+    return normalize_text(value)
+
+
 def build_retrieval_text(row: dict[str, Any]) -> str:
-    content = row.get("content") or {}
-    rep = content.get("representative_text_ref") or {}
-    parts = [
-        content.get("canonical_label"),
-        content.get("summary"),
-        content.get("source_faithfulness_notes"),
-        rep.get("dedup_text_preview"),
-    ]
-    registry_fields = content.get("registry_fields") or {}
-    for key in [
-        "shared_question_or_need",
-        "shared_answer_intent",
-        "shared_intent",
-        "shared_pattern",
-        "clinical_boundary_notes",
-        "next_review_gate",
-    ]:
-        if registry_fields.get(key):
-            parts.append(registry_fields.get(key))
-    return normalize_text(" ".join(str(part) for part in parts if part))
+    content = effective_content(row)
+    rep = content.get('representative_text_ref') or {}
+    edits = (row.get('_theraskill_editor') or {}).get('fields') or {}
+    parts = [content.get('canonical_label'), content.get('summary'), content.get('evidence_source')]
+    # Preserve source exemplars for audit, but don't reintroduce a corrected
+    # semantic description through its old shared_intent or text preview.
+    keys = []
+    if 'summary' not in edits:
+        parts.extend([content.get('source_faithfulness_notes'), rep.get('dedup_text_preview')])
+        keys.extend(['shared_question_or_need', 'shared_answer_intent', 'shared_intent', 'shared_pattern'])
+    keys.extend(['clinical_boundary_notes', 'next_review_gate', 'applicable_context',
+                 'evidence_source', 'allowed_use', 'forbidden_use', 'contraindications'])
+    registry = content.get('registry_fields') or {}
+    parts.extend(registry.get(key) for key in keys)
+    return normalize_text(' '.join(_text(part) for part in parts if part))
 
 
 def infer_risk_scope(row: dict[str, Any], retrieval_text: str) -> str:
@@ -75,7 +89,7 @@ def retrieval_row(row: dict[str, Any], line_no: int) -> dict[str, Any]:
     policy = row.get("retrieval_policy") or {}
     retrieval_text = build_retrieval_text(row)
     release_unit_id = str(row.get("release_unit_id") or "")
-    content = row.get("content") or {}
+    content = effective_content(row)
     rep = content.get("representative_text_ref") or {}
     family = str(row.get("dedup_family") or "unknown")
     return {

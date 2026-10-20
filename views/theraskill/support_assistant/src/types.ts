@@ -4,6 +4,8 @@ export type MessageRole = 'user' | 'assistant'
 
 export interface EvidenceSummary {
   source_id?: string
+  /** Stable release unit id used to open the governed knowledge entry. */
+  unit_id?: string
   dataset?: string
   excerpt?: string
   label: string
@@ -14,6 +16,20 @@ export interface EvidenceSummary {
   boundary?: string
   updated_at?: string
   inference?: string
+  editor_url?: string
+  index_id?: string
+  source_index_id?: string
+  knowledge_sha256?: string
+}
+
+/** Public retrieval status for one assistant turn; no report paths or raw text. */
+export interface RetrievalSummary {
+  retrieval_mode?: string
+  retrieval_skipped?: boolean
+  skip_reason?: string | null
+  hit_count?: number
+  source_index_id?: string | null
+  knowledge_sha256?: string | null
 }
 
 export interface SupportMessage {
@@ -25,6 +41,7 @@ export interface SupportMessage {
   presentation_mode: string
   structured_content: Record<string, unknown>
   evidence_summary: EvidenceSummary[]
+  retrieval_summary: RetrievalSummary
   created_at: string
 }
 

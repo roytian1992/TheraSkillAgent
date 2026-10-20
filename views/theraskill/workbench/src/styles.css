@@ -81,6 +81,8 @@
 .home-main .task-history{max-height:300px}
 .home-main .panel-actions{display:flex;justify-content:flex-end;margin-top:12px}
 .home-main .panel-actions .secondary-action{font-size:12px;padding:7px 10px}
+
+.knowledge-unit-editor{max-width:1120px;margin:0 auto;padding:24px 28px 48px}.knowledge-unit-editor .workspace-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px}.knowledge-unit-editor .workspace-status{font-size:11px;color:#63796d}@media(max-width:650px){.knowledge-unit-editor{padding:16px 14px 36px}}
 @media(max-width:900px){.home-main{padding:0 22px}.home-main .setup-checklist .resource-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.home-main .service-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.home-main{padding:0 16px}.home-main .hero{padding-top:30px}.home-main .hero h1{font-size:34px}.home-main .hero-actions{margin-top:18px}.home-main .link-grid,.home-main .service-grid,.home-main .setup-checklist .resource-grid{grid-template-columns:1fr}.home-main .columns{grid-template-columns:1fr}.home-main .setup-checklist{padding:16px}.home-main .setup-checklist .resource-grid article{min-height:0}}
 

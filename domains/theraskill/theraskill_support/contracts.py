@@ -99,6 +99,11 @@ class SupportMessage(ContractModel):
     presentation_mode: str = "conversation"
     structured_content: dict[str, Any] = Field(default_factory=dict)
     evidence_summary: list[dict[str, str]] = Field(default_factory=list)
+    # Public, bounded retrieval status for the assistant message. This never
+    # contains report paths, prompts, or raw knowledge text; it lets the UI
+    # distinguish a deliberate fast-path skip from a completed search with no
+    # usable evidence.
+    retrieval_summary: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
 
 

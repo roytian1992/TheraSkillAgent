@@ -191,3 +191,20 @@ needed. Large sources can be supplied by local path. The `theraskill_resources`
 tool and `knowledge-index-manager` skill use the same job implementation.
 
 Simulation assets can also be packaged with `knowledge pack --kind simulation`; a `.zip` output uses ZIP64. See [Resource installation](resource_installation.en.md). Workbench search uses production retrieval; CLI `index search --runtime` selects that same path. Default CLI search remains a model-free index diagnostic. Required-family anchors survive final result selection, and missing families remain explicit warnings without violating source filters.
+
+## Inspect and edit cited knowledge
+
+Open **Reference evidence** on a support response to read its knowledge entry. Text, sources, context and boundaries appear as structured sections; nested values use groups and lists. New responses retain the index identity used for retrieval, so an installed historical index can still provide the original citation after activation changes. When the original knowledge package is unavailable, the view identifies the indexed passage it can show.
+
+The editing flow is: open evidence → **Open knowledge workspace** → edit and save a draft → rebuild → verify, evaluate and activate the candidate. The draft and cited content are displayed separately. Saving does not alter a historical response or immediately change active retrieval. Stale concurrent saves report a conflict so the changes can be compared with a fresh revision.
+
+Rebuilds are background resource jobs whose progress survives a page reload. Failed or interrupted jobs can be retried. Each job fixes its source, edit revision and embedding identity. Lexical rebuilds need no model; hybrid rebuilds use the separately configured embedding service. An edit currently builds a complete candidate index, not just one vector. A large release can take time and issue embedding requests. Candidate verification, behavior evaluation and activation use the existing workflow.
+
+The first visit to an entry from a large source prepares a checksum-bound lookup catalog in the background. The indexed passage remains available during preparation. Once ready, original fields are read by record offset instead of scanning the whole JSONL on every visit. Source changes invalidate that catalog.
+
+Alongside source packages, indexes and active selections, back up:
+
+- `data/theraskill/knowledge/edits.json` for drafts scoped to the source and index;
+- `data/theraskill/knowledge/edit-snapshots` and `reindex-work` for fixed edits and materialized sources;
+- `state/resource-jobs` for durable resource jobs;
+- `data/theraskill/knowledge/source-catalog`, a regenerable source lookup cache.
