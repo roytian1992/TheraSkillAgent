@@ -1,6 +1,7 @@
 """Learning routes attached to the existing simulation API."""
 from fastapi import APIRouter,Depends,HTTPException
-from pydantic import BaseModel,Field
+from pydantic import BaseModel,Field,ConfigDict,StrictFloat,StrictInt,StrictBool
+from typing import Literal
 from .contracts import ActorRole,SessionMode,SessionLanguage
 
 
@@ -14,11 +15,30 @@ class PracticeRequest(BaseModel):
     request_id:str=Field(min_length=1,max_length=160)
 
 
+class BehaviorObservation(BaseModel):
+    """One teacher observation of one configured course behaviour."""
+    model_config = ConfigDict(extra='forbid')
+    behavior: str = Field(min_length=1, max_length=500)
+    status: Literal['observed', 'not_observed', 'not_applicable']
+    score: StrictFloat | StrictInt | None = Field(default=None, ge=1, le=5)
+    note: str = Field(default='', max_length=2000)
+
+
 class ReviewRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     decision:str
-    ratings:dict[str,float]=Field(default_factory=dict)
+    ratings:dict[str,StrictFloat|StrictInt]=Field(default_factory=dict)
     comment:str=Field(min_length=1)
     reviewer:str=Field(min_length=1)
+    safety_issue: StrictBool = False
+    performance_level:str=Field(default='guided', pattern='^(guided|independent)$')
+    transfer_context:str=Field(default='', max_length=500)
+    evidence_unit_ids:list[str]=Field(default_factory=list, max_length=30)
+    behavior_observations:dict[str,list[BehaviorObservation]]=Field(default_factory=dict, max_length=32)
+
+
+class ReflectionRequest(BaseModel):
+    reflection:str=Field(default='', max_length=2000)
 
 
 def create_learning_router(learning,service,caller_role):
@@ -59,6 +79,16 @@ def create_learning_router(learning,service,caller_role):
     @router.post('/learning/attempts/{attempt_id}/review',status_code=201)
     def review(attempt_id:str,body:ReviewRequest,role:ActorRole=Depends(caller_role)):
         if role!=ActorRole.INSTRUCTOR:raise HTTPException(403,'Instructor role is required')
-        return execute(lambda:learning.review(attempt_id,body.decision,body.ratings,body.comment,body.reviewer))
+        return execute(lambda:learning.review(attempt_id,body.decision,body.ratings,body.comment,body.reviewer,
+                                               performance_level=body.performance_level,transfer_context=body.transfer_context,
+                                               evidence_unit_ids=body.evidence_unit_ids,safety_issue=body.safety_issue,
+                                               behavior_observations={key:[item.model_dump(mode='json') for item in value]
+                                                                     for key,value in body.behavior_observations.items()}))
+
+    @router.post('/learning/attempts/{attempt_id}/reflection')
+    def reflection(attempt_id:str,body:ReflectionRequest,role:ActorRole=Depends(caller_role)):
+        if role not in {ActorRole.HUMAN_THERAPIST, ActorRole.INSTRUCTOR}:
+            raise HTTPException(403,'Learner or instructor role is required')
+        return execute(lambda:learning.save_reflection(attempt_id,body.reflection))
 
     return router

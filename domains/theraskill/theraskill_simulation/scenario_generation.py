@@ -10,7 +10,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .patient_builder import PatientDossier, compile_patient, dossier_from_bundle, public_role_card, save_bundle_version
 from .generation_workflow import generation_checkpoint, fingerprint, model_signature, implementation_signature
 
@@ -39,7 +39,7 @@ class ScenarioForkRequest(BaseModel):
 
 
 class ScenarioGenerationBatchRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     course_title: str = Field(min_length=1, max_length=200)
     course_description: str = Field(default="", max_length=1200)
@@ -52,6 +52,24 @@ class ScenarioGenerationBatchRequest(BaseModel):
     language: str = "zh"
     scenario_tags: list[str] = Field(default_factory=list)
     constraints: str = Field(default="", max_length=2000)
+    # Optional course metadata travels with the resumable batch job. It is
+    # copied back only after every generated case has been human-approved.
+    template_id: str | None = None
+    competency_ids: list[str] = Field(default_factory=list, max_length=12)
+    scaffolding: list[str] = Field(default_factory=list, max_length=12)
+    learning_units: dict[str, Any] = Field(default_factory=dict)
+    learning_objectives: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
+    knowledge_references: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
+    design_retrieval: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_teaching_content(self):
+        from .course_content import normalize_course_content
+        content = normalize_course_content(self.learning_objectives, self.learning_units, self.knowledge_references)
+        self.learning_objectives = content["learning_objectives"]
+        self.learning_units = content["learning_units"]
+        self.knowledge_references = content["knowledge_references"]
+        return self
 
 
 class ScenarioDraftUpdateRequest(BaseModel):

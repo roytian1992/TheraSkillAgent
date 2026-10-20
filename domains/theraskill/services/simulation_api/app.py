@@ -204,15 +204,41 @@ class TrainingAssignmentRequest(BaseModel):
 
 
 class TrainingCourseRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    title: str = Field(min_length=1)
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=200)
     description: str = ""
     skill_tags: list[str] = Field(default_factory=list)
     scenario_ids: list[str] = Field(default_factory=list)
     difficulty_path: list[str] = Field(default_factory=list)
     completion_review_gate: str = "pass"
-    learning_objectives: list[dict[str, str]] = Field(default_factory=list)
+    learning_objectives: list[dict[str, Any]] = Field(default_factory=list)
+    template_id: str | None = None
+    competency_ids: list[str] = Field(default_factory=list)
+    scaffolding: list[str] = Field(default_factory=list)
+    learning_units: dict[str, Any] = Field(default_factory=dict)
+    knowledge_references: list[dict[str, Any]] = Field(default_factory=list)
+    design_retrieval: dict[str, Any] = Field(default_factory=dict)
     require_instructor_review: bool = True
+
+
+class CourseBlueprintRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    template_id: str = Field(default="foundation_first_session", min_length=2, max_length=80)
+    title: str | None = Field(default=None, max_length=160)
+    target_level: Literal["orientation", "guided", "independent", "transfer"] = "guided"
+    competency_ids: list[str] = Field(default_factory=list, max_length=8)
+    scenario_count: int = Field(default=3, ge=1, le=12)
+    scenario_family: str = Field(default="supportive_exploration", max_length=120)
+    difficulty_band: str = Field(default="low", max_length=40)
+    risk_band: str = Field(default="low", max_length=40)
+    language: str = Field(default="zh", pattern="^(zh|en)$")
+
+
+class CourseFromBatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    batch_id: str = Field(min_length=1, max_length=120)
+    title: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=1200)
 
 
 class ResponseComparisonRequest(BaseModel):
@@ -271,6 +297,7 @@ def create_app(
     comparison_engine: ResponseComparisonEngine | None = None,
     scenario_generator: ScenarioGenerator | None = None,
     contribution_client_override: ContributionClient | None = None,
+    learning_judge_factory=None,
 ) -> FastAPI:
     resolved = settings or SimulationAPISettings()
     repository = SQLiteSessionRepository(resolved.database_path)
@@ -405,7 +432,14 @@ def create_app(
                 "course_draft": {"title": request.course_title, "description": request.course_description,
                                  "skill_tags": request.skill_tags,
                                  "scenario_ids": [str(row["scenario_id"]) for row in persisted],
-                                 "batch_id": batch_id, "review_required": True},
+                                 "batch_id": batch_id, "review_required": True,
+                                 "template_id": request.template_id,
+                                 "competency_ids": request.competency_ids,
+                                 "scaffolding": request.scaffolding,
+                                 "learning_units": request.learning_units,
+                                 "learning_objectives": request.learning_objectives,
+                                 "knowledge_references": request.knowledge_references,
+                                 "design_retrieval": request.design_retrieval},
             }
 
         if report_progress:
@@ -463,6 +497,7 @@ def create_app(
                 await asyncio.gather(task, return_exceptions=True)
             batch_job_store.shutdown()
             generation_job_store.shutdown()
+            learning_practice.shutdown()
 
     app = FastAPI(
         title="TheraSkill Simulation API",
@@ -861,11 +896,81 @@ def create_app(
             raise HTTPException(status_code=503, detail="online scenario generator is unavailable")
         return batch_job_store.create(request.model_dump(mode="json"), x_simulation_user.strip() or "local-user")
 
+    def batch_handoff_state(job: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Reconcile the generated snapshot with current artifacts before reuse."""
+        from domains.theraskill.theraskill_simulation.course_generation import _actual_cases, _validate_coverage
+        from domains.theraskill.theraskill_simulation.generation_workflow import fingerprint
+
+        batch_id = str(job["job_id"])
+        result = job.get("result") or {}
+        draft = result.get("course_draft") or {}
+        expected = (job.get("request") or {}).get("count")
+        rows = registry.generated_for_batch(batch_id)
+        reasons: list[str] = []
+        ids = draft.get("scenario_ids") or []
+        snapshot = result.get("scenarios") or []
+        valid_count = isinstance(expected, int) and not isinstance(expected, bool) and 1 <= expected <= 12
+        ids_valid = isinstance(ids, list) and all(isinstance(value, str) and value.strip() for value in ids)
+        current_ids = [row.get("scenario_id") for row in rows]
+        indices = [row.get("batch_index") for row in rows]
+        index_valid = all(isinstance(value, int) and not isinstance(value, bool) for value in indices)
+        snapshot_valid = isinstance(snapshot, list) and all(isinstance(row, dict) for row in snapshot)
+        membership_ok = bool(valid_count and ids_valid and snapshot_valid and index_valid
+            and len(ids) == len(set(ids)) == len(rows) == len(snapshot) == expected
+            and len(set(current_ids)) == expected
+            and set(ids) == set(current_ids) == {row.get("scenario_id") for row in snapshot}
+            and sorted(indices) == list(range(1, expected + 1))
+            and result.get("batch_id") == draft.get("batch_id") == batch_id
+            and result.get("count") == expected
+            and all(row.get("batch_size") == expected and row.get("generated") is True for row in rows)
+            and all(row.get("batch_id") == batch_id for row in snapshot))
+        if not membership_ok:
+            reasons.append("batch_membership_incomplete")
+        rows.sort(key=lambda row: row.get("batch_index") if isinstance(row.get("batch_index"), int) else 999)
+        approved = membership_ok and all(row.get("review_status") == "approved" for row in rows)
+        if not approved:
+            reasons.append("scenario_approval_required")
+        coverage = result.get("course_review") or {}
+        plan = result.get("course_plan") or {}
+        coverage_current = False
+        if membership_ok and coverage.get("status") == "pass":
+            actual, problems = _actual_cases(rows)
+            coverage_current = bool(not problems and coverage.get("expected_cases") == expected
+                and coverage.get("actual_cases") == expected
+                and coverage.get("actual_artifact_sha256") == fingerprint(actual)
+                and coverage.get("plan_sha256") == fingerprint(plan)
+                and (coverage.get("deterministic_checks") or {}).get("status") == "pass")
+            if coverage_current:
+                try:
+                    semantic = _validate_coverage(coverage.get("semantic_review"), plan, actual)
+                    coverage_current = semantic["status"] == "pass"
+                except (ValueError, TypeError, KeyError):
+                    coverage_current = False
+        if not coverage_current:
+            reasons.append("coverage_review_required")
+        if job.get("status") != "completed":
+            reasons.append("generation_incomplete")
+        course_id = f"course_batch_{hashlib.sha256(batch_id.encode()).hexdigest()[:24]}"
+        saved = training_repository.get_course(course_id)
+        return {"ready": not reasons, "reasons": reasons, "expected_count": expected,
+                "current_count": len(rows), "approved_count": sum(row.get("review_status") == "approved" for row in rows),
+                "coverage_current": coverage_current, "course_id": saved.course_id if saved else None}, rows
+
+    def live_batch_job(job: dict[str, Any]) -> dict[str, Any]:
+        # Never mutate the persisted generation snapshot from a read endpoint.
+        handoff, rows = batch_handoff_state(job)
+        result = dict(job.get("result") or {})
+        if result:
+            result["scenarios"] = [scenario_public_digest(row, include_review_details=True) for row in rows]
+            if (result.get("course_review") or {}).get("status") == "pass" and not handoff["coverage_current"]:
+                result["course_review"] = {**result["course_review"], "status": "needs_review", "stale": True}
+        return {**job, "result": result or None, "course_handoff": handoff}
+
     @app.get("/scenarios/generate-batch/jobs")
     def list_scenario_batch_jobs(role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
         if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
             raise HTTPException(status_code=403, detail="batch jobs require instructor or researcher role")
-        return {"jobs": batch_job_store.list()}
+        return {"jobs": [live_batch_job(job) for job in batch_job_store.list()]}
 
     @app.get("/scenarios/generate-batch/jobs/{job_id}")
     def get_scenario_batch_job(job_id: str, role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
@@ -874,14 +979,17 @@ def create_app(
         job = batch_job_store.get(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="scenario batch job not found")
-        return job
+        return live_batch_job(job)
 
     @app.post("/scenarios/generate-batch/jobs/{job_id}/retry")
     def retry_scenario_batch_job(job_id: str, role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
         if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
             raise HTTPException(status_code=403, detail="batch scenario generation requires instructor or researcher role")
         try:
-            job = batch_job_store.retry(job_id)
+            existing = batch_job_store.get(job_id)
+            recheck = bool(existing and existing.get("status") == "completed"
+                           and not batch_handoff_state(existing)[0]["coverage_current"])
+            job = batch_job_store.retry(job_id, recheck_completed=recheck)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if not job:
@@ -1239,6 +1347,20 @@ def create_app(
     from domains.theraskill.theraskill_simulation.learning_api import create_learning_router
     learning = LearningService(training_repository, service)
     app.include_router(create_learning_router(learning, service, caller_role))
+    from domains.theraskill.theraskill_simulation.learning_judge import LearningJudge
+    from domains.theraskill.theraskill_simulation.learning_practice import LearningPracticeService, create_practice_router, learning_evaluation_signature
+    from domains.theraskill.theraskill_simulation.course_content import normalize_course_content
+    learning_practice = LearningPracticeService(
+        learning,
+        learning_judge_factory or (lambda: LearningJudge(
+            resolved.project_root, resolved.model_config_path, resolved.extraction_config_path)),
+        resolved.generated_batch_work_root.parent / (resolved.database_path.stem + "_learning_judge_jobs"),
+        evaluation_signature=(lambda: {}) if learning_judge_factory else
+            (lambda: learning_evaluation_signature(resolved.model_config_path, resolved.extraction_config_path)),
+    )
+    app.state.learning_service = learning
+    app.state.learning_practice = learning_practice
+    app.include_router(create_practice_router(learning_practice, caller_role))
 
     @app.get("/courses")
     def list_courses(
@@ -1248,6 +1370,89 @@ def create_app(
             raise HTTPException(status_code=403, detail="instructor or researcher role is required")
         rows = training_repository.list_courses()
         return {"count": len(rows), "courses": [row.model_dump(mode="json") for row in rows]}
+
+    @app.post("/courses/blueprint")
+    def course_blueprint(
+        request: CourseBlueprintRequest,
+        role: ActorRole = Depends(caller_role),
+    ) -> dict[str, Any]:
+        """Give an instructor an editable, knowledge-aware course starter.
+
+        Course creation remains explicit and human controlled.  This endpoint
+        only proposes objectives and case briefs, then reports the release and
+        evidence used to make the proposal.
+        """
+        if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
+            raise HTTPException(status_code=403, detail="course blueprint requires instructor or researcher role")
+        from domains.theraskill.theraskill_simulation.pedagogy import (
+            DEFAULT_COMPETENCIES, DEFAULT_TEMPLATES, design_course_seed,
+        )
+        try:
+            from plugins.theraskill.retrieval import search_managed_knowledge
+        except Exception:
+            search_managed_knowledge = None
+        references: list[dict[str, Any]] = []
+        retrieval: dict[str, Any] = {"status": "unavailable", "skill": "therapy-response-reviewer"}
+        if search_managed_knowledge:
+            selected_template = next((item for item in DEFAULT_TEMPLATES if item.template_id == request.template_id), None)
+            selected_competencies = request.competency_ids or (selected_template.recommended_competencies if selected_template else [])
+            queries = [query for competency in DEFAULT_COMPETENCIES
+                       if competency.competency_id in selected_competencies
+                       for query in competency.knowledge_queries[:1]]
+            try:
+                found = search_managed_knowledge(" ".join(queries), skill="therapy-response-reviewer", limit=6) if queries else None
+                if found:
+                    retrieval = {"status": "grounded" if found.get("matches") else "no_matches",
+                                 "skill": "therapy-response-reviewer", "release_id": found.get("release_id"),
+                                 "retrieval_mode": found.get("retrieval_mode"),
+                                 "index_id": found.get("index_id"), "knowledge_sha256": found.get("knowledge_sha256"),
+                                 "warnings": found.get("warnings") or []}
+                    references.extend(found.get("matches") or [])
+            except Exception as exc:
+                retrieval = {"status": "unavailable", "skill": "therapy-response-reviewer", "reason": type(exc).__name__}
+        try:
+            seed = design_course_seed(
+                template_id=request.template_id, title=request.title,
+                target_level=request.target_level, competency_ids=request.competency_ids,
+                scenario_count=request.scenario_count, scenario_family=request.scenario_family,
+                difficulty_band=request.difficulty_band, risk_band=request.risk_band,
+                knowledge_units=references, language=request.language, competencies=DEFAULT_COMPETENCIES, templates=DEFAULT_TEMPLATES,
+            ).model_dump(mode="json")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        seed["retrieval"] = retrieval
+        seed["generation_payload"] = {
+            "course_title": seed["title"],
+            "course_description": seed["description"],
+            "skill_tags": seed["competency_ids"],
+            "brief": "；".join(str(item["description"]) for item in seed["objectives"]),
+            "count": seed["scenario_constraints"]["count"],
+            "scenario_family": seed["scenario_constraints"].get("scenario_family") or "supportive_exploration",
+            "difficulty_band": seed["scenario_constraints"].get("difficulty_band") or "low",
+            "risk_band": seed["scenario_constraints"].get("risk_band") or "low",
+            "language": request.language,
+            "scenario_tags": seed["scenario_constraints"].get("scenario_tags", []),
+            "constraints": "；".join(
+                f"{item['id']}: {item['description']}；可观察行为：{'、'.join(item.get('observable_behaviors') or [])}"
+                for item in seed["objectives"]
+            ),
+            "template_id": seed["template_id"],
+            "competency_ids": seed["competency_ids"],
+            "scaffolding": seed["scaffolding"],
+            "learning_units": {"knowledge_cards": seed.get("knowledge_cards", []), "micro_practices": seed.get("micro_practices", [])},
+            "learning_objectives": seed["objectives"],
+            "knowledge_references": seed["knowledge_references"],
+            "design_retrieval": retrieval,
+        }
+        from domains.theraskill.theraskill_simulation.pedagogy_content import localize_catalog
+        _, localized_templates = localize_catalog(DEFAULT_COMPETENCIES, DEFAULT_TEMPLATES, request.language)
+        seed["templates"] = [{"template_id": item.template_id, "title": item.title,
+                              "description": item.description, "stage": item.stage,
+                              "recommended_competencies": item.recommended_competencies,
+                              "recommended_case_tags": item.recommended_case_tags,
+                              "scaffolding": item.scaffolding, "completion_policy": item.completion_policy}
+                             for item in localized_templates]
+        return seed
 
     @app.post("/courses", status_code=201)
     def add_course(
@@ -1270,9 +1475,10 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"unknown scenarios: {missing}")
         if unapproved:
             raise HTTPException(status_code=422, detail=f"generated scenarios require approval before course creation: {unapproved}")
-        objective_ids = [str(o.get("id") or "").strip() for o in request.learning_objectives]
-        if request.learning_objectives and (not all(objective_ids) or len(set(objective_ids)) != len(objective_ids) or any(not str(o.get("description") or "").strip() for o in request.learning_objectives)):
-            raise HTTPException(422, "Learning objectives need unique IDs and descriptions")
+        try:
+            content = normalize_course_content(request.learning_objectives, request.learning_units, request.knowledge_references)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
         course = TrainingCourse(
             course_id=f"course_{uuid.uuid4().hex}",
             title=request.title.strip(),
@@ -1281,10 +1487,75 @@ def create_app(
             scenario_ids=list(dict.fromkeys(request.scenario_ids)),
             difficulty_path=[band.strip() for band in request.difficulty_path if band.strip()],
             completion_review_gate=request.completion_review_gate.strip() or "pass",
-            learning_objectives=request.learning_objectives,
+            learning_objectives=content["learning_objectives"],
+            template_id=request.template_id,
+            competency_ids=list(dict.fromkeys(request.competency_ids)),
+            scaffolding=list(dict.fromkeys(request.scaffolding)),
+            learning_units=content["learning_units"],
+            knowledge_references=content["knowledge_references"],
+            design_retrieval=request.design_retrieval,
             require_instructor_review=request.require_instructor_review,
         )
         training_repository.add_course(course)
+        return course.model_dump(mode="json")
+
+    @app.post("/courses/from-batch", status_code=201)
+    def course_from_batch(
+        request: CourseFromBatchRequest,
+        role: ActorRole = Depends(caller_role),
+    ) -> dict[str, Any]:
+        """Create a course from a completed, human-approved batch.
+
+        A generation result is only a draft. This endpoint is the explicit
+        handoff after scenario governance, so unapproved or incomplete cases
+        can never silently enter a learner assignment.
+        """
+        if role != ActorRole.INSTRUCTOR:
+            raise HTTPException(status_code=403, detail="course creation requires instructor role")
+        job = batch_job_store.get(request.batch_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="scenario batch job not found")
+        if job.get("status") != "completed":
+            raise HTTPException(status_code=409, detail="scenario batch must finish before it can become a course")
+        result = job.get("result") or {}
+        draft = result.get("course_draft") or {}
+        handoff, rows = batch_handoff_state(job)
+        if not handoff["ready"]:
+            raise HTTPException(status_code=422, detail={"message": "Course batch is not ready for assignment", **handoff})
+        scenario_ids = [str(row["scenario_id"]) for row in rows]
+        objectives = list(draft.get("learning_objectives") or [])
+        if not objectives:
+            objectives = [{"id": str(tag), "description": str(tag)} for tag in draft.get("skill_tags") or []]
+        if not objectives:
+            raise HTTPException(status_code=422, detail="batch course needs valid learning objectives")
+        if request.title is not None and not request.title.strip():
+            raise HTTPException(status_code=422, detail="course title must not be empty")
+        from domains.theraskill.theraskill_simulation.course_content import normalize_course_content
+        try:
+            content = normalize_course_content(objectives, draft.get("learning_units") or {}, draft.get("knowledge_references") or [])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        course_id = f"course_batch_{hashlib.sha256(request.batch_id.encode()).hexdigest()[:24]}"
+        course = TrainingCourse(
+            course_id=course_id,
+            title=(request.title or draft.get("title") or "Generated practice course").strip(),
+            description=(request.description if request.description is not None else draft.get("description") or "").strip(),
+            skill_tags=list(dict.fromkeys(str(value).strip() for value in draft.get("skill_tags") or [] if str(value).strip())),
+            scenario_ids=scenario_ids,
+            learning_objectives=content["learning_objectives"],
+            template_id=draft.get("template_id"),
+            competency_ids=list(dict.fromkeys(draft.get("competency_ids") or [])),
+            scaffolding=list(dict.fromkeys(draft.get("scaffolding") or [])),
+            learning_units=content["learning_units"],
+            knowledge_references=content["knowledge_references"],
+            design_retrieval=dict(draft.get("design_retrieval") or {}),
+            require_instructor_review=True,
+            created_at=job["created_at"],
+        )
+        try:
+            training_repository.add_course(course)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="This batch has already been saved with different course content") from exc
         return course.model_dump(mode="json")
 
     @app.delete("/courses/{course_id}")

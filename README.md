@@ -47,6 +47,12 @@ Every step can be started from the browser workbench, CLI, or a skill. When a ta
 | **Expert review** | Therapist responses, conversations, knowledge candidates, or skill drafts | Structured evaluations, evidence citations, quality findings, duplicate checks, and release gates |
 | **Courses and evaluation** | Course goals, scenario sets, learner attempts, and instructor feedback | Batch scenarios, practice records, debriefs, behavioral evaluations, regression cases, and learning progress |
 
+## From course preparation to practice
+
+In **Courses and learning progress**, start from a bilingual teaching template, adapt its objectives and knowledge cards, and assign approved simulated cases. Learners practise short responses before full sessions, save their reflections, and receive feedback tied to their own dialogue.
+
+The configured LLM judges one objective at a time using the course rubric and relevant retrieved knowledge. Source quotes are checked, unobserved behaviours remain unscored, and instructors record their decisions separately. Progress keeps track of support conditions, case difficulty and rubric versions. See the [teaching and learning guide](docs/learning.en.md).
+
 ## Why an agent and skills are useful here
 
 Psychotherapy training is not a one-shot text-generation problem:

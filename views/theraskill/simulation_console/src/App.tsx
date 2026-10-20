@@ -38,7 +38,7 @@ import {
   addAnnotation,
   generatePatientOpening,
   generateScenarioBatch,
-  getBatchJob, listBatchJobs, retryBatchJob, retrySessionUpdate, retrySessionReview,
+  getBatchJob, listBatchJobs, retryBatchJob, createCourseFromBatch, retrySessionUpdate, retrySessionReview,
   getSession,
   health,
   listScenarios,
@@ -387,6 +387,12 @@ export default function App() {
     setScenarios(current => [row, ...current.filter(item => item.scenario_id !== row.scenario_id)])
     setSelected(row)
     setTrainingMode('human_therapist_vs_patient')
+    void refreshBatch()
+  }
+
+  async function refreshBatch() {
+    if (!batchJob || !['instructor', 'researcher'].includes(role)) return
+    try { setBatchJob(await getBatchJob(role, batchJob.job_id)) } catch (err) { setError(String(err)) }
   }
 
   async function saveGeneratedDraft() {
@@ -404,6 +410,7 @@ export default function App() {
       setScenarios((rows) => rows.map((row) => row.scenario_id === result.scenario.scenario_id ? result.scenario : row))
       setSelected(result.scenario)
       setDraftEditOpen(false)
+      await refreshBatch()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -425,6 +432,7 @@ export default function App() {
       setSelected(result.scenario)
       setReviewReason('')
       setOverrideModelReview(false)
+      await refreshBatch()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -440,6 +448,7 @@ export default function App() {
       setSelected(result.scenario)
       setScenarios(rows => rows.map(row => row.scenario_id === result.scenario.scenario_id ? result.scenario : row))
       setOverrideModelReview(false)
+      await refreshBatch()
     } catch (err) { setError(String(err)) } finally { setGovernanceBusy(false) }
   }
 
@@ -464,6 +473,17 @@ export default function App() {
   async function retryBatch() {
     if (!batchJob) return
     try { setBatchJob(await retryBatchJob(role, batchJob.job_id)) } catch (err) { setError(String(err)) }
+  }
+  async function saveBatchAsCourse() {
+    if (!batchJob || batchJob.status !== 'completed') return
+    setBatchBusy(true); setError('')
+    try {
+      await createCourseFromBatch(role, batchJob.job_id)
+      await refreshBatch()
+      setBatchNotice(locale === 'zh' ? tr('已将已审核场景保存为课程，现在可以在课程与学习进展中分配。') : 'The approved cases are now a course. Assign it from Courses and learning progress.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally { setBatchBusy(false) }
   }
   async function recoverSession(kind: 'update' | 'review') {
     if (!session) return
@@ -880,6 +900,47 @@ export default function App() {
           {!activeSession ? (
             <section className="scenario-detail">
               {canGenerateOnline && <PatientBuilder role={role} language={locale} onSaved={acceptPatientScenario} />}
+                  {canGenerateOnline && !session && (
+                    <section className="detail-band online-generation-band">
+                      <div className="batch-generator">
+                        <h3>{tr("批量生成课程场景")}</h3>
+                        <input value={batchTitle} onChange={(event) => setBatchTitle(event.target.value)} placeholder={tr("课程标题")} maxLength={200} />
+                        <textarea value={batchBrief} onChange={(event) => setBatchBrief(event.target.value)} placeholder={tr("课程目标或共同训练主题（至少 8 个字）")} rows={2} maxLength={1200} />
+                        <div className="batch-generator-row"><input type="number" min={1} max={12} value={batchCount} onChange={(event) => setBatchCount(Number(event.target.value) || 1)} /><button className="secondary-button" onClick={() => void runBatchGeneration()} disabled={batchBusy || batchBrief.trim().length < 8 || !batchTitle.trim()}>{batchBusy ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}{tr("生成课程批次")}</button></div>
+                        {batchNotice && <small className="online-generation-note">{batchNotice}</small>}
+                        {batchJob && <div role="status">
+                          <strong>{batchJob.result?.course_draft?.title || (locale === 'zh' ? '当前课程批次' : 'Current course batch')}</strong>
+                          <span>{locale === 'zh' ? ({ queued: '等待生成', running: '正在生成', completed: '生成完成', failed: '生成失败', partial: '部分完成' } as Record<string, string>)[batchJob.status] || batchJob.status : batchJob.status} · {batchJob.progress.processed}/{batchJob.progress.total}</span>
+                          {batchJob.error && <p className="error">{batchJob.error}</p>}
+                          {['failed','partial'].includes(batchJob.status) && <button className="secondary-button" onClick={() => void retryBatch()}>{locale === 'zh' ? tr('继续生成未完成场景') : 'Retry unfinished scenarios'}</button>}
+                          {!!batchJob.result?.scenarios.length && <p>{locale === 'zh' ? '逐个打开病例复核并批准；当前版本覆盖检查通过后，即可保存为课程。' : 'Open each case to review and approve it, then save the course when coverage of the current cases passes.'}</p>}
+                          <div className="batch-case-list">{batchJob.result?.scenarios.map(row => <button className="secondary-button" key={row.scenario_id} onClick={() => setSelected(row)}>{row.scenario_brief}</button>)}</div>
+                        </div>}
+                        {batchJob?.status === 'completed' && <div className="governance-summary">
+                          <span>{locale === 'zh' ? '当前批准病例' : 'Approved cases'}: {batchJob.course_handoff?.approved_count ?? 0}/{batchJob.course_handoff?.expected_count ?? batchJob.progress.total}</span>
+                          <span>{batchJob.course_handoff?.coverage_current ? (locale === 'zh' ? '当前版本覆盖检查通过' : 'Current coverage checked') : (locale === 'zh' ? '需要检查当前病例覆盖情况' : 'Current case coverage needs review')}</span>
+                          <button className="secondary-button" onClick={() => void refreshBatch()}>{locale === 'zh' ? '刷新审核状态' : 'Refresh review status'}</button>
+                          {!batchJob.course_handoff?.coverage_current && <button className="secondary-button" onClick={() => void retryBatch()} disabled={batchBusy}>{locale === 'zh' ? '重新检查课程覆盖' : 'Recheck course coverage'}</button>}
+                          {batchJob.course_handoff?.ready && !batchJob.course_handoff.course_id && (role === 'instructor'
+                            ? <button className="primary-button" onClick={() => void saveBatchAsCourse()} disabled={batchBusy}>{locale === 'zh' ? '将已审核病例保存为课程' : 'Save approved cases as a course'}</button>
+                            : <button className="primary-button" onClick={() => setRole('instructor')}>{locale === 'zh' ? '切换到教师角色以保存课程' : 'Switch to instructor to save course'}</button>)}
+                          {batchJob.course_handoff?.course_id && <a className="primary-button" href="/?workspace=learning">{locale === 'zh' ? '课程已保存 · 返回学习工作台' : 'Course saved · Open learning workspace'}</a>}
+                        </div>}
+                        {batchJob?.result?.course_plan && <details open><summary>{tr('课程计划与覆盖')}</summary>
+                          <ol>{batchJob.result.course_plan.cases.map(item => <li key={item.index}><strong>{item.learning_objective}</strong><p>{item.brief}</p></li>)}</ol>
+                          {batchJob.result.course_review && <div>
+                            <p>{tr('整批检查')}：{batchJob.result.course_review.status === 'pass' ? tr('检查通过') : tr('仍需复核')}</p>
+                            {batchJob.result.course_review.coverage?.map(item => <p key={item.objective}>{item.covered ? '✓' : '○'} {item.objective} · {item.rationale}</p>)}
+                            {batchJob.result.course_review.deterministic_checks?.issues.map((item, index) => <p key={index}>{item.detail}</p>)}
+                            {batchJob.result.course_review.semantic_review?.issues?.map((item, index) => <p key={index}>{item}</p>)}
+                            {batchJob.result.course_review.semantic_review?.error && <p role="alert">{batchJob.result.course_review.semantic_review.error}</p>}
+                            {batchJob.status === 'completed' && batchJob.result.course_review.status === 'needs_review' && <button onClick={() => void retryBatch()}>{tr('修改病例后重新检查课程')}</button>}
+                          </div>}
+                        </details>}
+                        {batchHistory.length > 0 && <details><summary>{locale === 'zh' ? tr('课程生成任务历史') : 'Course generation history'}</summary>{batchHistory.map(row => <button key={row.job_id} onClick={() => { setBatchJob(row); localStorage.setItem('theraskill_batch_job', row.job_id); void getBatchJob(role, row.job_id).then(setBatchJob).catch(err => setError(String(err))) }}>{row.job_id} · {row.status} · {row.progress.processed}/{row.progress.total}</button>)}</details>}
+                      </div>
+                    </section>
+                  )}
               {selected ? (
                 <>
                   <div className="detail-heading">
@@ -952,30 +1013,6 @@ export default function App() {
                       )}
                       <label className="governance-reason">{tr("审核理由")}<input value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} placeholder={tr("退回或人工覆盖模型审阅时必填")} /></label>
                       <button className="tertiary-danger" onClick={() => void reviewSelectedGenerated('reject')} disabled={governanceBusy}>{tr("退回草稿")}</button>
-                    </section>
-                  )}
-                  {canGenerateOnline && !session && (
-                    <section className="detail-band online-generation-band">
-                      <div className="batch-generator">
-                        <h3>{tr("批量生成课程场景")}</h3>
-                        <input value={batchTitle} onChange={(event) => setBatchTitle(event.target.value)} placeholder={tr("课程标题")} maxLength={200} />
-                        <textarea value={batchBrief} onChange={(event) => setBatchBrief(event.target.value)} placeholder={tr("课程目标或共同训练主题（至少 8 个字）")} rows={2} maxLength={1200} />
-                        <div className="batch-generator-row"><input type="number" min={1} max={12} value={batchCount} onChange={(event) => setBatchCount(Number(event.target.value) || 1)} /><button className="secondary-button" onClick={() => void runBatchGeneration()} disabled={batchBusy || batchBrief.trim().length < 8 || !batchTitle.trim()}>{batchBusy ? <LoaderCircle className="spin" size={15} /> : <Sparkles size={15} />}{tr("生成课程批次")}</button></div>
-                        {batchNotice && <small className="online-generation-note">{batchNotice}</small>}
-                        {batchJob && <div role="status"><strong>{batchJob.status} · {batchJob.progress.processed}/{batchJob.progress.total}</strong>{batchJob.error && <p className="error">{batchJob.error}</p>}{['failed','partial'].includes(batchJob.status) && <button onClick={() => void retryBatch()}>{locale === 'zh' ? tr('继续生成未完成场景') : 'Retry unfinished scenarios'}</button>}{batchJob.result?.scenarios.map(row => <button key={row.scenario_id} onClick={() => setSelected(row)}>{row.scenario_brief}</button>)}</div>}
-                        {batchJob?.result?.course_plan && <details open><summary>{tr('课程计划与覆盖')}</summary>
-                          <ol>{batchJob.result.course_plan.cases.map(item => <li key={item.index}><strong>{item.learning_objective}</strong><p>{item.brief}</p></li>)}</ol>
-                          {batchJob.result.course_review && <div>
-                            <p>{tr('整批检查')}：{batchJob.result.course_review.status === 'pass' ? tr('检查通过') : tr('仍需复核')}</p>
-                            {batchJob.result.course_review.coverage?.map(item => <p key={item.objective}>{item.covered ? '✓' : '○'} {item.objective} · {item.rationale}</p>)}
-                            {batchJob.result.course_review.deterministic_checks?.issues.map((item, index) => <p key={index}>{item.detail}</p>)}
-                            {batchJob.result.course_review.semantic_review?.issues?.map((item, index) => <p key={index}>{item}</p>)}
-                            {batchJob.result.course_review.semantic_review?.error && <p role="alert">{batchJob.result.course_review.semantic_review.error}</p>}
-                            {batchJob.status === 'completed' && batchJob.result.course_review.status === 'needs_review' && <button onClick={() => void retryBatch()}>{tr('修改病例后重新检查课程')}</button>}
-                          </div>}
-                        </details>}
-                        {batchHistory.length > 0 && <details><summary>{locale === 'zh' ? tr('课程生成任务历史') : 'Course generation history'}</summary>{batchHistory.map(row => <button key={row.job_id} onClick={() => { setBatchJob(row); localStorage.setItem('theraskill_batch_job', row.job_id) }}>{row.job_id} · {row.status} · {row.progress.processed}/{row.progress.total}</button>)}</details>}
-                      </div>
                     </section>
                   )}
                   <section className="detail-band">

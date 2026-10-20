@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Add bilingual course starters with editable behavioural rubrics, knowledge cards,
+  concrete micro-practices, hints, reflection and worked examples.
+- Persist micro-practice submissions and run retrieval-grounded LLM judging one
+  objective at a time, with exact source quotation checks, bounded retries,
+  refresh recovery and independent instructor feedback.
+- Complete generated-case-to-course handoff with live approvals, current coverage
+  evidence, strict batch membership and idempotent course saving.
+- Separate progress by learner, course, rubric and support conditions; retain
+  safety concerns and invalidate approvals when their underlying evidence changes.
+  See the [learning guide](docs/learning.en.md).
+
 - Make patient generation recoverable by stage, pin supplied facts before review,
   review repairs again, and invalidate reviews after edits or forks. The UI shows
   background jobs, retry and explicit human review overrides with reasons.

@@ -88,12 +88,13 @@ class ScenarioBatchJobStore:
         with self._lock:
             return [dict(job) for job in sorted(self._jobs.values(), key=lambda j: j["created_at"], reverse=True)[:limit]]
 
-    def retry(self, job_id: str) -> dict[str, Any] | None:
+    def retry(self, job_id: str, *, recheck_completed: bool = False) -> dict[str, Any] | None:
         with self._lock:
             job = self._jobs.get(job_id)
             if not job:
                 return None
-            review_pending = job.get("status") == "completed" and ((job.get("result") or {}).get("course_review") or {}).get("status") == "needs_review"
+            review_pending = job.get("status") == "completed" and (recheck_completed or
+                ((job.get("result") or {}).get("course_review") or {}).get("status") == "needs_review")
             if job.get("status") not in {"failed", "partial"} and not review_pending:
                 raise ValueError("only failed or partial batch jobs can be retried")
             job["status"] = "queued"

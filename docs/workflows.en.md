@@ -65,11 +65,9 @@ Model judgments are machine opinions. High scores or no regression do not establ
 
 ## Courses and learning progress
 
-As an instructor, create a course with objective IDs/descriptions and approved scenarios, then assign it to a learner label. Learners load their local assignments by label and enter practice from each scenario. Existing sessions can also be linked by ID; a session is counted once.
+Start with a teaching template, adapt the behavioural rubric and exercises, then assign approved cases. Learners submit short responses, save reflection and request retrieval-grounded AI feedback; instructors record their own observations and decisions. Full case completion still uses actual session evidence and the configured review gate. Progress compares ratings only under comparable conditions.
 
-After practice, retain the debrief and record objective ratings, feedback and an approval or a request for more practice. Scenario completion requires valid dialogue from both roles, a complete debrief meeting the course gate, and instructor approval when required. All required scenarios must be completed. Session changes invalidate previous instructor approval. Research dual-agent runs and review-only sessions are excluded from learner completion.
-
-The report shows observations over attempts, latest ratings and changes. A single observation does not establish improvement, and objectives with the same ID in different courses are kept separate. Ratings are not causal learning effects or evidence of clinical competence. Learner labels are local teaching groups using existing local roles, not a new identity system.
+See the [complete teaching and learning guide](learning.en.md) for course generation, micro-practices, LLM judging, feedback histories and progress.
 
 ## Languages and persistence
 

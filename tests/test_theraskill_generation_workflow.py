@@ -184,7 +184,10 @@ def test_course_api_plans_before_generation_and_resumes_patient_stages(tmp_path,
         done = wait()
         assert done["status"] == "completed", done
         assert done["result"]["course_plan"] == plan
-        assert done["result"]["course_review"]["status"] == "pass"
+        # The minimal mock confirms the workflow stage ran, but has no verified
+        # artifact/plan binding; it must not unlock course reuse.
+        assert done["result"]["course_review"]["status"] == "needs_review"
+        assert done["course_handoff"]["coverage_current"] is False
         assert len(reviewed) == 1
         assert [call["workflow_stage"] for call in calls].count("patient") == 1
 

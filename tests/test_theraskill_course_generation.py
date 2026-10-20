@@ -195,3 +195,13 @@ def test_changed_actual_dossier_invalidates_coverage_checkpoint(tmp_path):
         second = review_course(client, request(), plan(), rows, checkpoint=checkpoint)
     assert first["status"] == second["status"] == "pass" and len(client.calls) == 2
     assert first["actual_artifact_sha256"] != second["actual_artifact_sha256"]
+
+
+def test_course_plan_cannot_silently_replace_teacher_objectives():
+    original = request().model_dump()
+    original["learning_objectives"] = [{"id": "empathy", "description": "Invite correction of an emotional reflection"}]
+    with pytest.raises(ValueError, match="exact learning objectives"):
+        validate_course_plan(plan(), original)
+    revised = plan()
+    revised["objectives"] = [original["learning_objectives"][0]["description"]]
+    assert validate_course_plan(revised, original)["objectives"] == revised["objectives"]

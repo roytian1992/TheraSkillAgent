@@ -323,3 +323,7 @@ Follow [Resource installation](resource_installation.en.md) for the full knowled
 The home page shows provider configuration, explicit live connection checks, active resources and skill requirements. Configuration checks make no model requests. All 12 bundled skills declare required runtime tools; missing tools or dependencies are reported before a model call.
 
 `configs/theraskill/text.yaml` controls extraction segments (6000 characters with 300-character overlap by default) and review windows. Original spelling and offsets remain intact; planning samples span the source. Review covers all turns by default; an explicit `--max-turns` requests a sample. Agent tasks pause at the context budget and allow a budget change without silently dropping history.
+
+## Course feedback
+
+Course and micro-practice feedback uses the existing LLM and active knowledge index, in the same application process. No extra endpoint or package is needed. See the [learning guide](learning.en.md) for the teacher/learner workflow and the data directories to back up.

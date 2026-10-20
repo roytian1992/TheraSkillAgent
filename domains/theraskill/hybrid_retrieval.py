@@ -76,13 +76,15 @@ class HybridRetrievalPaths:
             )
 
 
-def selected_retrieval_paths(model_config: Path, cache_root: Path) -> HybridRetrievalPaths:
+def selected_retrieval_paths(model_config: Path, cache_root: Path, *, selection=None) -> HybridRetrievalPaths:
     """Resolve the active manifest without replacing a historical data release."""
     from theraskill_agent.resources import active_index
     from theraskill_agent.indexing.common import safe_path
     from domains.theraskill.runtime import runtime_root
 
-    selected = active_index()
+    # A caller that already selected a release can pin paths to that exact
+    # manifest, even if another request activates an index in the meantime.
+    selected = selection if selection is not None else active_index()
     if selected:
         directory, manifest = selected
         artifacts = manifest["artifacts"]

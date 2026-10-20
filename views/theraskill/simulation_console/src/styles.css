@@ -119,6 +119,9 @@ button { color: inherit; }
 .batch-generator-row { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; }
 .batch-generator-row input { height: 34px; }
 .batch-generator-row .secondary-button { margin: 0; height: 34px; }
+.batch-case-list { display: grid; gap: 8px; min-width: 0; }
+.batch-case-list .secondary-button { min-width: 0; width: 100%; min-height: 40px; height: auto; padding: 10px 12px; text-align: left; justify-content: flex-start; white-space: normal; overflow-wrap: anywhere; }
+.batch-generator .governance-summary a { text-decoration: none; }
 .tag-cloud { display: flex; flex-wrap: wrap; gap: 7px; }
 .tag-cloud span { padding: 5px 8px; border: 1px solid var(--line); background: white; border-radius: 4px; color: #4f5b54; font-size: 11px; }
 .role-card-heading { display: flex; align-items: center; gap: 8px; color: var(--green); }

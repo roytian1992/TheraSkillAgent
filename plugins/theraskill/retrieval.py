@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 import os
+import hashlib
+import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +35,78 @@ HYBRID_ARTIFACTS = {
 }
 
 
+def _hydrate_managed_matches(db_path: Path, matches: list[dict[str, Any]], *,
+                             index_id: str, knowledge_sha256: str,
+                             max_chars: int = 6000) -> tuple[list[dict[str, Any]], list[str]]:
+    """Attach bounded source passages from the SAME immutable search index.
+
+    Dense and compact-label recall intentionally return metadata only. Looking
+    up their final top-k rows here avoids a full-text join during broad recall.
+    Our builder aligns metadata/FTS rowids; verify IDs rather than assuming it.
+    Historical unaligned indexes get one bounded same-index fallback query.
+    """
+    if not matches:
+        return [], []
+    ids = list(dict.fromkeys(str(item.get('retrieval_id') or '') for item in matches if item.get('retrieval_id')))
+    if not ids:
+        return [], ['Retrieved matches lacked source IDs; no grounded passages were returned.']
+    warnings: list[str] = []
+    metadata: dict[str, dict[str, Any]] = {}
+    passages: dict[str, str] = {}
+    try:
+        with closing(sqlite3.connect(f'{db_path.resolve().as_uri()}?mode=ro', uri=True)) as db:
+            db.row_factory = sqlite3.Row
+            slots = ','.join('?' for _ in ids)
+            metadata = {row['retrieval_id']: dict(row) for row in db.execute(
+                f'SELECT rowid AS text_rowid,* FROM retrieval_meta WHERE retrieval_id IN ({slots})', ids)}
+            rowids = [row['text_rowid'] for row in metadata.values()]
+            if rowids:
+                rows = db.execute(f'SELECT retrieval_id,substr(retrieval_text,1,?) AS passage FROM retrieval_fts '
+                                  f'WHERE rowid IN ({",".join("?" for _ in rowids)})', [max_chars, *rowids])
+                passages = {row['retrieval_id']: row['passage'] for row in rows if row['retrieval_id'] in metadata}
+            missing = [key for key in metadata if key not in passages]
+            if missing:
+                deadline = time.monotonic() + 2.0
+                db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+                try:
+                    # retrieval_id is UNINDEXED in historical FTS layouts.
+                    # This is a bounded fallback only, never a second release.
+                    rows = db.execute(f'SELECT retrieval_id,substr(retrieval_text,1,?) AS passage FROM retrieval_fts '
+                                      f'WHERE retrieval_id IN ({",".join("?" for _ in missing)})', [max_chars, *missing]).fetchall()
+                    passages.update({row['retrieval_id']: row['passage'] for row in rows})
+                except sqlite3.OperationalError as exc:
+                    if 'interrupted' not in str(exc).lower():
+                        raise
+                    warnings.append('Source lookup exceeded its 2-second budget; unverified passages were omitted. Rebuild the index to enable direct row lookup.')
+                finally:
+                    db.set_progress_handler(None, 0)
+    except sqlite3.Error as exc:
+        raise RetrievalError('Cannot load source passages from the selected knowledge index') from exc
+    hydrated = []
+    for raw in matches:
+        key = str(raw.get('retrieval_id') or '')
+        row, passage = metadata.get(key), passages.get(key)
+        if not row or not isinstance(passage, str) or not passage.strip() or not row.get('retrieval_eligible'):
+            continue
+        # A cached/overlay result must not borrow another unit's text merely
+        # because its retrieval ID happens to collide in this release.
+        if any(raw.get(field) and raw[field] != row.get(field) for field in ('release_unit_id', 'dedup_family', 'default_route')):
+            continue
+        if raw.get('unit_id') and raw['unit_id'] != row.get('release_unit_id'):
+            continue
+        item = dict(raw)
+        item.update(release_unit_id=row['release_unit_id'], retrieval_text=passage,
+                    text_preview=passage[:1200], source_index_id=index_id,
+                    knowledge_sha256=knowledge_sha256,
+                    text_sha256=hashlib.sha256(passage.encode()).hexdigest(),
+                    text_truncated=int(row.get('retrieval_text_chars') or len(passage)) > len(passage))
+        # Preserve per-skill allowed_use/forbidden_use/evidence_role fields.
+        hydrated.append(item)
+    if len(hydrated) != len(matches):
+        warnings.append(f'{len(matches) - len(hydrated)} retrieved matches lacked verified source text in the selected index and were omitted.')
+    return hydrated, warnings
+
+
 def search_managed_knowledge(query: str, *, skill: str, limit: int, filters: dict[str, Any] | None = None) -> dict[str, Any] | None:
     from theraskill_agent.resources import active_index
     from theraskill_agent.paths import data_root
@@ -42,7 +117,7 @@ def search_managed_knowledge(query: str, *, skill: str, limit: int, filters: dic
     _, manifest = selected
     understanding = understand_query(query, skill=skill, filters=filters)
     effective_query = understanding['normalized_query']
-    paths = selected_retrieval_paths(resource_path("configs/theraskill/retrieval.yaml"), data_root() / "cache/retrieval")
+    paths = selected_retrieval_paths(resource_path("configs/theraskill/retrieval.yaml"), data_root() / "cache/retrieval", selection=selected)
     warnings = list(understanding['warnings'])
     filter_options = {'filters': understanding['filters']} if understanding['filters'] else {}
     try:
@@ -53,12 +128,17 @@ def search_managed_knowledge(query: str, *, skill: str, limit: int, filters: dic
         mode = "policy_lexical_fallback"
         if manifest["input"]["mode"] != "lexical":
             warnings.append(str(exc))
-    matches = list(bundle.get("items") or [])
+    if bundle.get('source_index') and Path(bundle['source_index']).resolve() != paths.sqlite_fts.resolve():
+        raise RetrievalError('Search results refer to a different knowledge index')
+    hydration_started = time.monotonic()
+    matches, hydration_warnings = _hydrate_managed_matches(paths.sqlite_fts, list(bundle.get("items") or []),
+        index_id=manifest['index_id'], knowledge_sha256=manifest['input']['knowledge_sha256'])
+    warnings.extend(hydration_warnings)
     return {"query": query, "release_id": manifest["index_id"], "index_id": manifest["index_id"], "knowledge_sha256": manifest["input"]["knowledge_sha256"],
             "retrieval_mode": mode, "skill": skill, "matches": matches, "count": len(matches),
             "query_understanding": understanding, "filters": understanding['filters'],
             "warnings": list(dict.fromkeys([*warnings, *(bundle.get('warnings') or [])])), "diagnostics": {"planner_status": (bundle.get("planner_trace") or {}).get("planner_status"),
-                                                   "timings": bundle.get('timings') or {},
+                                                   "timings": {**(bundle.get('timings') or {}), 'source_hydration_seconds': round(time.monotonic() - hydration_started, 6)},
                                                    "planner_timings": (bundle.get('planner_trace') or {}).get('timings') or {},
                                                    "policy_checks": bundle.get("policy_checks") or {},
                                                    "quality_checks": bundle.get("quality_checks") or {},

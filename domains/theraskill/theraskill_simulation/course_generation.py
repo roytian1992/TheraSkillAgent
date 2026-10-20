@@ -72,6 +72,9 @@ Use the requested language. Each case needs a distinct actionable learning
 objective and a distinct recent life experience, trigger and patient concern,
 described in its brief or constraints. Names or numbering alone are not variety.
 The course objectives must cover the user's skill_tags and stated course purpose.
+If request.learning_objectives is nonempty, copy each description EXACTLY, in its
+original order, into objectives. Do not rename, omit or invent teacher objectives.
+Case learning_objective may express a distinct contextual focus within those goals.
 Retain all user constraints; case constraints add details and must fit the stated
 remaining constraint character budget. They may be empty if the budget is zero.
 The original brief is a shared theme; do not copy it for every case. Plans and
@@ -114,6 +117,9 @@ def validate_course_plan(value: Any, request: Any) -> dict[str, Any]:
     count = original["count"]
     if [case.index for case in parsed.cases] != list(range(1, count + 1)):
         raise ValueError("Course plan must contain exactly count cases in 1-based index order")
+    requested_objectives = [item["description"] for item in original.get("learning_objectives", [])]
+    if requested_objectives and parsed.objectives != requested_objectives:
+        raise ValueError("Course plan must preserve the teacher's exact learning objectives in order")
     _nonempty(parsed.objectives, "course objectives")
     if any(not _normal(value) for value in parsed.objectives):
         raise ValueError("Course objectives must contain meaningful text")

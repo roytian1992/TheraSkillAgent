@@ -42,7 +42,15 @@ class TrainingCourse(TrainingModel):
     scenario_ids: list[str] = Field(default_factory=list)
     difficulty_path: list[str] = Field(default_factory=list)
     completion_review_gate: str = "pass"
-    learning_objectives: list[dict[str, str]] = Field(default_factory=list)
+    # Keep objectives as JSON objects for compatibility with existing course
+    # rows, while allowing the richer observable-behaviour/rubric fields.
+    learning_objectives: list[dict[str, Any]] = Field(default_factory=list)
+    template_id: str | None = None
+    competency_ids: list[str] = Field(default_factory=list)
+    scaffolding: list[str] = Field(default_factory=list)
+    learning_units: dict[str, Any] = Field(default_factory=dict)
+    knowledge_references: list[dict[str, Any]] = Field(default_factory=list)
+    design_retrieval: dict[str, Any] = Field(default_factory=dict)
     require_instructor_review: bool = True
     created_at: datetime = Field(default_factory=utc_now)
 
@@ -238,6 +246,9 @@ class SQLiteTrainingRepository:
 
     def add_course(self, value: TrainingCourse) -> None:
         with self._connect() as connection:
+            # Serialize the existence check with the insert so repeated handoff
+            # requests return the same course instead of a UNIQUE-key error.
+            connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
                 "SELECT payload_json FROM training_courses WHERE course_id=?",
                 (value.course_id,),

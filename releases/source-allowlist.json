@@ -10,7 +10,8 @@
     "docs/knowledge_and_indexes.zh.md", "docs/knowledge_and_indexes.en.md", "docs/deployment.zh.md", "docs/deployment.en.md", "docs/source_release.zh.md", "docs/experiment_log_20261018.md",
     "docs/workflows.zh.md", "docs/workflows.en.md", "docs/user_experience_audit_20261018.zh.md", "docs/ux_improvements_20261018.zh.md", "docs/platform_upgrade_20261018.zh.md", "docs/deployment_simplification_20261018.zh.md", "docs/retrieval_optimization_20261018.zh.md", "docs/upgrade_20261019.zh.md", "docs/resource_installation.zh.md", "docs/resource_installation.en.md",
     "docs/simulated_patients.en.md", "docs/simulated_patients.zh.md", "docs/simulated_patients_validation_20261019.zh.md",
-    "docs/agent_workflow_audit_20261019.zh.md", "docs/workflow_reliability.en.md", "docs/workflow_reliability.zh.md", "docs/workflow_validation_20261020.zh.md"
+    "docs/agent_workflow_audit_20261019.zh.md", "docs/workflow_reliability.en.md", "docs/workflow_reliability.zh.md", "docs/workflow_validation_20261020.zh.md",
+    "docs/learning.en.md", "docs/learning.zh.md", "docs/psychology_training_design.zh.md", "docs/learning_validation_20261020.zh.md"
   ],
   "exclude": [
     "**/__pycache__/**", "**/*.pyc", "**/*.tsbuildinfo", "**/run_hermes_*", "**/run_h6_runtime_pilot.py",
