@@ -84,6 +84,8 @@ def create_app(*, assets_root: Path | None = None, transport=None) -> FastAPI:
 
     from .task_api import create_router as task_router
     app.include_router(task_router(task_engine))
+    from .task_history import create_router as history_router
+    app.include_router(history_router(task_engine.store, services))
 
     methods = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     app.add_api_route("/api/plugins/{service}/{path:path}", proxy, methods=methods)

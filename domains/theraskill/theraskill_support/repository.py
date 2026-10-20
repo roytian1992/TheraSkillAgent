@@ -152,6 +152,23 @@ class SQLiteSupportRepository:
             ).fetchall()
         return [SupportSessionRecord.model_validate_json(row["record_json"]) for row in rows]
 
+    def statuses(self, owner_id: str, session_ids: list[str]) -> list[dict]:
+        """Fetch only owned generation states, including sessions outside the recent list."""
+        if not session_ids:
+            return []
+        placeholders = ",".join("?" for _ in session_ids)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT record_json FROM support_sessions WHERE owner_id=? AND session_id IN ({placeholders})",
+                (owner_id, *session_ids),
+            ).fetchall()
+        result = []
+        for row in rows:
+            public = json.loads(row["record_json"])["public"]
+            result.append({"session_id": public["session_id"],
+                           "status": public["generation"]["status"], "updated_at": public["updated_at"]})
+        return result
+
     def get_job(self, job_id: str) -> SupportTurnJob:
         with self._connect() as connection:
             row = connection.execute(

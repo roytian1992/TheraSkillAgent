@@ -6,6 +6,20 @@
 
 Run `theraskill-agent ui` and open <http://127.0.0.1:5176/>. The home page provides **Skill workflows**, **Behavioral evaluations**, and **Courses and learning progress**, alongside transcript, knowledge, support, simulation and expert workspaces. All business modules run in the same process and browser port, without additional runtime dependencies.
 
+## Tasks & history
+
+Start work in its workspace, then use **Tasks & history** to follow execution and reopen results:
+
+- **Active & attention**: running, queued, waiting for input or approval, failed, partial, and interrupted runs.
+- **History**: completed or cancelled runs.
+- **Archived**: records put aside with an option to restore them. Archiving a workflow includes its related extraction steps; groups with running steps cannot be archived.
+
+Task type, status, and keyword filters work together with pagination. Trial extraction, full extraction, and extraction from earlier plans are grouped under their workflow; expand a group to inspect its steps. Explicitly labelled test records are hidden from Active & attention and History by default and remain visible in Archived. Archiving preserves source records, results, and checkpoints. Restarting an archived job brings it back into the current list.
+
+This view combines skill workflows, extraction, expert review/content generation, and course scenario batches. Simulation sessions, micro-practice, standalone patient generation, transcript analysis, and index jobs remain in their respective workspaces. If one source is unavailable, the page identifies it while keeping the other sources accessible.
+
+Automated tests use temporary directories and synthetic API responses. For manual acceptance runs, start an isolated project as described in the [deployment guide](deployment.en.md). Test labels come from explicit record metadata, never from guessing based on a task's title.
+
 ## Interactive skill tasks
 
 Open Skill workflows, describe a goal and supply text, a local path or an uploaded file. Select an installed skill or let the model select from the catalog. The executor reads the complete `SKILL.md` and asks the model to choose a registered tool, ask a question or finish. Reference files can be read through a tool.

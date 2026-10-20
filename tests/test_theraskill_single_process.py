@@ -59,6 +59,10 @@ def test_all_modules_and_cross_module_calls_work_without_domain_ports(local_host
         result=browser.get(f'/api/expert/jobs/{job_id}',headers=expert_headers)
         assert result.status_code == 200, result.text
         assert result.json()['status'] in {'pending', 'failed'}  # LLM disabled in this fixture
+        history = browser.get('/api/task-history').json()
+        assert history['errors'] == []
+        assert any(row['id'] == job_id and row['kind'] == 'expert' for row in history['items'])
+        assert all('payload_json' not in row for row in history['items'])
         # Support/simulation contribution clients must not fall back to port 8881.
         from domains.theraskill.theraskill_contribution.client import HTTPContributionClient
         consent=HTTPContributionClient('inprocess://contribution').create_consent(

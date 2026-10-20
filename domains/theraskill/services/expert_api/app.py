@@ -311,21 +311,34 @@ def create_app(settings: ExpertAPISettings | None = None) -> FastAPI:
     def list_jobs(
         _role: str = Depends(expert_identity),
         limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+        summary: bool = False,
     ) -> dict[str, Any]:
         require_role(_role)
-        rows = store.rows("SELECT * FROM expert_jobs ORDER BY created_at DESC LIMIT ?", (limit,))
+        rows = store.rows("SELECT * FROM expert_jobs ORDER BY created_at DESC,job_id DESC LIMIT ? OFFSET ?", (limit,offset))
         states: dict[str, str] = {}
+        updated: dict[str, str] = {}
         try:
-            response = upstream("GET", cfg.support_api_url, f"/sessions", params={"limit": 500}, headers=support_headers(), timeout=5)
-            response.raise_for_status()
-            states = {session["session_id"]: session["generation"]["status"]
-                      for session in response.json()["sessions"]}
+            if rows:
+                response = upstream("GET", cfg.support_api_url, "/session-statuses" if summary else "/sessions",
+                                    params=([("session_id",row["support_session_id"]) for row in rows] if summary else {"limit":500}),
+                                    headers=support_headers(), timeout=5)
+                response.raise_for_status()
+                states = {session["session_id"]: session["status"] if summary else session["generation"]["status"]
+                          for session in response.json()["sessions"]}
+                updated = {session["session_id"]: session.get("updated_at", "") for session in response.json()["sessions"]}
         except (httpx.HTTPError, KeyError, ValueError):
             pass
-        return {"count": len(rows), "jobs": [
-            {**dict(row), "status": states.get(row["support_session_id"], "unavailable")}
-            for row in rows
-        ]}
+        jobs = []
+        for row in rows:
+            value = dict(row)
+            if summary:
+                payload = json.loads(value.pop("payload_json"))
+                value["title"] = str(payload.get("title") or payload.get("goal") or "")[:240]
+            value.update(status=states.get(row["support_session_id"], "unavailable"),
+                         updated_at=updated.get(row["support_session_id"]) or row["created_at"])
+            jobs.append(value)
+        return {"count": len(rows), "total": store.rows("SELECT COUNT(*) AS total FROM expert_jobs")[0]["total"], "jobs": jobs}
 
     @app.get("/jobs/{job_id}")
     def get_job(

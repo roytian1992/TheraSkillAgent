@@ -336,6 +336,14 @@ def create_app(
         sessions = service.list_public(owner_id=owner, limit=limit)
         return {"count": len(sessions), "sessions": [row.model_dump(mode="json") for row in sessions]}
 
+    @app.get("/session-statuses")
+    def session_statuses(
+        actor: tuple[str, str] = Depends(identity),
+        session_id: list[str] = Query(default=[], max_length=500),
+    ) -> dict[str, Any]:
+        owner, _role = actor
+        return {"sessions": service.repository.statuses(owner, session_id)}
+
     @app.get("/sessions/{session_id}")
     def get_session(
         session_id: str,

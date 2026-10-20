@@ -255,9 +255,13 @@ class ExtractionJobStore:
     def get(self, job_id: str) -> dict[str, Any] | None:
         return self._load(job_id)
 
-    def list(self) -> list[dict[str, Any]]:
+    def list(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         with self._lock:
-            return [dict(job) for job in sorted(self._jobs.values(), key=lambda j: j["created_at"], reverse=True)[:100]]
+            return [dict(job) for job in sorted(self._jobs.values(), key=lambda j: (j["created_at"],j["job_id"]), reverse=True)[offset:offset+limit]]
+
+    def count(self) -> int:
+        with self._lock:
+            return len(self._jobs)
 
     def retry(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
@@ -620,9 +624,15 @@ def create_app(settings: ExtractionAPISettings | None = None) -> FastAPI:
             raise HTTPException(status_code=502, detail=f"Plan generation failed: {exc}. Your input is preserved; retry after checking the model service.") from exc
 
     @app.get("/v1/extraction/jobs")
-    def list_jobs(x_extraction_role: str = Header(default="", alias="X-Extraction-Role")) -> dict[str, Any]:
+    def list_jobs(x_extraction_role: str = Header(default="", alias="X-Extraction-Role"),
+                  limit: int = Query(default=100, ge=1, le=500),
+                  offset: int = Query(default=0, ge=0), summary: bool = False) -> dict[str, Any]:
         require_role(x_extraction_role)
-        return {"jobs": store.list()}
+        jobs = store.list(limit=limit, offset=offset)
+        if summary:
+            jobs = [{**{key: job.get(key) for key in ("job_id", "status", "created_at", "updated_at")},
+                     "plan": {"goal": (job.get("plan") or {}).get("goal", "")}} for job in jobs]
+        return {"jobs": jobs, "total": store.count()}
 
     @app.post("/v1/extraction/jobs/{job_id}/retry", status_code=202)
     def retry_job(job_id: str, x_extraction_role: str = Header(default="", alias="X-Extraction-Role")) -> dict[str, Any]:

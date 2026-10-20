@@ -84,9 +84,13 @@ class ScenarioBatchJobStore:
         with self._lock:
             return dict(self._jobs[job_id]) if job_id in self._jobs else None
 
-    def list(self, limit: int = 100) -> list[dict[str, Any]]:
+    def list(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         with self._lock:
-            return [dict(job) for job in sorted(self._jobs.values(), key=lambda j: j["created_at"], reverse=True)[:limit]]
+            return [dict(job) for job in sorted(self._jobs.values(), key=lambda j: (j["created_at"], j["job_id"]), reverse=True)[offset:offset+limit]]
+
+    def count(self) -> int:
+        with self._lock:
+            return len(self._jobs)
 
     def retry(self, job_id: str, *, recheck_completed: bool = False) -> dict[str, Any] | None:
         with self._lock:

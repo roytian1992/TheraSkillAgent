@@ -967,10 +967,18 @@ def create_app(
         return {**job, "result": result or None, "course_handoff": handoff}
 
     @app.get("/scenarios/generate-batch/jobs")
-    def list_scenario_batch_jobs(role: ActorRole = Depends(caller_role)) -> dict[str, Any]:
+    def list_scenario_batch_jobs(role: ActorRole = Depends(caller_role),
+                                limit: int = Query(default=100, ge=1, le=500),
+                                offset: int = Query(default=0, ge=0), summary: bool = False) -> dict[str, Any]:
         if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
             raise HTTPException(status_code=403, detail="batch jobs require instructor or researcher role")
-        return {"jobs": [live_batch_job(job) for job in batch_job_store.list()]}
+        jobs = batch_job_store.list(limit=limit, offset=offset)
+        if summary:
+            jobs = [{**{key: job.get(key) for key in ("job_id", "status", "created_at", "updated_at")},
+                     "request": {"course_title": (job.get("request") or {}).get("course_title", "")}} for job in jobs]
+        else:
+            jobs = [live_batch_job(job) for job in jobs]
+        return {"jobs": jobs, "total": batch_job_store.count()}
 
     @app.get("/scenarios/generate-batch/jobs/{job_id}")
     def get_scenario_batch_job(job_id: str, role: ActorRole = Depends(caller_role)) -> dict[str, Any]:

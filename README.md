@@ -78,7 +78,7 @@ These four terms describe different layers of the product:
 | Layer | What it does | When you use it |
 | --- | --- | --- |
 | **Skill** | A reusable method that defines a goal, inputs and outputs, tools, knowledge scope, and checks | Install, inspect, or improve a capability such as transcript normalization, knowledge extraction, or simulated-patient construction |
-| **Task** | One durable execution instance with its inputs, plan, tool calls, approvals, checkpoints, and result | Start an extraction, evaluation, skill run, or batch generation and follow it in the Tasks Center |
+| **Task** | One durable execution instance with its inputs, plan, tool calls, approvals, checkpoints, and result | Start an extraction, evaluation, skill run, or batch generation and follow it in Tasks & history |
 | **Workspace** | A human-facing business entry point that organizes goals and results into an actionable page | Work in transcript analysis, knowledge extraction, simulation, expert review, and other domain screens |
 | **Runtime** | The execution foundation that selects skills, calls tools, persists state, waits for interaction, resumes, and audits | Usually used automatically; open **Agent task flows** when you need to inspect or control execution |
 
@@ -103,7 +103,7 @@ Complex design and review tasks use separate generation, evidence-checking and r
 The unified workbench provides:
 
 - **Workspace**: professional work areas and runtime status;
-- **Tasks Center**: view and resume extraction, review, skill, and scenario-batch tasks;
+- **Tasks & history**: follow active skill, extraction, expert, and scenario-batch jobs; reopen results, filter history, and archive finished work. Related extraction steps are grouped under their workflow;
 - **Models & connections**: configure, test, and save LLM and embedding settings separately;
 - **Transcript, extraction, and knowledge workspaces**: process source material and indexes;
 - **Simulation Console, Expert Studio, and Support Assistant**: practice sessions, response review, and text-support tasks.

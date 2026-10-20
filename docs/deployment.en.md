@@ -142,7 +142,16 @@ After starting `theraskill-agent ui`, use **Models & connections** in the top na
 
 **Test current values** calls both services without writing a file. **Save configuration** writes to the project-local `configs/theraskill/providers.local.yaml`. **Test then save** writes only when both live checks pass. API keys are masked in responses, the page, test results, and logs; leaving a key blank preserves the existing machine-local key.
 
-The **Workspace** is the primary entry point. **Tasks Center** is the durable task record and recovery view for completed, running, input/approval waiting, failed, and retryable skill, extraction, expert-review, and scenario-batch jobs; it is not ordinary chat history.
+**Workspace** is the primary entry point. **Tasks & history** opens on running tasks and work needing attention. Completed and cancelled runs appear in History; archived records can be restored. It combines skill workflows, extraction, expert review/content generation, and course scenario batches, grouping related extraction steps under their workflow. Filter by task type, status, or keywords; the homepage shows current tasks only. See [task history and test isolation](workflows.en.md#tasks--history).
+
+Archive and test labels are stored in `data/theraskill/tasks/history.sqlite`; back it up alongside the original business data. Archiving preserves jobs, results, and evidence. Running jobs cannot be archived. Use a separate project for development acceptance runs:
+
+```bash
+theraskill-agent project init /tmp/theraskill-qa
+theraskill-agent --project /tmp/theraskill-qa ui --port 5177
+```
+
+This port belongs to the test instance; normal deployment still uses one application on port 5176. Configure test providers in that instance's **Models & connections**, and install any knowledge or scenario resources into that test project. Browser regressions use synthetic API responses; backend tests use temporary data directories.
 
 ## Start and stop the workbench
 
@@ -295,7 +304,7 @@ python -m build
 
 ## Verify workflows and recover jobs
 
-A health check confirms connectivity. After deployment, also exercise transcript review and ZIP download, a small extraction run, a valid training session and its review, an expert response review, and a course batch. The task center and workspace histories reopen saved work. Batch and extraction jobs can retry unfinished items; simulation state updates and reviews have separate retry actions. Sessions without both dialogue roles, or with incomplete state updates, are not evaluable and cannot receive training ratings.
+A health check confirms connectivity. After deployment, also exercise transcript review and ZIP download, a small extraction run, a valid training session and its review, an expert response review, and a course batch. Tasks & history and the workspace histories reopen saved work. Batch and extraction jobs can retry unfinished items; simulation state updates and reviews have separate retry actions. Sessions without both dialogue roles, or with incomplete state updates, are not evaluable and cannot receive training ratings.
 
 Keep `llm.max_output_tokens`, `llm.retry_attempts`, and optional `llm.thinking` in the local provider block. Scenario generation and patient engines follow the configured budget by default. The shared extraction template no longer overrides it with 4096. Some services count reasoning against the same budget; verify real workflows before choosing a budget or reasoning settings. Only use fields supported by your service, for example:
 

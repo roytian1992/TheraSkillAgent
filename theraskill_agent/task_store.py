@@ -59,9 +59,10 @@ class TaskStore:
                 raise TaskConflict('Task changed. Refresh before continuing.')
         return task
 
-    def list(self, limit=100):
+    def list(self, limit=100, offset=0):
         with self.connect() as db:
-            rows=db.execute('SELECT payload FROM tasks ORDER BY updated DESC LIMIT ?', (max(1,min(limit,500)),)).fetchall()
+            rows=db.execute('SELECT payload FROM tasks ORDER BY updated DESC,id LIMIT ? OFFSET ?',
+                            (max(1,min(limit,500)),max(0,offset))).fetchall()
         return [json.loads(row[0]) for row in rows]
 
     def event(self, task_id, kind, data=None):
