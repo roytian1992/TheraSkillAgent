@@ -556,7 +556,7 @@ export default function App() {
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="brand-row">
           <div className="brand-mark"><MessageCircle size={20} /></div>
-          <div><a href="/">{tr("← TheraSkillAgent")}</a><span>{tr("Support")}</span></div>
+          <div><a href="/">{tr("← TheraSkillAgent")}</a><span>{tr("助手")}</span></div>
           <button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)} title={tr("关闭会话列表")}><X size={18} /></button>
         </div>
         <button className="new-session" onClick={startNew} disabled={busy}><Plus size={17} />{tr("新对话")}</button>
@@ -580,7 +580,7 @@ export default function App() {
         <header className="workspace-header">
           <button className="icon-button mobile-only" onClick={() => setSidebarOpen(true)} title={tr("打开会话列表")}><Menu size={19} /></button>
           <div className="session-heading">
-            <h1>{session?.title ? (['新对话','New conversation'].includes(session.title)?tr('新对话'):session.title) : 'TheraSkill Support'}</h1>
+            <h1>{session?.title ? (['新对话','New conversation'].includes(session.title)?tr('新对话'):session.title) : tr('TheraSkill 助手')}</h1>
             <span>{session?.status === 'completed' ? tr('已结束') : pending ? tr('正在回应') : tr('进行中')}</span>
           </div>
           <div className="header-actions">
@@ -598,7 +598,7 @@ export default function App() {
 
         <div className="conversation">
           {!session?.messages.length && (
-            <div className="empty-state"><MessageCircle size={30} /><h2>{tr("今天想聊些什么？")}</h2></div>
+            <div className="empty-state"><div className="assistant-welcome-mark"><MessageCircle size={30} /></div><p className="empty-kicker">{tr('TheraSkill 助手')}</p><h2>{tr("今天想完成什么？")}</h2><p className="empty-description">{tr('可以从一个问题、一段对话或一个教学目标开始。我会先理解你的意图，再决定是否需要知识、技能或任务。')}</p><div className="starter-prompts"><button onClick={() => setDraft(tr('帮我理解这段对话'))}>{tr('帮我理解这段对话')}</button><button onClick={() => setDraft(tr('查找适用的治疗知识'))}>{tr('查找适用的治疗知识')}</button><button onClick={() => setDraft(tr('帮我设计一个练习'))}>{tr('帮我设计一个练习')}</button></div></div>
           )}
           {session?.messages.map((message) => (
             <Message

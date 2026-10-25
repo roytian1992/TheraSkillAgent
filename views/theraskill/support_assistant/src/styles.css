@@ -206,9 +206,18 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   place-items: center;
   align-content: center;
   min-height: 55vh;
+  max-width: 760px;
+  margin: 0 auto;
   color: var(--green);
+  text-align: center;
 }
-.empty-state h2 { margin: 13px 0 0; color: var(--ink); font-size: 18px; font-weight: 650; }
+.assistant-welcome-mark { display: grid; place-items: center; width: 60px; height: 60px; border-radius: 18px; color: #fff; background: var(--green); box-shadow: 0 8px 20px rgba(22, 118, 93, .18); }
+.empty-kicker { margin: 16px 0 0; color: var(--green); font-size: 11px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+.empty-state h2 { margin: 7px 0 0; color: var(--ink); font-size: 22px; font-weight: 700; }
+.empty-description { max-width: 520px; margin: 10px 0 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.starter-prompts { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.starter-prompts button { padding: 8px 11px; border: 1px solid #cfe0d6; border-radius: 999px; color: #2f654e; background: #f5faf7; font-size: 12px; }
+.starter-prompts button:hover { border-color: var(--green); color: var(--green-dark); background: var(--green-soft); }
 
 .message {
   display: flex;
