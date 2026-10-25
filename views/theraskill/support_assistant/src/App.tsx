@@ -4,9 +4,12 @@ import {
   AlertCircle,
   BookMarked,
   BookOpen,
+  ClipboardList,
   Check,
+  Database,
   Download,
   ExternalLink,
+  FileText,
   ListChecks,
   LoaderCircle,
   Menu,
@@ -51,6 +54,13 @@ function downloadJson(filename: string, value: unknown) {
   link.download = filename
   link.click()
   URL.revokeObjectURL(url)
+}
+
+function workbenchHref(workspace: string) {
+  const path = `/?workspace=${encodeURIComponent(workspace)}`
+  return import.meta.env.DEV
+    ? `${window.location.protocol}//${window.location.hostname}:5176${path}`
+    : path
 }
 
 function readableRole(role: string) {
@@ -598,7 +608,7 @@ export default function App() {
 
         <div className="conversation">
           {!session?.messages.length && (
-            <div className="empty-state"><div className="assistant-welcome-mark"><MessageCircle size={30} /></div><p className="empty-kicker">{tr('TheraSkill 助手')}</p><h2>{tr("今天想完成什么？")}</h2><p className="empty-description">{tr('可以从一个问题、一段对话或一个教学目标开始。我会先理解你的意图，再决定是否需要知识、技能或任务。')}</p><div className="starter-prompts"><button onClick={() => setDraft(tr('帮我理解这段对话'))}>{tr('帮我理解这段对话')}</button><button onClick={() => setDraft(tr('查找适用的治疗知识'))}>{tr('查找适用的治疗知识')}</button><button onClick={() => setDraft(tr('帮我设计一个练习'))}>{tr('帮我设计一个练习')}</button></div></div>
+            <div className="empty-state"><div className="assistant-welcome-mark"><MessageCircle size={30} /></div><p className="empty-kicker">{tr('TheraSkill 助手')}</p><h2>{tr("今天想完成什么？")}</h2><p className="empty-description">{tr('可以从一个问题、一段对话或一个教学目标开始。我会先理解你的意图，再决定是否需要知识、技能或任务。')}</p><div className="starter-prompts"><button onClick={() => setDraft(tr('帮我理解这段对话'))}>{tr('帮我理解这段对话')}</button><button onClick={() => setDraft(tr('查找适用的治疗知识'))}>{tr('查找适用的治疗知识')}</button><button onClick={() => setDraft(tr('帮我设计一个练习'))}>{tr('帮我设计一个练习')}</button></div><div className="assistant-workspaces"><span className="assistant-workspaces-label">{tr('需要直接处理时：')}</span><nav aria-label={tr('专业工作区')}><a href={workbenchHref('learning')}><BookOpen size={14} /><span>{tr('课程与学习')}</span></a><a href={workbenchHref('transcript')}><FileText size={14} /><span>{tr('对话分析')}</span></a><a href={workbenchHref('extraction')}><Database size={14} /><span>{tr('知识抽取')}</span></a><a href={workbenchHref('knowledge')}><Database size={14} /><span>{tr('知识与索引')}</span></a><a href={workbenchHref('tasks')}><ClipboardList size={14} /><span>{tr('任务与历史')}</span></a></nav></div></div>
           )}
           {session?.messages.map((message) => (
             <Message

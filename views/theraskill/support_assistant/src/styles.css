@@ -218,6 +218,11 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .starter-prompts { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 .starter-prompts button { padding: 8px 11px; border: 1px solid #cfe0d6; border-radius: 999px; color: #2f654e; background: #f5faf7; font-size: 12px; }
 .starter-prompts button:hover { border-color: var(--green); color: var(--green-dark); background: var(--green-soft); }
+.assistant-workspaces { width: min(100%, 640px); margin-top: 26px; padding-top: 16px; border-top: 1px solid #e1ebe5; text-align: left; }
+.assistant-workspaces-label { display: block; margin-bottom: 9px; color: var(--muted); font-size: 11px; text-align: center; }
+.assistant-workspaces nav { display: flex; justify-content: center; flex-wrap: wrap; gap: 7px; }
+.assistant-workspaces a { display: inline-flex; align-items: center; gap: 5px; padding: 7px 10px; border: 1px solid #d5e2da; border-radius: 8px; color: #426454; background: #fff; font-size: 11px; text-decoration: none; }
+.assistant-workspaces a:hover { border-color: var(--green); color: var(--green-dark); background: var(--green-soft); }
 
 .message {
   display: flex;

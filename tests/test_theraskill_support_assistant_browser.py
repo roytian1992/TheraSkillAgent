@@ -69,6 +69,9 @@ def test_support_assistant_welcome_prompts(tmp_path):
             page.get_by_placeholder("输入你想说的内容").wait_for()
             page.get_by_role("button", name="帮我理解这段对话", exact=True).wait_for()
             assert page.locator(".brand-row span").inner_text() == "助手"
+            assert page.locator(".assistant-workspaces a").count() == 5
+            assert page.locator(".assistant-workspaces a").nth(0).get_attribute("href") == "/?workspace=learning"
+            assert page.locator(".assistant-workspaces a").nth(1).get_attribute("href") == "/?workspace=transcript"
             page.get_by_role("button", name="帮我理解这段对话", exact=True).click()
             assert page.get_by_placeholder("输入你想说的内容").input_value() == "帮我理解这段对话"
             page.screenshot(path=str(tmp_path / "assistant-welcome.png"), full_page=True)
