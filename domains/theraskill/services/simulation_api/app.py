@@ -234,6 +234,15 @@ class CourseBlueprintRequest(BaseModel):
     language: str = Field(default="zh", pattern="^(zh|en)$")
 
 
+class CourseAgentTurnRequest(BaseModel):
+    """One teacher turn in the conversational course-design workspace."""
+
+    model_config = ConfigDict(extra="forbid")
+    message: str = Field(min_length=1, max_length=4000)
+    language: str = Field(default="zh", pattern="^(zh|en)$")
+    draft: dict[str, Any] = Field(default_factory=dict)
+
+
 class CourseFromBatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     batch_id: str = Field(min_length=1, max_length=120)
@@ -1461,6 +1470,25 @@ def create_app(
                               "scaffolding": item.scaffolding, "completion_policy": item.completion_policy}
                              for item in localized_templates]
         return seed
+
+    @app.post("/courses/agent-turn")
+    def course_agent_turn(
+        request: CourseAgentTurnRequest,
+        role: ActorRole = Depends(caller_role),
+    ) -> dict[str, Any]:
+        """Advance a teacher-led course design conversation.
+
+        The conversation layer only collects intent and proposes a tool plan.
+        It never silently creates a course or a patient; the UI must explicitly
+        confirm the returned ``confirm_blueprint`` action.
+        """
+        if role not in {ActorRole.INSTRUCTOR, ActorRole.RESEARCHER, ActorRole.SYSTEM}:
+            raise HTTPException(status_code=403, detail="course agent requires instructor or researcher role")
+        from domains.theraskill.theraskill_simulation.course_agent import course_agent_turn as respond
+        try:
+            return respond(request.message, request.draft, language=request.language)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/courses", status_code=201)
     def add_course(

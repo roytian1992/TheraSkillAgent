@@ -6,7 +6,7 @@ It connects therapeutic knowledge, dialogue processing, simulated patients, coun
 
 TheraSkillAgent is more than a chat interface that generates replies. It models the **process, evidence, interaction, and reflection** involved in psychotherapy training: an agent can ask for clarification, call tools, wait for approval, preserve checkpoints, and record the knowledge release, skill version, model configuration, and evaluation evidence used by a task.
 
-[中文 README](README.zh.md) · [Deployment guide](docs/deployment.en.md) · [中文部署说明](docs/deployment.zh.md) · [Simulated patients](docs/simulated_patients.en.md) · [Resource installation](docs/resource_installation.en.md)
+[中文 README](README.zh.md) · [Deployment guide](docs/deployment.en.md) · [中文部署说明](docs/deployment.zh.md) · [Simulated patients](docs/simulated_patients.en.md) · [Course Agent design](docs/course_agent_design.en.md) · [Resource installation](docs/resource_installation.en.md)
 
 ## What it is for
 
@@ -49,7 +49,7 @@ Every step can be started from the browser workbench, CLI, or a skill. When a ta
 
 ## From course preparation to practice
 
-In **Courses and learning progress**, start from a bilingual teaching template, adapt its objectives and knowledge cards, and assign approved simulated cases. Learners practise short responses before full sessions, save their reflections, and receive feedback tied to their own dialogue.
+In **Courses and learning progress**, start by discussing the teaching goal with the Course Agent, then adapt a bilingual teaching template, its objectives and knowledge cards, and assign approved simulated cases. Learners practise short responses before full sessions, save their reflections, and receive feedback tied to their own dialogue. See the [Course Agent design](docs/course_agent_design.en.md) for the interaction and confirmation flow.
 
 The configured LLM judges one objective at a time using the course rubric and relevant retrieved knowledge. Source quotes are checked, unobserved behaviours remain unscored, and instructors record their decisions separately. Progress keeps track of support conditions, case difficulty and rubric versions. See the [teaching and learning guide](docs/learning.en.md).
 

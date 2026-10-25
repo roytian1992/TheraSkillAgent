@@ -6,7 +6,7 @@ TheraSkillAgent 是一个面向**心理咨询与心理治疗训练、研究和�
 
 TheraSkillAgent 不是一个只会生成回复的聊天界面。它关注的是心理治疗训练中的**过程、证据、交互和复盘**：模型需要在合适的阶段提问、澄清、调用工具、等待确认，并把输入、知识来源、技能版本和评估结果保存下来。
 
-[English README](README.md) · [中文部署说明](docs/deployment.zh.md) · [English deployment guide](docs/deployment.en.md) · [模拟患者说明](docs/simulated_patients.zh.md) · [资源安装说明](docs/resource_installation.zh.md)
+[English README](README.md) · [中文部署说明](docs/deployment.zh.md) · [English deployment guide](docs/deployment.en.md) · [模拟患者说明](docs/simulated_patients.zh.md) · [课程 Agent 设计](docs/course_agent_design.zh.md) · [资源安装说明](docs/resource_installation.zh.md)
 
 复杂设计和评审任务分阶段生成、核验与修复。患者和对话评估可查看后台进度、失败恢复；课程批次展示计划和覆盖。详见[证据检查与任务恢复](docs/workflow_reliability.zh.md)。
 
@@ -51,7 +51,7 @@ flowchart LR
 
 ## 从备课到练习与反馈
 
-在「课程与学习进展」中，从双语课程起点出发，调整目标、知识卡与短练习，再分配已审核的模拟案例。学员先练一段回应，再进入完整会谈，保存反思，并查看对应自己原话的反馈。
+在「课程与学习进展」中，可以先和课程 Agent 讨论教学目标，再从双语课程起点调整目标、知识卡与短练习，最后分配已审核的模拟案例。学员先练一段回应，再进入完整会谈，保存反思，并查看对应自己原话的反馈。课程 Agent 的交互边界和确认流程见[课程 Agent 设计](docs/course_agent_design.zh.md)。
 
 平台配置的 LLM 按目标逐项评阅，结合课程量规和适用的检索知识，校验对话及知识引文；未观察到的行为不强行打分。教师判断独立保留，进展同时记录提示条件、案例难度和量规版本。详见[课程与学习指南](docs/learning.zh.md)。
 

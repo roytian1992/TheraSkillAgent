@@ -73,6 +73,7 @@ def test_course_draft_micro_feedback_and_isolated_reflection(tmp_path):
             page.on('pageerror',lambda error:errors.append(str(error)))
             page.route('**/api/**',handle)
             page.goto(base + '/?workspace=learning')
+            page.get_by_text('高级编辑：直接调整模板、目标、知识卡和微练习', exact=True).click()
             page.get_by_role('button',name='创建课程起点',exact=True).click()
             page.get_by_label('希望学员做到什么',exact=True).fill('UPDATED GOAL: 先反映情绪再邀请来访者修正')
             page.get_by_label('为什么练习这个技能',exact=True).fill('UPDATED KNOWLEDGE CARD')
@@ -82,7 +83,7 @@ def test_course_draft_micro_feedback_and_isolated_reflection(tmp_path):
             saved=next(item['body'] for item in calls if item['path']=='/courses')
             assert saved['learning_objectives'][0]['description'].startswith('UPDATED GOAL')
             assert saved['learning_units']['knowledge_cards'][0]['why_it_matters']=='UPDATED KNOWLEDGE CARD'
-            page.reload();page.get_by_label('希望学员做到什么',exact=True).wait_for()
+            page.reload();page.get_by_text('高级编辑：直接调整模板、目标、知识卡和微练习', exact=True).click();page.get_by_label('希望学员做到什么',exact=True).wait_for()
             assert page.get_by_label('希望学员做到什么',exact=True).input_value().startswith('UPDATED GOAL')
             page.screenshot(path=str(ART/'teacher-design.png'),full_page=True)
             page.get_by_role('button',name='按当前目标生成病例草案',exact=True).click()
@@ -128,6 +129,7 @@ def test_course_draft_micro_feedback_and_isolated_reflection(tmp_path):
             page.get_by_role('button',name='重试未完成的反馈',exact=True).click()
             page.get_by_text('回应具体反映了担忧',exact=True).wait_for()
             page.get_by_role('button',name='EN',exact=True).click()
+            page.get_by_text('Advanced editing: templates, objectives, cards and micro-practices', exact=True).click()
             page.get_by_role('button',name='Create course starter',exact=True).click()
             page.get_by_label('What should the learner be able to do?',exact=True).wait_for()
             assert page.get_by_label('Course title',exact=True).input_value()=='First-session foundations'
