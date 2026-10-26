@@ -79,7 +79,7 @@ _FAST_PATH_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 _PRODUCT_HELP_PATTERNS = (
-    re.compile(r"^(?:请问)?(?:怎么|如何)(?:配置|设置|测试|保存|更换)(?:LLM|embedding|模型|API|模型连接)(?:的(?:地址|密钥|名称|配置))?[?？!！。 ]*$", re.I),
+    re.compile(r"^(?:请问)?(?:怎么|如何)(?:配置|设置|测试|保存|更换)\s*(?:LLM|embedding|模型|API|模型连接)(?:\s*(?:API|模型|配置|连接|地址|密钥|名称))?(?:的(?:地址|密钥|名称|配置))?[?？!！。 ]*$", re.I),
     re.compile(r"^(?:请问)?(?:在哪|在哪里|哪里可以)(?:编辑|查看|打开|保存)(?:知识|知识条目|模型配置|任务历史|参考依据)[?？!！。 ]*$", re.I),
     re.compile(r"^(?:当前|现在)?每(?:一)?(?:个|轮)?(?:对话|回复)(?:都|会|都会|是否会|是不是会|会不会)?(?:检索|抽取) *(?:知识|知识库|证据|evidence) *(?:吗|么)?[?？!！。 ]*$", re.I),
     re.compile(r"^how (?:do i|can i|to) (?:configure|set up|test|save|change) (?:the |my )?(?:llm|embedding|model|api)(?: (?:settings|url|key|name|configuration))?[?!. ]*$", re.I),

@@ -223,6 +223,12 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .assistant-workspaces nav { display: flex; justify-content: center; flex-wrap: wrap; gap: 7px; }
 .assistant-workspaces a { display: inline-flex; align-items: center; gap: 5px; padding: 7px 10px; border: 1px solid #d5e2da; border-radius: 8px; color: #426454; background: #fff; font-size: 11px; text-decoration: none; }
 .assistant-workspaces a:hover { border-color: var(--green); color: var(--green-dark); background: var(--green-soft); }
+.workspace-handoff { display: flex; align-items: center; justify-content: space-between; gap: 12px; max-width: min(700px, 88%); margin: 5px 0 24px; padding: 12px 14px; border: 1px solid #cfe0d6; border-radius: 9px; color: #315a48; background: #f3faf6; }
+.workspace-handoff strong { color: var(--green-dark); font-size: 13px; }
+.workspace-handoff p { margin: 3px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.workspace-handoff a { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--green-dark); font-size: 12px; font-weight: 650; text-decoration: none; }
+.workspace-handoff a:hover { text-decoration: underline; }
+@media (max-width: 600px) { .workspace-handoff { align-items: flex-start; flex-direction: column; max-width: 100%; } }
 
 .message {
   display: flex;

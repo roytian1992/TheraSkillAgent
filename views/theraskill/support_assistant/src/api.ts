@@ -1,4 +1,4 @@
-import type { ContributionSummary, DomainMemory, FeedbackConsent, SubmitMessageResult, SupportSession } from './types'
+import type { ContributionSummary, DomainMemory, FeedbackConsent, SubmitMessageResult, SupportSession, WorkspaceRoute } from './types'
 
 const API_URL = (import.meta.env.VITE_SUPPORT_API_URL || '/api/plugins/theraskill-support').replace(/\/$/, '')
 function userId() {
@@ -52,6 +52,13 @@ export async function submitMessage(
     method: 'POST',
     headers: { 'Idempotency-Key': crypto.randomUUID() },
     body: JSON.stringify({ text, output_language: window.localStorage.getItem('theraskill-locale') === 'en' ? 'en' : 'zh' }),
+  })
+}
+
+export async function routeWorkspace(text: string): Promise<WorkspaceRoute> {
+  return request('/workspace/route', {
+    method: 'POST',
+    body: JSON.stringify({ text, language: window.localStorage.getItem('theraskill-locale') === 'en' ? 'en' : 'zh' }),
   })
 }
 

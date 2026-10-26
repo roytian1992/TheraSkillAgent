@@ -35,6 +35,7 @@ from domains.theraskill.observability import RequestMetrics
 from domains.theraskill.metrics_middleware import MetricsMiddleware
 from domains.theraskill.knowledge_editor import KnowledgeEditor, KnowledgeRevisionConflict, KnowledgeUnitNotFound
 from theraskill_agent import resource_jobs
+from theraskill_agent.workspace_router import route_workspace
 
 
 from theraskill_agent.paths import resource_root, resource_path
@@ -85,6 +86,12 @@ class SubmitMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     output_language: Literal["auto", "zh", "en"] | None = None
     text: str = Field(min_length=1, max_length=12000)
+
+
+class WorkspaceRouteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=12000)
+    language: Literal["auto", "zh", "en"] = "auto"
 
 
 class RetryResponseRequest(BaseModel):
@@ -308,6 +315,14 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, Any]:
         return {"status": "ok", "service": "theraskill-support", "version": app.version}
+
+    @app.post("/workspace/route")
+    def workspace_route(
+        request: WorkspaceRouteRequest,
+        _actor: tuple[str, str] = Depends(identity),
+    ) -> dict[str, Any]:
+        language = request.language if request.language in {"zh", "en"} else "zh"
+        return route_workspace(request.text, language=language).to_dict()
 
     @app.get("/safety/resources")
     def safety_resources(

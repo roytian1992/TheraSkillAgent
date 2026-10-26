@@ -96,6 +96,20 @@ export interface SubmitMessageResult {
   response_pending: boolean
 }
 
+export interface WorkspaceRoute {
+  workspace: string
+  intent: string
+  confidence: number
+  handoff_ready: boolean
+  matched_terms: string[]
+  label_zh: string
+  label_en: string
+  reason_zh: string
+  reason_en: string
+  skill_hint?: string | null
+  href: string
+}
+
 export interface FeedbackConsent {
   content_review: boolean
   research_use: boolean

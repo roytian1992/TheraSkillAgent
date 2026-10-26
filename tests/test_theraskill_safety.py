@@ -180,6 +180,8 @@ def test_fast_path_is_limited_to_lightweight_low_risk_exchanges() -> None:
     assert engine._fast_path_route(record, "我睡不着怎么办？") is None
     assert engine._fast_path_route(record, "我想自杀") is None
     assert engine._fast_path_route(record, "当前每个对话都会抽取 evidence 吗？") is not None
+    assert engine._fast_path_route(record, "怎么配置 LLM API") is not None
+    assert engine._fast_path_route(record, "如何测试 embedding API") is not None
     assert engine._fast_path_route(
         SimpleNamespace(workflow="response_review", output_language="auto"), "谢谢"
     ) is None

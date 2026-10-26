@@ -38,12 +38,13 @@ import {
   retryResponse,
   recordSafetyAction,
   recordSafetyCheckIn,
+  routeWorkspace,
   submitMessage,
   submitResponseFeedback,
   updatePlan,
   withdrawContribution,
 } from './api'
-import type { ContributionSummary, EvidenceSummary, FeedbackConsent, SupportMessage, SupportSession } from './types'
+import type { ContributionSummary, EvidenceSummary, FeedbackConsent, SupportMessage, SupportSession, WorkspaceRoute } from './types'
 import { useLocale } from './i18n'
 
 function downloadJson(filename: string, value: unknown) {
@@ -395,6 +396,7 @@ export default function App() {
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [contributions, setContributions] = useState<ContributionSummary[]>([])
   const [selectedEvidence, setSelectedEvidence] = useState<EvidenceSummary | null>(null)
+  const [workspaceRoute, setWorkspaceRoute] = useState<WorkspaceRoute | null>(null)
   const [contributionLoading, setContributionLoading] = useState(false)
   const transcriptEnd = useRef<HTMLDivElement>(null)
 
@@ -482,6 +484,8 @@ export default function App() {
     try {
       setDraft('')
       setError('')
+      const routed = await routeWorkspace(text).catch(() => null)
+      setWorkspaceRoute(routed?.handoff_ready ? routed : null)
       const result = await submitMessage(session.session_id, text)
       setSession(result.session)
       setSessions((current) => current.map((row) => row.session_id === result.session.session_id ? result.session : row))
@@ -628,6 +632,12 @@ export default function App() {
           )}
           {failed && (
             <div className="generation-failed"><AlertCircle size={18} /><span>{tr("回应生成失败")}</span><button onClick={retry}><RefreshCw size={15} />{tr("重试")}</button></div>
+          )}
+          {workspaceRoute?.handoff_ready && (
+            <div className="workspace-handoff" role="status">
+              <div><strong>{locale === 'zh' ? workspaceRoute.label_zh : workspaceRoute.label_en}</strong><p>{locale === 'zh' ? workspaceRoute.reason_zh : workspaceRoute.reason_en}</p></div>
+              <a href={workbenchHref(workspaceRoute.workspace)}>{tr('进入工作区')} <ExternalLink size={13} /></a>
+            </div>
           )}
           <div ref={transcriptEnd} />
         </div>
