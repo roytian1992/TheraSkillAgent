@@ -9,3 +9,4 @@
 .language-toggle{min-width:42px;height:30px;padding:0 9px;border:1px solid #bdc7c0;border-radius:4px;background:white;color:#1f6b4f;font-size:11px;font-weight:750;letter-spacing:.02em;cursor:pointer}.language-toggle:hover{background:#edf8f1}.header-tools{display:flex;align-items:center;gap:10px}
 
 .profile-setup,.job-history{margin:12px 0;padding:12px;border:1px solid #d8e1dc;background:#f5f8f6}.job-history button{margin:5px;padding:8px;text-align:left}.header-tools select{max-width:160px}.profile-setup input{margin:5px;padding:8px}.header-tools label{font-size:11px}header a{color:inherit;text-decoration:none;font-weight:700}
+@media(max-width:760px){header{height:auto;min-height:62px;padding:10px 12px;align-items:flex-start;gap:8px;flex-wrap:wrap}.header-tools{flex:1 1 100%;min-width:0;justify-content:flex-end;gap:7px}.header-tools label{display:flex;align-items:center;gap:4px;min-width:0}.header-tools select{max-width:110px;min-width:0}}

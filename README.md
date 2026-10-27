@@ -8,7 +8,7 @@ TheraSkillAgent is more than a chat interface that generates replies. It models 
 
 The interface starts with the **Assistant**. A user can describe a question, a dialogue file, or a teaching goal in natural language. The Assistant can answer directly, retrieve knowledge, call a Skill, or move the work into a durable workspace task when more control is needed. Courses, knowledge, and simulation pages remain available for detailed follow-up.
 
-[中文 README](README.zh.md) · [Deployment guide](docs/deployment.en.md) · [中文部署说明](docs/deployment.zh.md) · [Simulated patients](docs/simulated_patients.en.md) · [Course Agent design](docs/course_agent_design.en.md) · [Resource installation](docs/resource_installation.en.md)
+[中文 README](README.zh.md) · [English step-by-step user guide](docs/user_guide.en.md) · [图文中文指南](docs/user_guide.zh.md) · [Deployment guide](docs/deployment.en.md) · [中文部署说明](docs/deployment.zh.md) · [Simulated patients](docs/simulated_patients.en.md) · [Course Agent design](docs/course_agent_design.en.md) · [Resource installation](docs/resource_installation.en.md)
 
 ## What it is for
 

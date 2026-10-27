@@ -3,6 +3,7 @@ import { CheckCircle2, ClipboardCheck, LoaderCircle, Play, Search, Square, Uploa
 
 type Locale = 'zh' | 'en'
 const DEFAULT_SCHEMA = { type: 'object', properties: { claim: { type: 'string', description: 'Reusable claim' }, evidence: { type: 'string', description: 'Verbatim source evidence' } }, required: ['claim', 'evidence'] }
+const CHINESE_SCHEMA = { ...DEFAULT_SCHEMA, properties: { claim: { type: 'string', description: '可复用的结论或策略' }, evidence: { type: 'string', description: '逐字原文依据' } } }
 function stable(value: any): any { return Array.isArray(value) ? value.map(stable) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value }
 function planKey(plan: Record<string, any>) {
   const keys = ['goal', 'unit_definition', 'language', 'target_schema', 'evidence_required', 'evidence_fields', 'quality_rules', 'operations', 'semantic_review', 'model_profile', 'prompt_version']
@@ -14,8 +15,8 @@ export default function ExtractionStudio({ locale, onBack }: { locale: Locale; o
   const [initial] = useState(savedDraft)
   const [sourcePath, setSourcePath] = useState(initial.sourcePath || '')
   const [goal, setGoal] = useState(initial.goal || '')
-  const [unit, setUnit] = useState(initial.unit || 'one source record')
-  const [schema, setSchema] = useState(initial.schema || JSON.stringify(DEFAULT_SCHEMA, null, 2))
+  const [unit, setUnit] = useState(initial.unit || (locale === 'zh' ? '每条源记录' : 'one source record'))
+  const [schema, setSchema] = useState(initial.schema || JSON.stringify(locale === 'zh' ? CHINESE_SCHEMA : DEFAULT_SCHEMA, null, 2))
   const [job, setJob] = useState<Record<string, any> | null>(null)
   const [history, setHistory] = useState<Record<string, any>[]>([])
   const [preview, setPreview] = useState<Record<string, any> | null>(null)
@@ -33,6 +34,8 @@ export default function ExtractionStudio({ locale, onBack }: { locale: Locale; o
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const t = (zh: string, en: string) => locale === 'zh' ? zh : en
+  const statusName = (value: string) => locale === 'zh' ? ({ queued: '等待中', running: '进行中', completed: '已完成', partial: '部分完成', failed: '失败', grounded: '已核对原文' } as Record<string, string>)[value] || value : value
+  const fieldNameLabel = (value: string) => locale === 'zh' ? ({ claim: '结论或策略', evidence: '原文依据' } as Record<string, string>)[value] || value : value
   const parsed = useMemo(() => { try { return JSON.parse(schema) } catch { return null } }, [schema])
   const currentPlan = useMemo(() => ({ ...planExtras, goal, source: { path: sourcePath }, unit_definition: unit, target_schema: parsed, language: locale, semantic_review: semanticReview, status: 'draft' }), [planExtras, goal, sourcePath, unit, parsed, locale, semanticReview])
   const currentKey = planKey(currentPlan)
@@ -123,7 +126,17 @@ export default function ExtractionStudio({ locale, onBack }: { locale: Locale; o
       <label className="file-picker">{t('上传并使用文件', 'Upload and use file')}<input type="file" accept=".json,.jsonl,.csv,.tsv,.md,.txt,.srt,.vtt" onChange={upload} /></label>
       <label className="field-label">{t('输入文件', 'Input file')}<input value={sourcePath} onChange={event => { setSourcePath(event.target.value); setPlanConfirmed(false) }} /></label>
       <button className="secondary-action" onClick={() => void inspect()} disabled={busy || !sourcePath}><Search size={15} />{t('检查输入', 'Inspect input')}</button>
-      {sourceInfo && <details open><summary>{t('输入与样本（最多 5 条）', 'Source and samples (up to 5)')}</summary><pre>{JSON.stringify(sourceInfo, null, 2)}</pre></details>}
+      {sourceInfo && <section className="extraction-source-preview" aria-label={t('输入检查结果', 'Input inspection')}>
+        <div className="extraction-source-summary"><strong>{t('已读取输入', 'Input inspected')}</strong><span>{sourceInfo.source?.records ?? sourceInfo.samples?.length ?? 0} {t('条记录', 'records')} · {sourceInfo.source?.format || sourceInfo.source?.adapter || t('文件', 'file')}</span></div>
+        <details><summary>{t('查看原文样本（最多 5 条）', 'View source samples (up to 5)')}</summary>
+          {(sourceInfo.samples || []).map((sample: any, index: number) => <article className="extraction-sample" key={`${sample.record_id || 'sample'}-${index}`}>
+            <strong>{sample.record_id || `${t('样本', 'Sample')} ${index + 1}`}</strong>
+            {sample.metadata?.line_start && <small>{t('原文行', 'Source lines')} {sample.metadata.line_start}{sample.metadata.line_end ? `–${sample.metadata.line_end}` : ''}</small>}
+            <p>{typeof sample.payload === 'string' ? sample.payload : JSON.stringify(sample.payload, null, 2)}</p>
+          </article>)}
+        </details>
+        <details><summary>{t('来源与格式信息', 'Source and format details')}</summary><pre>{JSON.stringify(sourceInfo.source, null, 2)}</pre></details>
+      </section>}
       <label className="field-label">{t('抽取目标', 'Extraction goal')}<textarea className="short-textarea" placeholder={t('例如：提取有原文证据的共情回应策略', 'For example: extract empathic response strategies with source evidence')} value={goal} onChange={event => { setGoal(event.target.value); setPlanConfirmed(false) }} /></label>
       <button className="secondary-action" disabled={busy || !sourcePath || !goal.trim()} onClick={() => void suggest()}>{t('让模型建议字段与计划', 'Ask model to propose fields and plan')}</button>
       <p className="hint-note">{t('此操作向当前配置的 LLM 发送最多 5 条源记录；只生成计划，不启动抽取。', 'This sends up to 5 source records to your configured LLM to propose a plan. It does not start extraction.')}</p>
@@ -146,11 +159,11 @@ export default function ExtractionStudio({ locale, onBack }: { locale: Locale; o
       {message && <p className="message-output" role="status">{message}</p>}
     </section><section className="studio-result panel"><h2>{t('抽取任务与结果', 'Extraction jobs and results')}</h2>
       <button onClick={() => void action(refreshHistory)}>{t('刷新任务列表', 'Refresh job list')}</button>
-      <div className="job-history">{history.map(row => <button key={row.job_id} className="resource-item" onClick={() => selectJob(row)}><strong>{row.plan?.goal || row.job_id}</strong><span>{row.status} · {row.created_at}</span></button>)}</div>
-      {job ? <><div className="result-heading"><strong>{job.job_id}</strong><span className={'job-status ' + job.status}>{job.status}</span></div><p>{t('进度', 'Progress')}: {JSON.stringify(job.progress || {})}</p>{job.error && <p role="alert">{job.error}</p>}{job.trial_review && <p className="hint-note">{job.trial_review.decision === 'accepted' ? t('此任务已记录试抽接受', 'This job records sample acceptance') : t('此任务已记录主动跳过试抽', 'This job records an explicit sample skip')}: {job.trial_review.sample_job_id || job.trial_review.note}</p>}
+      <div className="job-history">{history.map(row => <button key={row.job_id} className="resource-item" onClick={() => selectJob(row)}><strong>{row.plan?.goal || row.job_id}</strong><span>{statusName(row.status)} · {row.created_at}</span></button>)}</div>
+      {job ? <><div className="result-heading"><strong>{job.plan?.goal || job.job_id}</strong><span className={'job-status ' + job.status}>{statusName(job.status)}</span></div><p>{t('进度', 'Progress')}: {job.progress?.processed ?? 0} {t('条已处理', 'processed')} · {job.progress?.failures ?? 0} {t('条失败', 'failed')}</p>{job.error && <p role="alert">{job.error}</p>}{job.trial_review && <p className="hint-note">{job.trial_review.decision === 'accepted' ? t('此任务已记录试抽接受', 'This job records sample acceptance') : t('此任务已记录主动跳过试抽', 'This job records an explicit sample skip')}: {job.trial_review.sample_job_id || job.trial_review.note}</p>}
         <div className="button-row"><button onClick={() => void runAction('preview')} disabled={busy}><ClipboardCheck size={15} />{t('预览候选', 'Preview candidates')}</button><button onClick={() => void runAction('handoff')} disabled={busy || Boolean(receipt) || !['completed', 'partial'].includes(job.status)}><CheckCircle2 size={15} />{t('交给治理', 'Handoff to governance')}</button>{['failed','partial'].includes(job.status) && <button onClick={() => void runAction('retry')} disabled={busy}>{t('重试未完成记录', 'Retry unfinished records')}</button>}<button onClick={() => void runAction('cancel')} disabled={busy || !['queued', 'running'].includes(job.status)}><Square size={14} />{t('取消作业', 'Cancel job')}</button></div>
-        {receipt && <div className="notice"><strong>{t('候选已交接，尚未发布为知识', 'Candidates handed off; knowledge is not published')}</strong><pre>{JSON.stringify(receipt, null, 2)}</pre><a href={'/theraskill/expert/?view=governance&candidate_id=' + encodeURIComponent(receipt.candidate_ids?.[0] || '')}>{t('前往候选治理工作区', 'Open candidate governance')}</a></div>}
-        {preview && <pre className="json-output">{JSON.stringify(preview, null, 2)}</pre>}<details><summary>{t('完整任务记录', 'Full job record')}</summary><pre className="json-output">{JSON.stringify(job, null, 2)}</pre></details>
+        {receipt && <div className="notice"><strong>{t('候选已交接，尚未发布为知识', 'Candidates handed off; knowledge is not published')}</strong><p>{receipt.candidate_ids?.length ?? 0} {t('条候选等待审核', 'candidates await review')}</p><a href={'/theraskill/expert/?view=governance&candidate_id=' + encodeURIComponent(receipt.candidate_ids?.[0] || '')}>{t('前往候选治理工作区', 'Open candidate governance')}</a></div>}
+        {preview && <section className="extraction-candidate-list"><h3>{t('候选内容与原文依据', 'Candidates and source evidence')} · {preview.items?.length ?? 0}</h3>{(preview.items || []).map((item: any, index: number) => <article className="extraction-candidate" key={`${item.source_id || 'candidate'}-${index}`}><div><strong>{t('候选', 'Candidate')} {index + 1}</strong><span>{item.knowledge_type === 'dynamic_knowledge' ? t('过程知识', 'Process knowledge') : item.knowledge_type || ''}</span></div>{Object.entries(item.content && typeof item.content === 'object' ? item.content : { content: item.content }).map(([name, value]) => <p key={name}><b>{fieldNameLabel(name)}</b><br />{typeof value === 'string' ? value : JSON.stringify(value, null, 2)}</p>)}{item.evidence?.quotes?.map((quote: any, quoteIndex: number) => <blockquote key={quoteIndex}><small>{t('原文引句', 'Source quote')} · {statusName(quote.status || t('待核对', 'Needs review'))}</small><br />{quote.quote}</blockquote>)}{!!item.evidence?.ungrounded_fields?.length && <p role="alert">{t('未获原文支持的字段', 'Fields without source support')}: {item.evidence.ungrounded_fields.join(', ')}</p>}</article>)}<details><summary>{t('完整技术结果', 'Full technical result')}</summary><pre className="json-output">{JSON.stringify(preview, null, 2)}</pre></details></section>}<details><summary>{t('完整任务记录', 'Full job record')}</summary><pre className="json-output">{JSON.stringify(job, null, 2)}</pre></details>
       </> : <div className="empty-result"><ClipboardCheck size={28} />{t('选择历史任务或创建一个新任务。', 'Select a saved job or create a new one.')}</div>}
     </section></div>
   </div>

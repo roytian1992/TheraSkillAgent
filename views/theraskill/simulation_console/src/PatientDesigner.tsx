@@ -4,6 +4,25 @@ import type { CallerRole, Scenario, SessionLanguage } from './types'
 import { buildPatient, forkPatient, inspectPatient, updateGeneratedScenario, startPatientJob, getPatientJob, listPatientJobs, retryPatientJob } from './api'
 import type { PatientDesign, PatientJob } from './api'
 import { cleanPatient, emptyPatient, PatientEditor } from './PatientEditor'
+import { knowledgeHref } from '../../shared/knowledge'
+import KnowledgeEntry from '../../shared/KnowledgeEntry'
+
+function groundingItem(content: string): Record<string, any> {
+  try { const parsed = JSON.parse(content); return parsed && typeof parsed === 'object' ? parsed : {} } catch { return {} }
+}
+
+function GroundingSource({ item, index, indexId }: { item: { retrieval_id: string; content: string }; index: number; indexId?: string }) {
+  const [open, setOpen] = useState(false)
+  const source = groundingItem(item.content)
+  const id = source.release_unit_id || source.unit_id || item.retrieval_id
+  const citedIndex = source.source_index_id || indexId
+  const locale = localStorage.getItem('theraskill-locale') === 'en' ? 'en' : 'zh'
+  return <details className="patient-grounding-source" onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>{source.canonical_label && source.canonical_label !== 'style_example' ? source.canonical_label : `${tr('参考知识')} ${index + 1}`}</summary>
+    {open && <KnowledgeEntry id={id} indexId={citedIndex} checksum={source.knowledge_sha256} locale={locale} />}
+    <a href={knowledgeHref(id, citedIndex, source.knowledge_sha256)}>{tr('在知识工作区打开')}</a>
+  </details>
+}
 
 export function PatientDesigner({ scenario, role, onSaved }: { scenario: Scenario; role: CallerRole; onSaved: (scenario: Scenario) => void }) {
   const [design, setDesign] = useState<PatientDesign | null>(null)
@@ -28,8 +47,8 @@ export function PatientDesigner({ scenario, role, onSaved }: { scenario: Scenari
     <div className="governance-actions"><button className="secondary-button" disabled={busy} onClick={() => void run('inspect')}>{tr('查看和编辑患者档案')}</button><button className="secondary-button" disabled={busy} onClick={() => void run('fork')}>{tr('复制为新场景')}</button></div>
     {error && <p role="alert" className="error-banner">{error}</p>}{notice && <p role="status">{notice}</p>}
     {design && <div>
-      <p>{tr('版本')} {design.revision} · {tr('知识支撑')}：{design.grounding.status === 'grounded' ? tr('已检索相关知识') : tr('未获得检索支撑')} {design.grounding.reason}</p>
-      {!!design.grounding.items?.length && <details><summary>{tr('查看知识来源')}</summary>{design.grounding.items.map(item => <p key={item.retrieval_id}>{item.retrieval_id}</p>)}</details>}
+      <p>{tr('版本')} {design.revision} · {tr('知识支撑')}：{design.grounding.status === 'grounded' ? tr('已检索相关知识') : tr('未获得检索支撑')}{design.grounding.reason && <> · {design.grounding.reason === 'No active knowledge index' ? tr('尚未启用知识索引') : design.grounding.reason}</>}</p>
+      {!!design.grounding.items?.length && <details className="patient-grounding"><summary>{tr('查看知识来源')} ({design.grounding.items.length})</summary>{design.grounding.items.map((item, index) => <GroundingSource key={item.retrieval_id} item={item} index={index} indexId={design.grounding.index_id} />)}</details>}
       {!scenario.generated && <p>{tr('已有资源病例请先复制，再编辑新场景。')}</p>}
       <fieldset disabled={!scenario.generated || busy} className="patient-dossier-fields"><PatientEditor value={design.patient} onChange={patient => setDesign({ ...design, patient })} prefix={`edit-${scenario.scenario_id}`} /></fieldset>
       {scenario.generated && <button className="primary-button" disabled={busy || !design.patient.presenting_concern.trim()} onClick={() => void run('save')}>{busy ? tr('正在保存…') : tr('保存患者新版本')}</button>}

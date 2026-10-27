@@ -8,7 +8,7 @@ TheraSkillAgent 不是一个只会生成回复的聊天界面。它关注的是�
 
 界面从「助手」开始。用户可以先用自然语言说明问题、对话材料或教学目标，再由助手判断应该直接回答、检索知识、调用 Skill，还是进入可恢复的任务工作区；课程、知识和情景页面用于需要更细控制的后续工作。
 
-[English README](README.md) · [中文部署说明](docs/deployment.zh.md) · [English deployment guide](docs/deployment.en.md) · [模拟患者说明](docs/simulated_patients.zh.md) · [课程 Agent 设计](docs/course_agent_design.zh.md) · [资源安装说明](docs/resource_installation.zh.md)
+[图文使用指南](docs/user_guide.zh.md) · [English step-by-step user guide](docs/user_guide.en.md) · [English README](README.md) · [中文部署说明](docs/deployment.zh.md) · [English deployment guide](docs/deployment.en.md) · [模拟患者说明](docs/simulated_patients.zh.md) · [课程 Agent 设计](docs/course_agent_design.zh.md) · [资源安装说明](docs/resource_installation.zh.md)
 
 复杂设计和评审任务分阶段生成、核验与修复。患者和对话评估可查看后台进度、失败恢复；课程批次展示计划和覆盖。详见[证据检查与任务恢复](docs/workflow_reliability.zh.md)。
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CheckCircle2, Database, ExternalLink, Layers3, Plus, Search } from 'lucide-react'
 import { KnowledgeJobView } from '../../shared/KnowledgeEntry'
 import type { KnowledgeJob } from '../../shared/knowledge'
@@ -39,6 +39,7 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
   const [linkedJob, setLinkedJob] = useState<Job | null>(null)
   const [reports, setReports] = useState<Array<{ id: string; created_at: string; gate?: { status: string }; target?: { index_id?: string } }>>([])
   const [behaviorReport, setBehaviorReport] = useState('')
+  const restoredSearchJob = useRef('')
 
   const activeName = catalog.active?.index.split('/').pop() || ''
   const selectedIndex = browseIndex || activeName || catalog.indexes[0]?.id || ''
@@ -55,6 +56,8 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
   const operationName = (name: string) => zh ? ({ plan: '准备构建', build: '构建索引', verify: '检查索引', search: '查找知识', activate: '启用索引', rollback: '恢复上一版', install: '安装资源', reindex: '更新知识索引', catalog: '准备知识目录' }[name] ?? name) : name.replaceAll('_', ' ')
   const statusName = (name: string) => zh ? ({ queued: '等待中', running: '进行中', succeeded: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' }[name] ?? name) : name
   const familyName = (name: string) => zh ? ({ style_response: '回应风格', therapy_process: '咨询过程', qa_psychoeducation: '心理教育', clinical_risk_assessment: '风险评估', method_rubric: '方法与量规', synthetic_construction: '合成对话方法' }[name] ?? name) : name.replaceAll('_', ' ')
+  const hitText = (hit: Hit) => hit.canonical_label && hit.retrieval_text.startsWith(hit.canonical_label + ' ') ? hit.retrieval_text.slice(hit.canonical_label.length + 1) : hit.retrieval_text
+  const hitTitle = (hit: Hit) => hit.canonical_label === 'style_example' ? t('回应示例', 'Response example') : hit.canonical_label || familyName(hit.dedup_family || '') || t('知识条目', 'Knowledge entry')
   const count = (value?: number) => typeof value === 'number' ? value.toLocaleString(zh ? 'zh-CN' : 'en-US') : '—'
 
   async function request(url: string, init?: RequestInit) {
@@ -65,6 +68,7 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
   }
   async function refresh() { setCatalog(await request('')) }
   const selectJob = (id: string) => {
+    restoredSearchJob.current = ''
     setSelectedJob(id)
     const url = new URL(location.href)
     url.searchParams.set('job_id', id)
@@ -92,6 +96,16 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
     const job = catalog.jobs.find(item => item.id === selectedJob)
     if (job) setDetail(job.result ?? null)
   }, [catalog, selectedJob])
+  useEffect(() => {
+    const job = linkedJob || catalog.jobs.find(item => item.id === selectedJob)
+    if (!job || job.id !== selectedJob || job.operation !== 'search' || restoredSearchJob.current === job.id) return
+    restoredSearchJob.current = job.id
+    setQuery(String(job.parameters?.query || ''))
+    setSkill(String(job.parameters?.skill || 'emotional-support'))
+    setBrowseIndex(String(job.parameters?.index || ''))
+    const filters = job.parameters?.filters as { language?: string } | undefined
+    setLanguageFilter(String(filters?.language || ''))
+  }, [catalog.jobs, linkedJob, selectedJob])
   useEffect(() => {
     setLinkedJob(null)
     if (!selectedJob) return
@@ -152,7 +166,7 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
         <div className="knowledge-search-row"><input aria-label={t('查找知识', 'Find knowledge')} value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') search() }} placeholder={t('描述你想解决的问题', 'Describe the question you want to answer')} /><button className="primary" disabled={busy || !query.trim()} onClick={search}><Search size={16} />{t('查找', 'Search')}</button></div>
         <div className="knowledge-search-options"><label>{t('用于哪个功能', 'Used for')}<select value={skill} onChange={event => setSkill(event.target.value)}><option value="emotional-support">{t('支持对话', 'Support conversation')}</option><option value="risk-triage">{t('风险沟通', 'Risk communication')}</option><option value="cognitive-reframing-support">{t('认知重构', 'Cognitive reframing')}</option><option value="rebt-belief-work-support">REBT</option><option value="synthetic-dialogue-builder">{t('情景生成', 'Scenario creation')}</option><option value="therapy-response-reviewer">{t('回应评阅', 'Response review')}</option></select></label><details><summary>{t('更换知识版本或筛选语言', 'Choose another version or filter language')}</summary><div className="knowledge-search-filters"><label>{t('知识版本', 'Knowledge version')}<select value={selectedIndex} onChange={event => setBrowseIndex(event.target.value)}>{catalog.indexes.map(item => <option key={item.id} value={item.id}>{item.id}{item.id === activeName ? t('（当前使用）', ' (active)') : ''}</option>)}</select></label><label>{t('语言', 'Language')}<select value={languageFilter} onChange={event => setLanguageFilter(event.target.value)}><option value="">{t('全部语言', 'All languages')}</option><option value="zh">中文</option><option value="en">English</option></select></label></div></details></div>
         {currentJob?.operation === 'search' && <p className="knowledge-job-status" role="status">{t('查找知识', 'Search')} · {statusName(currentJob.status)}{currentJob.error && ' · ' + currentJob.error}</p>}
-        {currentJob?.operation === 'search' && result && <section className="knowledge-search-results"><h3>{t('找到的知识', 'Knowledge found')} · {count(result.count ?? resultMatches.length)}</h3>{result.warnings?.map(warning => <p key={warning} role="status">{warning}</p>)}{resultMatches.length === 0 && <p>{t('没有找到匹配内容。可以换一种问法，或检查所选知识版本。', 'No matches found. Try rephrasing or checking the selected knowledge version.')}</p>}{resultMatches.map(hit => <article className="knowledge-hit" key={hit.release_unit_id}><div><strong>{hit.canonical_label || hit.release_unit_id}</strong><span>{[hit.dedup_family ? familyName(hit.dedup_family) : '', hit.primary_language, hit.primary_evidence_tier].filter(Boolean).join(' · ')}</span></div><p>{hit.retrieval_text}</p><a href={evidenceHref(hit)}>{t('查看与编辑知识', 'View and edit knowledge')} <ExternalLink size={14} /></a></article>)}{result.query_understanding && <details><summary>{t('查看系统如何理解问题', 'How the question was interpreted')}</summary><p>{result.query_understanding.normalized_query}</p><p>{result.query_understanding.route.preferred_families.map(familyName).join(' · ')}</p><p>{result.query_understanding.concepts.join(', ')}</p></details>}</section>}
+        {currentJob?.operation === 'search' && result && <section className="knowledge-search-results"><h3>{t('找到的知识', 'Knowledge found')} · {count(result.count ?? resultMatches.length)}</h3>{result.warnings?.map(warning => <p key={warning} role="status">{warning}</p>)}{resultMatches.length === 0 && <p>{t('没有找到匹配内容。可以换一种问法，或检查所选知识版本。', 'No matches found. Try rephrasing or checking the selected knowledge version.')}</p>}{resultMatches.map(hit => <article className="knowledge-hit" key={hit.release_unit_id}><div><strong>{hitTitle(hit)}</strong><span>{[hit.dedup_family ? familyName(hit.dedup_family) : '', hit.primary_language?.toUpperCase()].filter(Boolean).join(' · ')}</span></div><p>{hitText(hit).slice(0, 280)}{hitText(hit).length > 280 ? '…' : ''}</p><details><summary>{t('全文与来源类型', 'Full text and source type')}</summary><p>{hit.retrieval_text}</p>{hit.primary_evidence_tier && <small>{t('来源类型', 'Source type')}: {hit.primary_evidence_tier}</small>}</details><a href={evidenceHref(hit)}>{t('查看与编辑知识', 'View and edit knowledge')} <ExternalLink size={14} /></a></article>)}{result.query_understanding && <details><summary>{t('查看系统如何理解问题', 'How the question was interpreted')}</summary><p>{result.query_understanding.normalized_query}</p><p>{result.query_understanding.route.preferred_families.map(familyName).join(' · ')}</p><p>{result.query_understanding.concepts.join(', ')}</p></details>}</section>}
       </>}</div>}
 
     {tab === 'add' && <div className="knowledge-flow"><div className="knowledge-flow-heading"><h2>{t('添加知识', 'Add knowledge')}</h2><p>{t('已有知识包可直接上传；自己整理的 JSONL 可以上传后构建检索版本。普通文本请先到知识抽取工作区整理。', 'Upload a knowledge package directly. Upload structured JSONL to build a searchable version. For raw text, start in Knowledge extraction.')}</p></div>
@@ -165,7 +179,7 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
       <details className="knowledge-remote-install"><summary>{t('高级：从服务器路径或下载目录安装', 'Advanced: install from a server path or catalog')}</summary><label>{t('服务器压缩包路径', 'Server archive path')}<input value={archive} onChange={event => setArchive(event.target.value)} /></label><button disabled={busy || !archive} onClick={() => { setTab('manage'); void submit('install', { archive }) }}>{t('安装本地包', 'Install local package')}</button><label>{t('下载目录 URL 或本地路径', 'Catalog URL or local path')}<input value={catalogUrl} onChange={event => setCatalogUrl(event.target.value)} /></label><label>{t('资源包 ID', 'Package ID')}<input value={packageId} onChange={event => setPackageId(event.target.value)} /></label><button disabled={busy || !catalogUrl || !packageId} onClick={() => { setTab('manage'); void submit('install', { catalog: catalogUrl, package: packageId }) }}>{t('下载并安装', 'Download and install')}</button></details>
     </div>}
 
-    {tab === 'manage' && <div className="knowledge-flow"><div className="knowledge-flow-heading"><h2>{t('管理知识版本', 'Manage knowledge versions')}</h2><p>{t('构建或安装新版本后，先检查，再比较效果，最后启用。当前使用的版本不会被自动替换。', 'After building or installing a version, check it, compare its behavior, then activate it. The current version is never replaced automatically.')}</p></div>
+    {tab === 'manage' && <div className="knowledge-flow"><div className="knowledge-flow-heading"><h2>{t('管理知识版本', 'Manage knowledge versions')}</h2><p>{t('构建或安装新版本后，先检查，再比较效果，最后启用。当前使用的版本不会被自动替换。', 'After building or installing a version, check it, compare its behavior, then activate it. The current version is never replaced automatically.')}</p>{activeName && <a href="/?workspace=evaluation">{t('为当前版本建立效果基线', 'Establish a behavior baseline for the current version')} <ExternalLink size={13} /></a>}</div>
       {linkedJob?.operation === 'reindex' && <div className="knowledge-entry"><KnowledgeJobView job={{ ...linkedJob, result: linkedJob.result as KnowledgeJob['result'], progress: linkedJob.progress as KnowledgeJob['progress'], resources_url: undefined }} locale={locale} />{linkedCandidate && <p className="ke-notice">{catalog.indexes.some(item => item.id === linkedCandidate) ? <>{t('这个候选版本已准备好，可以检查后启用。', 'This candidate is ready to check before activation.')} <a href={'#resource-index-' + encodeURIComponent(linkedCandidate)}>{linkedCandidate}</a></> : t('候选版本准备就绪后，会出现在下方列表。', 'The candidate will appear below when ready.')}</p>}</div>}
       {currentJob && <section className="knowledge-job-status" role="status"><strong>{operationName(currentJob.operation)} · {statusName(currentJob.status)}</strong>{currentJob.error && <p role="alert">{currentJob.error}</p>}{['queued', 'running'].includes(currentJob.status) && <p>{t('任务在后台进行，关闭页面后仍可回来查看。', 'The task continues in the background; you can return later.')}</p>}{currentJob.progress != null && currentJob.operation !== 'reindex' && <details><summary>{t('查看进度详情', 'View progress')}</summary><pre>{JSON.stringify(currentJob.progress, null, 2)}</pre></details>}{['failed', 'cancelled', 'interrupted'].includes(currentJob.status) && currentJob.operation === 'build' && <button disabled={busy} onClick={() => void submit('build', { ...currentJob.parameters, resume: true })}>{t('从已保存进度继续', 'Resume saved progress')}</button>}{['queued', 'running'].includes(currentJob.status) && <button onClick={() => void request(`/jobs/${currentJob.id}/cancel`, { method: 'POST' }).then(refresh).catch(reason => setError(String(reason)))}>{t('取消', 'Cancel')}</button>}</section>}
       {currentJob?.operation === 'plan' && result?.counts && <div className="knowledge-plan-summary" role="status"><strong>{t('预计处理', 'Estimated workload')}: {count(result.counts.total)} {t('条知识，其中', 'records, with')} {count(result.counts.eligible)} {t('条可用于查找', 'searchable')}</strong><p>{t('预计模型请求', 'Estimated model requests')}: {count(result.embedding_requests_estimate)}</p><button onClick={() => setTab('add')}>{t('返回并生成版本', 'Return to build a version')}</button></div>}

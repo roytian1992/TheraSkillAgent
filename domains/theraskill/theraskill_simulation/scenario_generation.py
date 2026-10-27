@@ -330,11 +330,57 @@ class LLMScenarioGenerator:
             found = search_managed_knowledge(request.brief, skill="synthetic-dialogue-builder", limit=4)
             if found is None:
                 return {"status": "unavailable", "reason": "No active knowledge index", "items": []}
-            items = [{"retrieval_id": hit.get("retrieval_id") or hit.get("unit_id"),
-                      "content": json.dumps(hit, ensure_ascii=False)[:2400]} for hit in found.get("matches", [])[:4]
-                     if hit.get("retrieval_id") or hit.get("unit_id")]
+            matches = list(found.get("matches") or [])
+            warnings = list(found.get("warnings") or [])
+            queries = [request.brief]
+            if not matches:
+                try:
+                    from domains.theraskill.theraskill_llm import chat_json_with_repair
+                    planned = chat_json_with_repair(self.client,
+                        "Extract up to three short topical search phrases from the supplied scenario brief. "
+                        "Each phrase must be an exact contiguous substring of the brief, 2 to 32 characters, "
+                        "and useful for finding patient-simulation or therapy-process knowledge. "
+                        "Return JSON {queries:[...]}; do not add facts or instructions.",
+                        {"brief": request.brief}, parse_retries=1, max_prompt_tokens=2000, force_json_first=True)
+                    candidates = planned.get("queries") if isinstance(planned, dict) else []
+                    if not isinstance(candidates, list):
+                        candidates = []
+                    for candidate in candidates:
+                        if not isinstance(candidate, str):
+                            continue
+                        phrase = candidate.strip()
+                        if 2 <= len(phrase) <= 32 and phrase in request.brief and phrase not in queries:
+                            queries.append(phrase)
+                        if len(queries) >= 4:
+                            break
+                    seen = set()
+                    for phrase in queries[1:]:
+                        supplement = search_managed_knowledge(phrase, skill="synthetic-dialogue-builder", limit=2)
+                        if supplement is None:
+                            break
+                        warnings.extend(supplement.get("warnings") or [])
+                        for hit in supplement.get("matches") or []:
+                            key = hit.get("retrieval_id") or hit.get("unit_id")
+                            if key and key not in seen:
+                                matches.append(hit)
+                                seen.add(key)
+                        if len(matches) >= 4:
+                            break
+                except Exception as exc:
+                    warnings.append("Topic search unavailable: " + redact_secrets(str(exc))[:200])
+            items = []
+            for hit in matches[:4]:
+                retrieval_id = hit.get("retrieval_id") or hit.get("unit_id")
+                if not retrieval_id:
+                    continue
+                source = {key: hit[key] for key in (
+                    "release_unit_id", "canonical_label", "source_index_id", "knowledge_sha256",
+                    "dedup_family", "primary_dataset", "primary_evidence_tier", "primary_language",
+                    "allowed_use", "forbidden_use") if hit.get(key) is not None}
+                source["text_preview"] = str(hit.get("retrieval_text") or hit.get("text_preview") or "")[:1800]
+                items.append({"retrieval_id": retrieval_id, "content": json.dumps(source, ensure_ascii=False)})
             return {"status": "grounded" if items else "no_matches", "index_id": found.get("index_id"),
-                    "items": items, "warnings": found.get("warnings", [])}
+                    "items": items, "queries": queries, "warnings": list(dict.fromkeys(warnings))}
         except Exception as exc:
             return {"status": "unavailable", "reason": redact_secrets(str(exc))[:500], "items": []}
 
