@@ -5,7 +5,7 @@ import type { KnowledgeJob } from '../../shared/knowledge'
 
 type Job = { id: string; operation: string; status: string; parameters: Record<string, unknown>; progress?: unknown; result?: unknown; error?: string }
 type Resource = { id: string; manifest: { index_id?: string; counts?: Record<string, number>; input?: { mode: string; knowledge_sha256?: string } } }
-type Catalog = { indexes: Resource[]; knowledge: Resource[]; active?: { index: string; index_id: string; mode: string }; previous?: unknown; jobs: Job[] }
+type Catalog = { indexes: Resource[]; knowledge: Resource[]; simulation: Resource[]; active?: { index: string; index_id: string; mode: string }; previous?: unknown; jobs: Job[] }
 type Hit = { canonical_label?: string; retrieval_text: string; release_unit_id: string; primary_language?: string; primary_evidence_tier?: string; dedup_family?: string }
 type Result = { counts?: Record<string, number>; hits?: Hit[]; matches?: Hit[]; query_understanding?: { normalized_query: string; concepts: string[]; route: { preferred_families: string[] } }; count?: number; warnings?: string[]; embedding_requests_estimate?: number }
 type Tab = 'browse' | 'add' | 'manage'
@@ -20,7 +20,7 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
   const t = (cn: string, en: string) => zh ? cn : en
   const initialJob = new URLSearchParams(location.search).get('job_id') || ''
   const [tab, setTab] = useState<Tab>(initialJob ? 'manage' : 'browse')
-  const [catalog, setCatalog] = useState<Catalog>({ indexes: [], knowledge: [], jobs: [] })
+  const [catalog, setCatalog] = useState<Catalog>({ indexes: [], knowledge: [], simulation: [], jobs: [] })
   const [source, setSource] = useState('')
   const [indexId, setIndexId] = useState(newIndexId)
   const [mode, setMode] = useState('lexical')
@@ -29,6 +29,7 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
   const [skill, setSkill] = useState('emotional-support')
   const [languageFilter, setLanguageFilter] = useState('')
   const [archive, setArchive] = useState('')
+  const [simulationArchive, setSimulationArchive] = useState('')
   const [catalogUrl, setCatalogUrl] = useState('')
   const [packageId, setPackageId] = useState('')
   const [query, setQuery] = useState('')
@@ -77,7 +78,10 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
   async function submit(operation: string, parameters: Record<string, unknown>) {
     setBusy(true); setError('')
     try {
-      const job = await request('/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation, parameters }) })
+      const typedParameters = operation === 'install' && !parameters.expected_kind
+        ? { ...parameters, expected_kind: 'knowledge' }
+        : parameters
+      const job = await request('/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation, parameters: typedParameters }) })
       selectJob(job.id); setDetail(null); await refresh()
     } catch (reason) { setError(String(reason)) } finally { setBusy(false) }
   }
@@ -136,10 +140,13 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
     try { const value = await request('/upload', { method: 'POST', body: file }); setSource(value.knowledge); setDetail(value.plan); await refresh() }
     catch (reason) { setError(String(reason)) } finally { setBusy(false) }
   }
-  const uploadPackage = async (file?: File) => {
+  const uploadPackage = async (file: File | undefined, kind: 'knowledge' | 'simulation' = 'knowledge') => {
     if (!file) return
     setBusy(true); setError('')
-    try { const value = await request('/upload-package', { method: 'POST', body: file }); selectJob(value.id); setTab('manage'); await refresh() }
+    try {
+      const endpoint = kind === 'simulation' ? '/upload-simulation-package' : '/upload-knowledge-package'
+      const value = await request(endpoint, { method: 'POST', body: file }); selectJob(value.id); setTab('manage'); await refresh()
+    }
     catch (reason) { setError(String(reason)) } finally { setBusy(false) }
   }
   const reportsFor = (item: Resource) => reports.filter(report => report.gate?.status === 'passed' && report.target?.index_id === item.manifest.index_id)
@@ -169,8 +176,9 @@ export default function KnowledgeStudio({ locale, onBack }: { locale: 'zh' | 'en
         {currentJob?.operation === 'search' && result && <section className="knowledge-search-results"><h3>{t('找到的知识', 'Knowledge found')} · {count(result.count ?? resultMatches.length)}</h3>{result.warnings?.map(warning => <p key={warning} role="status">{warning}</p>)}{resultMatches.length === 0 && <p>{t('没有找到匹配内容。可以换一种问法，或检查所选知识版本。', 'No matches found. Try rephrasing or checking the selected knowledge version.')}</p>}{resultMatches.map(hit => <article className="knowledge-hit" key={hit.release_unit_id}><div><strong>{hitTitle(hit)}</strong><span>{[hit.dedup_family ? familyName(hit.dedup_family) : '', hit.primary_language?.toUpperCase()].filter(Boolean).join(' · ')}</span></div><p>{hitText(hit).slice(0, 280)}{hitText(hit).length > 280 ? '…' : ''}</p><details><summary>{t('全文与来源类型', 'Full text and source type')}</summary><p>{hit.retrieval_text}</p>{hit.primary_evidence_tier && <small>{t('来源类型', 'Source type')}: {hit.primary_evidence_tier}</small>}</details><a href={evidenceHref(hit)}>{t('查看与编辑知识', 'View and edit knowledge')} <ExternalLink size={14} /></a></article>)}{result.query_understanding && <details><summary>{t('查看系统如何理解问题', 'How the question was interpreted')}</summary><p>{result.query_understanding.normalized_query}</p><p>{result.query_understanding.route.preferred_families.map(familyName).join(' · ')}</p><p>{result.query_understanding.concepts.join(', ')}</p></details>}</section>}
       </>}</div>}
 
-    {tab === 'add' && <div className="knowledge-flow"><div className="knowledge-flow-heading"><h2>{t('添加知识', 'Add knowledge')}</h2><p>{t('已有知识包可直接上传；自己整理的 JSONL 可以上传后构建检索版本。普通文本请先到知识抽取工作区整理。', 'Upload a knowledge package directly. Upload structured JSONL to build a searchable version. For raw text, start in Knowledge extraction.')}</p></div>
-      <div className="knowledge-add-grid"><section><h3>{t('安装收到的资源包', 'Install a resource package')}</h3><p>{t('选择 ZIP 文件。系统会检查包内容；如包含可检索版本，完成后可在“管理版本”中启用。', 'Choose a ZIP file. The system checks its contents; if it includes a searchable version, you can activate it from Manage versions.')}</p><label className="knowledge-file-picker">{t('选择资源包 ZIP', 'Choose resource ZIP')}<input aria-label="Resource ZIP" type="file" accept=".zip" disabled={busy} onChange={event => void uploadPackage(event.target.files?.[0])} /></label></section><section><h3>{t('使用自己的结构化知识', 'Use structured knowledge')}</h3><p>{t('上传 JSONL 文件，或选择已安装的知识。构建完成后需检查并启用。', 'Upload a JSONL file or choose installed knowledge. Check and activate the built index afterwards.')}</p><label>{t('选择已安装知识', 'Select installed knowledge')}<select value={source && catalog.knowledge.some(item => item.id === source) ? source : ''} onChange={event => setSource(event.target.value)}><option value="">{t('请选择', 'Choose knowledge')}</option>{catalog.knowledge.map(item => <option key={item.id} value={item.id}>{item.id} · {count(item.manifest.counts?.total)} {t('条', 'records')}</option>)}</select></label><label className="knowledge-file-picker">{t('上传 JSONL', 'Upload JSONL')}<input type="file" accept=".jsonl" disabled={busy} onChange={event => void uploadKnowledge(event.target.files?.[0])} /></label>{source && <p className="knowledge-selected-source">{t('已选择：', 'Selected: ')}{source}</p>}
+    {tab === 'add' && <div className="knowledge-flow"><div className="knowledge-flow-heading"><h2>{t('添加资源', 'Add resources')}</h2><p>{t('知识和模拟场景分别安装、分别管理。知识包用于检索和回应，场景包用于模拟训练；两者不会互相替换。', 'Knowledge and simulation resources are installed and managed separately. Knowledge packages power retrieval; simulation packages power training. They never replace each other.')}</p></div>
+      <section className="knowledge-entry"><h3>{t('安装模拟场景包', 'Install a simulation package')}</h3><p>{t('场景包包含场景注册表和患者/案例素材，只会安装到模拟资源目录。它不会创建知识索引。', 'A simulation package contains a scenario registry and patient/case assets. It is installed only into the simulation resource directory and never creates a knowledge index.')}</p><label className="knowledge-file-picker">{t('选择场景 ZIP', 'Choose simulation ZIP')}<input aria-label={t('场景 ZIP', 'Simulation ZIP')} type="file" accept=".zip,.tar.gz" disabled={busy} onChange={event => void uploadPackage(event.target.files?.[0], 'simulation')} /></label><label>{t('服务器上的场景包路径', 'Server path to simulation package')}<input value={simulationArchive} onChange={event => setSimulationArchive(event.target.value)} placeholder="/path/to/simulation.zip" /></label><button disabled={busy || !simulationArchive} onClick={() => { setTab('manage'); void submit('install', { archive: simulationArchive, expected_kind: 'simulation' }) }}>{t('安装路径中的场景包', 'Install simulation from path')}</button><p className="knowledge-selected-source">{catalog.simulation.length ? `${t('已安装场景版本：', 'Installed simulation versions: ')}${catalog.simulation.map(item => item.id).join('、')}` : t('尚未安装模拟场景。', 'No simulation package installed yet.')}</p></section>
+        <div className="knowledge-add-grid"><section><h3>{t('安装知识包', 'Install a knowledge package')}</h3><p>{t('选择知识 ZIP。系统会检查包内容；模拟场景包会被拒绝。', 'Choose a knowledge ZIP. Simulation packages are rejected before installation.')}</p><label className="knowledge-file-picker">{t('选择知识 ZIP', 'Choose knowledge ZIP')}<input aria-label={t("知识 ZIP", "Knowledge ZIP")} type="file" accept=".zip,.tar.gz" disabled={busy} onChange={event => void uploadPackage(event.target.files?.[0])} /></label></section><section><h3>{t('使用自己的结构化知识', 'Use structured knowledge')}</h3><p>{t('上传 JSONL 文件，或选择已安装的知识。构建完成后需检查并启用。', 'Upload a JSONL file or choose installed knowledge. Check and activate the built index afterwards.')}</p><label>{t('选择已安装知识', 'Select installed knowledge')}<select value={source && catalog.knowledge.some(item => item.id === source) ? source : ''} onChange={event => setSource(event.target.value)}><option value="">{t('请选择', 'Choose knowledge')}</option>{catalog.knowledge.map(item => <option key={item.id} value={item.id}>{item.id} · {count(item.manifest.counts?.total)} {t('条', 'records')}</option>)}</select></label><label className="knowledge-file-picker">{t('上传 JSONL', 'Upload JSONL')}<input type="file" accept=".jsonl" disabled={busy} onChange={event => void uploadKnowledge(event.target.files?.[0])} /></label>{source && <p className="knowledge-selected-source">{t('已选择：', 'Selected: ')}{source}</p>}
           <label>{t('查找方式', 'Search method')}<select value={mode} onChange={event => setMode(event.target.value)}><option value="lexical">{t('快速搜索（无需模型服务）', 'Fast search (no model service)')}</option><option value="hybrid">{t('智能匹配（理解相近说法）', 'Meaning-based search')}</option></select></label><p className="knowledge-cost-note">{mode === 'hybrid' ? t('智能匹配需要语义检索模型。大型知识库可能构建很久，并产生模型服务费用。', 'Meaning-based search needs a semantic model. Large collections may take a long time to build and incur provider costs.') : t('建议先用快速搜索，不产生模型费用。若不同说法难以匹配，再选智能匹配。', 'Start with fast search without model charges. Try meaning-based search if different wording does not match well.')}</p>
           <details><summary>{t('高级构建选项', 'Advanced build options')}</summary><label>{t('新版本 ID', 'New version ID')}<input value={indexId} onChange={event => setIndexId(event.target.value)} /></label><label>{t('知识文件路径或 ID', 'Knowledge file path or ID')}<input value={source} onChange={event => setSource(event.target.value)} placeholder="examples/knowledge/demo.jsonl" /></label>{mode === 'hybrid' && <label>{t('复用已有关键词数据', 'Reuse keyword data')}<select value={reuseLexical} onChange={event => setReuseLexical(event.target.value)}><option value="">{t('重新构建', 'Build from scratch')}</option>{catalog.indexes.map(item => <option key={item.id} value={item.id}>{item.id}</option>)}</select></label>}<button disabled={busy || !source} onClick={() => { setTab('manage'); void submit('plan', { knowledge: source, index_id: indexId, mode }) }}>{t('预览工作量', 'Preview workload')}</button></details>
           {indexExists && <p role="alert">{t('该版本 ID 已存在，请修改高级选项中的 ID。', 'That version ID already exists. Change it in Advanced options.')}</p>}

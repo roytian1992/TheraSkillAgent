@@ -32,6 +32,24 @@ def using_index(directory):
 PACKAGE_SCHEMA = 'theraskill_resource_package_v1'
 CATALOG_SCHEMA = 'theraskill_resource_catalog_v1'
 
+# The envelope is shared by all distributable resources, while each payload has
+# one stable entrypoint.  Keeping the contract in the manifest lets an
+# installer reject a resource before it is copied into the wrong data area.
+RESOURCE_CONTRACTS = {
+    'knowledge': {
+        'name': 'theraskill.knowledge.jsonl.v1',
+        'entrypoint': 'knowledge.jsonl',
+    },
+    'index': {
+        'name': 'theraskill.index.directory.v1',
+        'entrypoint': 'manifest.json',
+    },
+    'simulation': {
+        'name': 'theraskill.simulation.bundle.v1',
+        'entrypoint': 'scenarios/scenario_registry.jsonl',
+    },
+}
+
 
 def knowledge_path(value):
     path = Path(value).expanduser()
@@ -132,7 +150,8 @@ def active_index():
     return directory, manifest
 
 
-def pack_resource(source, output, *, package_id, kind, license_id=None, part_bytes=None, provenance=None):
+def pack_resource(source, output, *, package_id, kind, license_id=None, part_bytes=None,
+                  provenance=None, publish_record=False):
     """Create an explicit package, never archive the project/workspace wholesale."""
     package_id = safe_id(package_id)
     source, output = Path(source).expanduser().resolve(), Path(output).expanduser().resolve()
@@ -153,6 +172,7 @@ def pack_resource(source, output, *, package_id, kind, license_id=None, part_byt
     elif kind == 'simulation':
         if not source.is_dir() or not license_id or not (source / 'scenarios/scenario_registry.jsonl').is_file():
             raise ValueError('simulation packaging needs a simulation directory, scenario registry and data license')
+        _validate_simulation_registry(source / 'scenarios/scenario_registry.jsonl')
         sources = {}
         for path in sorted(source.rglob('*')):
             if path.is_symlink():
@@ -168,9 +188,12 @@ def pack_resource(source, output, *, package_id, kind, license_id=None, part_byt
     if any(p.is_symlink() for p in sources.values()):
         raise ValueError('packages cannot include symbolic links')
     files = {name: {'size': p.stat().st_size, 'sha256': digest(p)} for name, p in sources.items()}
+    installer_kind = 'simulation' if kind == 'simulation' else 'knowledge'
     package = {'schema_version': PACKAGE_SCHEMA, 'package_id': package_id, 'kind': kind,
-               'files': files, 'unpacked_bytes': sum(x['size'] for x in files.values()), **details,
-               'provenance': provenance or {}, 'installer': 'theraskill-agent knowledge install --archive PACKAGE'}
+               'contract': RESOURCE_CONTRACTS[kind], 'files': files,
+               'unpacked_bytes': sum(x['size'] for x in files.values()), **details,
+               'provenance': provenance or {},
+               'installer': f'theraskill-agent {installer_kind} install --archive PACKAGE'}
     if part_bytes is not None and int(part_bytes) <= 0:
         raise ValueError('part_bytes must be positive')
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -193,7 +216,8 @@ def pack_resource(source, output, *, package_id, kind, license_id=None, part_byt
         os.replace(temp, output)
     finally:
         temp.unlink(missing_ok=True)
-    record = {'id': package_id, 'kind': kind, 'available': True, 'format': 'zip' if output.suffix.lower()=='.zip' else 'tar.gz',
+    record = {'id': package_id, 'kind': kind, 'contract': RESOURCE_CONTRACTS[kind], 'available': True,
+              'format': 'zip' if output.suffix.lower()=='.zip' else 'tar.gz',
               'size': output.stat().st_size, 'sha256': digest(output), 'unpacked_bytes': package['unpacked_bytes'],
               'url': output.name, 'knowledge_sha256': package['knowledge_sha256']}
     if part_bytes:
@@ -217,7 +241,8 @@ def pack_resource(source, output, *, package_id, kind, license_id=None, part_byt
                 parts.append({'url': part.name, 'size': count, 'sha256': digest(part)})
                 number += 1
         record['parts'] = parts
-    write_json(output.with_name(output.name + '.download.json'), record)
+    if publish_record:
+        write_json(output.with_name(output.name + '.download.json'), record)
     return record
 
 
@@ -320,7 +345,44 @@ def download_package(catalog, package_id, *, cancel=None, progress=None):
         return archive, record
 
 
-def install_package(archive, *, expected_sha256=None, expected_id=None, cancel=None, progress=None):
+def _validate_simulation_registry(path):
+    """Validate the portable scenario registry without loading case assets."""
+    records = 0
+    with Path(path).open(encoding='utf-8-sig') as handle:
+        for line_no, line in enumerate(handle, 1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f'simulation registry line {line_no} is not valid JSON') from exc
+            if not isinstance(row, dict) or not isinstance(row.get('scenario_id'), str) or not row['scenario_id'].strip():
+                raise ValueError(f'simulation registry line {line_no} needs a nonempty scenario_id')
+            records += 1
+    if records == 0:
+        raise ValueError('simulation registry must contain at least one scenario')
+    return records
+
+
+def _validate_payload_contract(package, files, staging):
+    """Check the kind-specific payload after checksummed extraction."""
+    kind = package['kind']
+    contract = package.get('contract') or {}
+    expected = RESOURCE_CONTRACTS[kind]
+    # Packages created before the contract field was introduced remain valid;
+    # if a contract is present, it must be the exact supported contract.
+    if contract and (contract.get('name') != expected['name'] or contract.get('entrypoint') != expected['entrypoint']):
+        raise ValueError(f'unsupported {kind} resource contract')
+    if expected['entrypoint'] not in files:
+        raise ValueError(f'{kind} package is missing {expected["entrypoint"]}')
+    if kind == 'knowledge':
+        if digest(staging / 'knowledge.jsonl') != package.get('knowledge_sha256'):
+            raise ValueError('knowledge fingerprint mismatch')
+    elif kind == 'simulation':
+        _validate_simulation_registry(staging / 'scenarios/scenario_registry.jsonl')
+
+
+def install_package(archive, *, expected_sha256=None, expected_id=None, expected_kind=None, cancel=None, progress=None):
     archive = Path(archive).expanduser().resolve()
     if expected_sha256 and digest(archive) != _valid_hash(expected_sha256):
         raise ValueError('archive checksum mismatch')
@@ -337,6 +399,11 @@ def install_package(archive, *, expected_sha256=None, expected_id=None, cancel=N
             package = json.load(bundle.extractfile(first))
             if package.get('schema_version') != PACKAGE_SCHEMA or package.get('kind') not in {'knowledge', 'index', 'simulation'}:
                 raise ValueError('unsupported package schema or kind')
+            if expected_kind:
+                allowed_kinds = {expected_kind} if isinstance(expected_kind, str) else set(expected_kind)
+                if package['kind'] not in allowed_kinds:
+                    expected_label = '/'.join(sorted(allowed_kinds))
+                    raise ValueError(f'expected a {expected_label} package, received {package["kind"]}')
             pid = safe_id(package['package_id'])
             if expected_id and pid != expected_id:
                 raise ValueError('catalog and archive package IDs differ')
@@ -384,11 +451,7 @@ def install_package(archive, *, expected_sha256=None, expected_id=None, cancel=N
             write_json(staging / 'package.json', package)
         else:
             folder = package['kind']
-            if folder == 'knowledge':
-                if 'knowledge.jsonl' not in files or digest(staging / 'knowledge.jsonl') != package.get('knowledge_sha256'):
-                    raise ValueError('knowledge fingerprint mismatch')
-            if folder == 'simulation' and 'scenarios/scenario_registry.jsonl' not in files:
-                raise ValueError('simulation package is missing its scenario registry')
+            _validate_payload_contract(package, files, staging)
             write_json(staging / 'manifest.json', package)
         destination = root / folder / pid
         destination.parent.mkdir(parents=True, exist_ok=True)

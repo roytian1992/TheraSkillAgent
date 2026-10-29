@@ -98,6 +98,41 @@ def test_zip_knowledge_and_simulation_install_in_fresh_workspace(tmp_path,monkey
     with pytest.raises(ValueError,match='immutable'):resources.install_package(assets)
 
 
+def test_resource_kinds_are_isolated_and_custom_registry_is_validated(tmp_path, monkeypatch):
+    from theraskill_agent import resources
+    monkeypatch.setenv('THERASKILL_AGENT_ROOT', str(tmp_path / 'workspace'))
+    root = Path(__file__).resolve().parents[1]
+    knowledge = tmp_path / 'knowledge.zip'
+    resources.pack_resource(root / 'examples/knowledge/demo.jsonl', knowledge,
+                            package_id='knowledge-only', kind='knowledge', license_id='fixture')
+    with pytest.raises(ValueError, match='expected a simulation package'):
+        resources.install_package(knowledge, expected_kind='simulation')
+    assert not (tmp_path / 'workspace/data/theraskill/simulation/knowledge-only').exists()
+
+    source = tmp_path / 'custom-simulation'
+    (source / 'scenarios').mkdir(parents=True)
+    (source / 'scenarios/scenario_registry.jsonl').write_text(
+        '{"scenario_id":"custom-1","scenario_brief":"A fixture"}\n', encoding='utf-8')
+    simulation = tmp_path / 'custom-simulation.zip'
+    record = resources.pack_resource(source, simulation, package_id='simulation-only',
+                                     kind='simulation', license_id='fixture')
+    with zipfile.ZipFile(simulation) as bundle:
+        manifest = json.loads(bundle.read('package.json'))
+        assert manifest['contract']['name'] == 'theraskill.simulation.bundle.v1'
+        assert manifest['contract']['entrypoint'] == 'scenarios/scenario_registry.jsonl'
+    installed = resources.install_package(simulation, expected_kind='simulation', expected_sha256=record['sha256'])
+    assert installed['kind'] == 'simulation'
+
+    invalid = tmp_path / 'invalid-simulation'
+    (invalid / 'scenarios').mkdir(parents=True)
+    (invalid / 'scenarios/scenario_registry.jsonl').write_text('{"scenario_brief":"missing id"}\n', encoding='utf-8')
+    invalid_archive = tmp_path / 'invalid-simulation.zip'
+    with pytest.raises(ValueError, match='scenario_id'):
+        resources.pack_resource(invalid, invalid_archive, package_id='invalid-simulation',
+                                kind='simulation', license_id='fixture')
+    assert not invalid_archive.exists()
+
+
 def test_zip_path_escape_is_rejected(tmp_path,monkeypatch):
     from theraskill_agent.resources import install_package
     monkeypatch.setenv('THERASKILL_AGENT_ROOT',str(tmp_path/'workspace'))

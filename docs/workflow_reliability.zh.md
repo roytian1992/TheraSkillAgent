@@ -2,8 +2,6 @@
 
 [English](workflow_reliability.en.md) · [工作流](workflows.zh.md) · [患者构建](simulated_patients.zh.md)
 
-实现与测试记录见[本轮验证](workflow_validation_20261020.zh.md)。
-
 复杂生成和评审任务已拆成有明确输入输出检查的阶段。各阶段使用当前配置的 LLM，无需增加模型服务、依赖或端口；LLM 和 embedding 继续独立配置。
 
 ## 患者与课程设计

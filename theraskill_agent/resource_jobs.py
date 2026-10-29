@@ -286,7 +286,14 @@ def run_operation(operation, parameters, *, progress=None, cancel=None):
             raise ValueError('archive or catalog and package are required')
         if cancel and cancel():
             raise BuildCancelled('installation cancelled before extraction')
-        return resources.install_package(archive, expected_sha256=checksum, expected_id=expected_id,cancel=cancel,progress=progress)
+        return resources.install_package(
+            archive,
+            expected_sha256=checksum,
+            expected_id=expected_id,
+            expected_kind=p.get('expected_kind'),
+            cancel=cancel,
+            progress=progress,
+        )
     raise ValueError('unknown resource operation')
 
 

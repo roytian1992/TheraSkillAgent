@@ -41,8 +41,20 @@ def add_commands(sub):
     activate.add_argument('--behavior-report', help='reviewed behavior comparison report ID; required when changing an existing selection')
     activate.add_argument('--scratch-directory', dest='scratch_root', help='optional fast temporary storage for full SQLite verification')
     pack = commands.add_parser('pack'); pack.add_argument('--source', required=True); pack.add_argument('--output', required=True)
-    pack.add_argument('--id', required=True); pack.add_argument('--kind', choices=['knowledge', 'index', 'simulation'], required=True)
+    pack.add_argument('--id', required=True); pack.add_argument('--kind', choices=['knowledge', 'index'], required=True)
     pack.add_argument('--license'); pack.add_argument('--part-bytes', type=int)
+    pack.add_argument('--catalog-record', action='store_true', help='write optional download metadata for a hosted catalog')
+    simulation = sub.add_parser('simulation', help='install and inspect separately distributed simulation resources')
+    commands = simulation.add_subparsers(dest='simulation_command', required=True)
+    commands.add_parser('list')
+    install = commands.add_parser('install')
+    sources = install.add_mutually_exclusive_group(required=True)
+    sources.add_argument('--archive'); sources.add_argument('--catalog')
+    install.add_argument('--package'); install.add_argument('--sha256')
+    pack = commands.add_parser('pack')
+    pack.add_argument('--source', required=True); pack.add_argument('--output', required=True)
+    pack.add_argument('--id', required=True); pack.add_argument('--license', required=True); pack.add_argument('--part-bytes', type=int)
+    pack.add_argument('--catalog-record', action='store_true', help='write optional download metadata for a hosted catalog')
 
 
 def run_command(args):
@@ -71,6 +83,21 @@ def run_command(args):
             return run_operation('search',{'index':args.index,'query':args.query,'skill':args.skill,
                 'filters':filters,'limit':args.limit,'production':True})
         return retrieve_index(resources.index_path(args.index), args.query, limit=args.limit, skill=args.skill, filters=filters)
+    if args.command == 'simulation':
+        action = args.simulation_command
+        if action == 'list':
+            return resources.list_resources()['simulation']
+        if action == 'pack':
+            return resources.pack_resource(args.source, args.output, package_id=args.id, kind='simulation',
+                                           license_id=args.license, part_bytes=args.part_bytes,
+                                           publish_record=args.catalog_record)
+        archive, checksum, expected_id = args.archive, args.sha256, None
+        if args.catalog:
+            if not args.package:
+                raise ValueError('--catalog requires --package')
+            archive, record = resources.download_package(args.catalog, args.package)
+            checksum, expected_id = record['sha256'], record['id']
+        return resources.install_package(archive, expected_sha256=checksum, expected_id=expected_id, expected_kind='simulation')
     action = args.knowledge_command
     if action == 'list':
         return resources.list_resources()
@@ -79,11 +106,16 @@ def run_command(args):
     if action == 'rollback':
         return resources.rollback_index()
     if action == 'pack':
-        return resources.pack_resource(args.source, args.output, package_id=args.id, kind=args.kind, license_id=args.license, part_bytes=args.part_bytes)
+        return resources.pack_resource(args.source, args.output, package_id=args.id, kind=args.kind,
+                                       license_id=args.license, part_bytes=args.part_bytes,
+                                       publish_record=args.catalog_record)
     archive, checksum, expected_id = args.archive, args.sha256, None
     if args.catalog:
         if not args.package:
             raise ValueError('--catalog requires --package')
         archive, record = resources.download_package(args.catalog, args.package)
         checksum, expected_id = record['sha256'], record['id']
-    return resources.install_package(archive, expected_sha256=checksum, expected_id=expected_id)
+    # A knowledge command may also install a prebuilt index package for
+    # backwards compatibility. Simulation packages have their own command.
+    return resources.install_package(archive, expected_sha256=checksum, expected_id=expected_id,
+                                     expected_kind=('knowledge', 'index'))

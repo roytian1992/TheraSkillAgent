@@ -2,42 +2,37 @@
 
 [中文](resource_installation.zh.md) · [Deployment](deployment.en.md)
 
-Install the application from Git. The maintainer supplies full knowledge and simulation resources separately; `phase6-20261019` currently has no public download URL. Keep the supplied catalog, checksums and provenance files together.
+Install the application separately. Knowledge and simulation each have one ZIP; deliver and install them independently as needed. The current resource version is `phase7-20261028`.
 
 ## Contents
 
-If you receive `TheraSkillAgent-resources-phase6-20261019.zip`, the delivery also contains a 0.5.0 wheel for installation without Node. Follow its README and extract this outer delivery ZIP first, for example into `~/theraskill-resources`. The two ZIPs inside it are the installable application packages:
+Install either of these ZIPs directly with its matching command. Do not extract the ZIP first:
 
 | File | Contents | Compressed / installed |
 | --- | --- | --- |
-| `knowledge-phase6-20261019.zip` | 2,196,286 Phase 6 knowledge release records, with evidence, retrieval policies and source fields | About 699 MiB / 6.28 GiB |
-| `simulation-phase6-20261019.zip` | Scenarios, cases, personas, registries and existing language overlays | About 91 MiB / 669 MiB |
-| `catalog.json`, `SHA256SUMS` | Local package locations, sizes and SHA-256 checksums | Checked during installation |
-| `source-release.json`, `provenance.json` | Original release inventory and source restrictions | Retain original restrictions |
+| `knowledge-phase7-20261028.zip` | 2,196,286 knowledge records, with evidence, retrieval policies and source fields | About 699 MiB / 6.28 GiB |
+| `simulation-phase7-20261028.zip` | Scenarios, cases, personas, registries and existing language overlays | About 91 MiB / 669 MiB |
 
-Packages exclude model weights, prebuilt vector indexes, credentials, user conversations, runtime databases and generated drafts. The original release inventory also lists historical indexes that are not supplied; each ZIP's `package.json` defines its actual contents. The code license does not replace the source datasets' terms.
+Each ZIP contains its own `package.json` with the kind, file sizes, SHA-256 hashes, and source/license notes. The installer checks it automatically; no external catalog or provenance file is needed. Packages exclude model weights, prebuilt vector indexes, credentials, user conversations, runtime databases and generated drafts. The code license does not replace the source datasets' terms.
 
 Installed resources occupy about 7 GiB. Allow additional space for archives, staging, logs and indexes. Index size depends on eligible records, retrieval mode and embedding dimensions; inspect `index plan` first. A full hybrid build makes real embedding requests and may incur provider charges.
 
 ## Install and bootstrap an index
 
-Complete [code installation and model configuration](deployment.en.md) first, using version 0.5.0 or newer. Activate its Python environment, enter the extracted resource directory, then run:
+Complete [application installation](deployment.en.md) first, using version 0.5.0 or newer. Then run:
 
 ```bash
-cd ~/theraskill-resources
-sha256sum -c SHA256SUMS
-
 theraskill-agent --project ~/TheraSkillAgent knowledge install \
-  --catalog ./catalog.json --package knowledge-phase6-20261019
-theraskill-agent --project ~/TheraSkillAgent knowledge install \
-  --catalog ./catalog.json --package simulation-phase6-20261019
+  --archive /path/to/knowledge-phase7-20261028.zip
+theraskill-agent --project ~/TheraSkillAgent simulation install \
+  --archive /path/to/simulation-phase7-20261028.zip
 
 theraskill-agent --project ~/TheraSkillAgent index plan \
-  --knowledge knowledge-phase6-20261019
+  --knowledge knowledge-phase7-20261028
 theraskill-agent --project ~/TheraSkillAgent index build \
-  --knowledge knowledge-phase6-20261019 --id my-knowledge --mode lexical
+  --knowledge knowledge-phase7-20261028 --id my-knowledge --mode lexical
 theraskill-agent --project ~/TheraSkillAgent knowledge activate \
-  --index my-knowledge --knowledge knowledge-phase6-20261019
+  --index my-knowledge --knowledge knowledge-phase7-20261028
 theraskill-agent --project ~/TheraSkillAgent ui
 ```
 
@@ -45,7 +40,34 @@ Replace every `~/TheraSkillAgent` with your actual writable project path. Lexica
 
 The first simulation installation is selected automatically in a fresh workspace. Restart an already running application to load it. Installed versions are immutable, and installation never replaces the active knowledge index. Changing an existing index requires behavioral comparison and human review; the bootstrap activation command above is for a device without an active index.
 
-Alternatively, upload each inner ZIP under **Knowledge & indexes → Install resource ZIP** and wait for its installation job. The CLI is preferable for large packages. Do not submit the outer delivery ZIP to the resource installer.
+Alternatively, upload a knowledge ZIP under **Knowledge & indexes → Add resources → Install a knowledge package**, and upload a simulation ZIP in the separate **Install a simulation package** section. The UI rejects a package sent to the wrong section. The CLI is preferable for large packages.
+
+## Package contracts for custom resources
+
+Every package uses the same envelope: the first archive member is `package.json`, with
+`schema_version: theraskill_resource_package_v1`, a unique `package_id`, a `kind`, a
+checksummed `files` inventory and a `contract`. The payloads remain independent:
+
+| Kind | Required payload | Record rule | Install command |
+| --- | --- | --- | --- |
+| `knowledge` | `knowledge.jsonl` | One JSON object per line with a stable `release_unit_id` (or a mapping supplied to the index builder) and searchable content | `theraskill-agent knowledge install` |
+| `index` | A verified index directory and `manifest.json` | Produced by the TheraSkillAgent index builder | `theraskill-agent knowledge install` |
+| `simulation` | `scenarios/scenario_registry.jsonl` plus JSON/JSONL/YAML/Markdown/text assets | Each registry line is an object with a nonempty `scenario_id`; referenced case and patient assets stay in the same package | `theraskill-agent simulation install` |
+
+Create independent custom packages with the CLI:
+
+```bash
+theraskill-agent knowledge pack --source ./my-knowledge.jsonl \
+  --output ./my-knowledge.zip --id my-knowledge-v1 --kind knowledge --license CC-BY-4.0
+theraskill-agent simulation pack --source ./my-simulation \
+  --output ./my-simulation.zip --id my-simulation-v1 --license CC-BY-4.0
+```
+
+`my-simulation` must contain `scenarios/scenario_registry.jsonl`. The installer
+checks the manifest, every file size and SHA-256, the registry JSON and its
+`scenario_id` values before atomically moving the package into its own resource
+directory. It never builds a knowledge index from a simulation package. Resource
+versions are immutable; publish a new ID for a revision.
 
 ## Verify readiness
 
@@ -67,7 +89,7 @@ From a development checkout with the full release data:
 ```bash
 python scripts/TheraSkill/package_user_resources.py \
   --source data/theraskill/current \
-  --output /path/to/new-resource-folder --version phase6-20261019
+  --output /path/to/new-resource-folder --version phase7-20261028
 ```
 
-The output directory must not exist. Its contents can be placed in an outer ZIP for delivery. Add real download URLs only after uploading the packages. See [Knowledge and indexes](knowledge_and_indexes.en.md) for individual package formats and index installation.
+The output directory must not exist and contains exactly two independently installable ZIPs. See [Knowledge and indexes](knowledge_and_indexes.en.md) for resource formats and index installation.

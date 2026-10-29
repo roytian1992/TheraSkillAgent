@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 from .skills import SkillManager
 from .contracts import AgentTask
 from .runtime import AgentRuntime
@@ -60,7 +61,7 @@ def _status(manager: SkillManager) -> dict[str, Any]:
         providers = {"error": redact_secrets(str(exc))}
     return {
         "project": "TheraSkillAgent",
-        "version": "0.4.0",
+        "version": __version__,
         "project_root": str(project_root()),
         "data_root": str(data_root()),
         "skill_roots": [str(manager.user_root), *(str(root) for root in manager.roots)],
@@ -203,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["THERASKILL_AGENT_ROOT"] = str(Path(args.project).expanduser().resolve())
     manager = _manager_from_config(args.config)
     try:
-        if args.command in {"knowledge", "index"}:
+        if args.command in {"knowledge", "index", "simulation"}:
             from .resource_cli import run_command
             _json(run_command(args))
             return 0

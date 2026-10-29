@@ -152,8 +152,7 @@ def provider_check(body:ProviderCheck):
     except ValueError as exc:raise HTTPException(422,str(exc)) from None
 
 
-@router.post('/upload-package',status_code=202)
-async def upload_package(request:Request):
+async def _upload_package(request: Request, expected_kind: str | None = None):
     path=data_root()/'imports'/(uuid.uuid4().hex+'.zip')
     path.parent.mkdir(parents=True,exist_ok=True)
     size=0
@@ -163,10 +162,33 @@ async def upload_package(request:Request):
                 size+=len(chunk)
                 if size>16*1024**3:raise HTTPException(413,'Resource ZIP upload limit is 16 GiB; use the CLI for larger files')
                 output.write(chunk)
-        return resource_jobs.submit_job('install',{'archive':str(path)})
+        parameters = {'archive': str(path)}
+        if expected_kind:
+            parameters['expected_kind'] = expected_kind
+        return resource_jobs.submit_job('install', parameters)
     except Exception:
         path.unlink(missing_ok=True)
         raise
+
+
+@router.post('/upload-package', status_code=202)
+async def upload_package(request: Request):
+    """Compatibility endpoint for older knowledge clients.
+
+    Simulation uploads must use the typed simulation endpoint so a generic
+    client cannot accidentally submit the wrong resource kind.
+    """
+    return await _upload_package(request, 'knowledge')
+
+
+@router.post('/upload-knowledge-package', status_code=202)
+async def upload_knowledge_package(request: Request):
+    return await _upload_package(request, 'knowledge')
+
+
+@router.post('/upload-simulation-package', status_code=202)
+async def upload_simulation_package(request: Request):
+    return await _upload_package(request, 'simulation')
 
 
 @router.get('')

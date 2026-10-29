@@ -253,8 +253,8 @@ Expert and support job provenance exposes `retrieval_summary.timings`,
 be added together as total latency. Broad Chinese queries may still reach a
 lexical channel's execution budget; the warning records this and completed
 channels remain available. Provider and network latency also affect request time.
-See the [retrieval validation record (Chinese)](retrieval_optimization_20261018.zh.md)
-for measured cases, comparison limits and reproduction commands.
+See [knowledge and indexes](knowledge_and_indexes.en.md) for diagnostics and
+index management.
 
 ## Restart after a source upgrade
 
@@ -317,7 +317,7 @@ llm:
     type: disabled
 ```
 
-There is no model-name condition or automatic reasoning change for other providers. Truncated output and upstream disconnects produce explicit failures with recovery actions. Restart the single application after changing these settings so existing model clients are refreshed. Preserve results from different settings separately. See the [local UX improvement record](ux_improvements_20261018.zh.md) for the bounded live checks and their limitations.
+There is no model-name condition or automatic reasoning change for other providers. Truncated output and upstream disconnects produce explicit failures with recovery actions. Restart the single application after changing these settings so existing model clients are refreshed. Preserve results from different settings separately.
 
 ## Interactive workflows and reviewed upgrades
 
@@ -327,11 +327,11 @@ A first index can initialize an empty installation. Replacing an active index or
 
 ## Deployment validation
 
-See the [deployment simplification record (Chinese)](deployment_simplification_20261018.zh.md) for the single-process migration, model recovery checks, isolated installation smoke test and real browser results.
+See the [offline deployment guide](deployment_offline.en.md) for installation on another Ubuntu 22.04 server without network access.
 
 ## Full resource ZIPs and readiness
 
-Follow [Resource installation](resource_installation.en.md) for the full knowledge and simulation packages. ZIP64 installation checks every file's size and SHA-256. Upload inner resource ZIPs in the workbench or install using the accompanying local catalog. Restart after the first simulation installation; existing active indexes are not replaced automatically.
+Follow [Resource installation](resource_installation.en.md) for the full knowledge and simulation packages. ZIP64 installation checks every file's size and SHA-256. Install each ZIP through its workbench section or directly with `--archive`. Restart after the first simulation installation; existing active indexes are not replaced automatically.
 
 The home page shows provider configuration, explicit live connection checks, active resources and skill requirements. Configuration checks make no model requests. All 12 bundled skills declare required runtime tools; missing tools or dependencies are reported before a model call.
 

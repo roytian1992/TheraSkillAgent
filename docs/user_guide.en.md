@@ -192,4 +192,4 @@ The course view is an agent-assisted planning surface. The teacher remains the p
 - Patient profiles, scenarios, knowledge indexes, Skills, prompts, providers, and evaluation reports are versioned or referenced by the task record.
 - Risk-sensitive training and response review require qualified human oversight. The system does not diagnose, certify competence, or replace supervision.
 
-The English walkthrough was checked on the isolated project used for these screenshots. The model test, Assistant case, knowledge search, source inspection, extraction plan, trial extraction, and candidate preview all used the running application. The isolated run report remains local under `artifacts/full_e2e_20261027_wPV4ZR/` and is not part of the source distribution.
+The English walkthrough was checked on the isolated project used for these screenshots. The model test, Assistant case, knowledge search, source inspection, extraction plan, trial extraction, and candidate preview all used the running application. The screenshots are included in `docs/images/user-guide/`.

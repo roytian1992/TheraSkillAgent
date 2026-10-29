@@ -51,6 +51,6 @@ Configure the LLM and embedding provider in the existing model settings. An inde
 
 Back up the simulation SQLite database and its learning judge job directory, along with generated cases and course batch jobs. In the default deployment judge jobs are next to scenario batch jobs, named `<database-stem>_learning_judge_jobs`. No database reset is needed: new learning tables are created on startup.
 
-See [deployment](deployment.en.md) and the [validation record](learning_validation_20261020.zh.md).
+See [deployment](deployment.en.md).
 
 Design references: [WHO/UNICEF EQUIP](https://www.who.int/teams/mental-health-and-substance-use/treatment-care/equip-ensuring-quality-in-psychological-support/) informs the emphasis on observed helping skills and supervision. [LLM-as-judge research](https://arxiv.org/abs/2306.05685) motivates explicit rubrics and attention to judging biases; its benchmark results do not establish validity for counseling training.

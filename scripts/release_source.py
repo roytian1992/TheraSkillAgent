@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SECRET = re.compile(r'(?:sk-(?:proj-)?[A-Za-z0-9_-]{24,}|gh[pousr]_[A-Za-z0-9]{30,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)')
+SECRET = re.compile(r'(?:(?<![A-Za-z0-9])sk-(?:proj-)?[A-Za-z0-9_-]{24,}|gh[pousr]_[A-Za-z0-9]{30,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)')
 EXCLUDED_PARTS = {'__pycache__', 'node_modules', 'dist', '.pytest_cache', '.venv', 'artifacts', 'data', 'state', 'sessions', 'memories', 'logs'}
 
 

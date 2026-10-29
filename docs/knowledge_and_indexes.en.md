@@ -76,7 +76,7 @@ maps reduce metadata overhead. An unfiltered global exact search may still read
 large vector ranges. Bundles expose `timings`, planner cache sources and model
 timing; support/expert provenance and knowledge-search diagnostics preserve them
 with budget warnings. Parallel stage times overlap and cannot be summed into
-total latency. See the [validation record (Chinese)](retrieval_optimization_20261018.zh.md).
+total latency.
 
 An explicitly selected skill owns the route. Without one, understanding returns
 a suggested skill for inspection. Keyword matches do not silently replace an
@@ -178,8 +178,10 @@ theraskill-agent knowledge activate --index demo-index
 theraskill-agent knowledge rollback
 ```
 
-Packages include inventories and download metadata. Local/HTTPS catalogs support
-checksums, multipart downloads and resumption. Installation rejects undeclared
+Packages include an internal inventory and install directly from their ZIP or
+tarball. Add `--catalog-record` when preparing an optional hosted download
+catalog; local installation does not need it. Hosted catalogs support checksums,
+multipart downloads and resumption. Installation rejects undeclared
 files, links and escaping paths, and does not automatically activate an index.
 Knowledge and prebuilt indexes may be distributed independently. Indexes can
 contain source text and require the same distribution permissions as knowledge.
@@ -190,7 +192,7 @@ rollback through the existing `/api/resources` service. No additional port is
 needed. Large sources can be supplied by local path. The `theraskill_resources`
 tool and `knowledge-index-manager` skill use the same job implementation.
 
-Simulation assets can also be packaged with `knowledge pack --kind simulation`; a `.zip` output uses ZIP64. See [Resource installation](resource_installation.en.md). Workbench search uses production retrieval; CLI `index search --runtime` selects that same path. Default CLI search remains a model-free index diagnostic. Required-family anchors survive final result selection, and missing families remain explicit warnings without violating source filters.
+Simulation assets use their own resource command: `simulation pack` and `simulation install`; a `.zip` output uses ZIP64. See [Resource installation](resource_installation.en.md) for the separate payload contract. Workbench search uses production retrieval; CLI `index search --runtime` selects that same path. Default CLI search remains a model-free index diagnostic. Required-family anchors survive final result selection, and missing families remain explicit warnings without violating source filters.
 
 ## Inspect and edit cited knowledge
 

@@ -8,7 +8,7 @@ TheraSkillAgent is more than a chat interface that generates replies. It models 
 
 The interface starts with the **Assistant**. A user can describe a question, a dialogue file, or a teaching goal in natural language. The Assistant can answer directly, retrieve knowledge, call a Skill, or move the work into a durable workspace task when more control is needed. Courses, knowledge, and simulation pages remain available for detailed follow-up.
 
-[中文 README](README.zh.md) · [English step-by-step user guide](docs/user_guide.en.md) · [图文中文指南](docs/user_guide.zh.md) · [Deployment guide](docs/deployment.en.md) · [中文部署说明](docs/deployment.zh.md) · [Simulated patients](docs/simulated_patients.en.md) · [Course Agent design](docs/course_agent_design.en.md) · [Resource installation](docs/resource_installation.en.md)
+[中文 README](README.zh.md) · [English step-by-step user guide](docs/user_guide.en.md) · [图文中文指南](docs/user_guide.zh.md) · [Offline installation](docs/deployment_offline.en.md) · [Deployment guide](docs/deployment.en.md) · [Simulated patients](docs/simulated_patients.en.md) · [Course Agent design](docs/course_agent_design.en.md) · [Resource installation](docs/resource_installation.en.md)
 
 ## What it is for
 
@@ -121,6 +121,8 @@ When a response cites knowledge, open **Reference evidence** to read a structure
 ## Quick start
 
 Python 3.11 or newer is required. Node 22.12 or newer is required only when building the browser interface from a source checkout; a wheel installation already contains built assets.
+
+For an Ubuntu 22.04 x86_64 server without internet access, use the separate [offline application ZIP](docs/deployment_offline.en.md). It includes Python 3.12, Linux shared libraries, and all application wheels. Knowledge and simulation are delivered as two independent resource ZIPs.
 
 ```bash
 git clone https://github.com/roytian1992/TheraSkillAgent.git

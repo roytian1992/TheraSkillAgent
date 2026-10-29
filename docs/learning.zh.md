@@ -51,6 +51,6 @@ AI 按课程目标逐项分析真实对话。教师记录目标评分、行为�
 
 备份模拟会谈 SQLite 数据库、学习反馈任务目录、生成病例和课程批次任务。默认反馈目录位于病例批次目录旁，名为 `<数据库文件名主体>_learning_judge_jobs`。启动时自动创建新增数据表，不需要重置数据库。
 
-部署见[部署文档](deployment.zh.md)，测试范围见[验收记录](learning_validation_20261020.zh.md)。
+部署见[部署文档](deployment.zh.md)。
 
 设计参考：[WHO/UNICEF EQUIP](https://www.who.int/teams/mental-health-and-substance-use/treatment-care/equip-ensuring-quality-in-psychological-support/)支持按可观察助人技能训练与督导的方向；[LLM-as-judge 研究](https://arxiv.org/abs/2306.05685)提示需要明确标准并关注评分偏差，其通用基准结果不等于心理咨询教学评分已有效度验证。

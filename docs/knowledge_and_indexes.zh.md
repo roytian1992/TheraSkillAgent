@@ -74,7 +74,7 @@ FAISS 使用选择器在近邻选择前应用元数据范围，避免先取全�
 
 混合检索使用 `faiss-cpu>=1.13.2` 的只读 Flat 索引映射和 `IDSelectorArray`，避免每个小范围查询先复制整个大型分片。ID 映射采用紧凑行号数组。映射节省的是无关向量的预加载；无过滤的全局精确查询仍可能读取大量向量。
 
-高级 bundle 增加 `timings`，planner 增加清单缓存来源、模型耗时和总耗时。支持/专家 provenance 与知识搜索工具的 diagnostics 同时保留这些信息和通道超时 warnings。并行阶段有重叠，不能把各阶段相加当作总时间。工程测量与已知限制见[检索优化验收](retrieval_optimization_20261018.zh.md)。
+高级 bundle 增加 `timings`，planner 增加清单缓存来源、模型耗时和总耗时。支持/专家 provenance 与知识搜索工具的 diagnostics 同时保留这些信息和通道超时 warnings。并行阶段有重叠，不能把各阶段相加当作总时间。
 
 新索引在主 SQLite 中额外构建中文二、三字词元 FTS 表，解决默认 tokenizer 对连续中文召回不足的问题。无需安装中文分词包。历史索引仍可走子串回退，但可能较慢；用新 ID 重建索引才能启用中文词元索引和完整语言过滤。新增投影版本会产生新的索引身份，不复用旧构建检查点。默认不会把查询语言当成硬过滤，因此允许中英文知识互相召回。
 
@@ -138,9 +138,9 @@ theraskill-agent knowledge pack --source examples/knowledge/demo.jsonl --output 
 theraskill-agent knowledge pack --source data/theraskill/indexes/demo-v1 --output /tmp/demo-index.tar.gz --id demo-index --kind index
 ```
 
-命令同时输出 `.download.json`，可把其中的记录放入 `catalog.json` 的 `packages` 数组。下载地址默认是相对压缩包文件名；上传后填写实际 URL。需要分卷时加 `--part-bytes 1073741824`，记录每卷顺序与 hash；分卷不可分别解压。完整包保留在本地便于核对。
+默认只输出可直接安装的资源包。只有准备托管下载目录时才加 `--catalog-record` 生成可选的 `.download.json`，把记录放入远程 catalog；本地安装不需要这一步。需要分卷时加 `--part-bytes 1073741824`，记录每卷顺序与 hash；分卷不可分别解压。
 
-打包知识需要明确数据许可，参数不会替你确认第三方数据的再分发权。预构建索引也可能含原文，需遵守相同来源限制。`knowledge pack --kind simulation` 也可打包模拟素材，输出扩展名 `.zip` 时使用 ZIP64。完整交付打包入口见[资源安装说明](resource_installation.zh.md)。公开 catalog 不填虚构 URL。
+打包知识需要明确数据许可，参数不会替你确认第三方数据的再分发权。预构建索引也可能含原文，需遵守相同来源限制。模拟素材使用独立的 `simulation pack` 和 `simulation install`，必须包含 `scenarios/scenario_registry.jsonl`；输出扩展名 `.zip` 时使用 ZIP64。完整交付打包入口见[资源安装说明](resource_installation.zh.md)。公开 catalog 不填虚构 URL。
 
 ## 更换索引的效果门禁
 

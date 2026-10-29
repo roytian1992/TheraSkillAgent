@@ -93,7 +93,7 @@ curl http://127.0.0.1:5176/api/overview
 
 混合检索的可选 `retrieval` extra 使用 `faiss-cpu>=1.13.2`，支持只读映射本项目的 Flat 向量索引，并只对符合过滤条件的向量做近邻选择。基础安装依赖数不变，无需增加进程、端口或手工缓存配置。
 
-遇到慢请求时，查看专家/支持任务 provenance 中的 `retrieval_summary.timings`、`planner_timings` 和 `warnings`；对应 bundle 还包含 `planner_trace.inventory_cache`。规划、向量和词法耗时会分别记录，并行阶段不能相加当作总耗时。宽泛中文查询仍可能触及词法通道预算，此时会明确报告并保留已完成通道；模型或网络延迟也会影响总时间。真实测量和复现命令见[检索优化验收](retrieval_optimization_20261018.zh.md)。
+遇到慢请求时，查看专家/支持任务 provenance 中的 `retrieval_summary.timings`、`planner_timings` 和 `warnings`；对应 bundle 还包含 `planner_trace.inventory_cache`。规划、向量和词法耗时会分别记录，并行阶段不能相加当作总耗时。宽泛中文查询仍可能触及词法通道预算，此时会明确报告并保留已完成通道；模型或网络延迟也会影响总时间。排查入口见[知识与索引](knowledge_and_indexes.zh.md)。
 
 ## 业务验证与任务恢复
 
@@ -122,7 +122,7 @@ llm:
 
 ## 部署简化验收
 
-单进程合并、公共模型恢复、独立安装检查及真实浏览器结果见[部署简化验收记录](deployment_simplification_20261018.zh.md)。
+离线安装到同版 Ubuntu 服务器的步骤见[离线安装说明](deployment_offline.zh.md)。
 
 
 ## 在界面配置和测试模型
@@ -144,7 +144,7 @@ theraskill-agent --project /tmp/theraskill-qa ui --port 5177
 
 ## 完整资源 ZIP 与首页检查
 
-完整知识和情景素材的安装见[资源安装说明](resource_installation.zh.md)。资源包使用 ZIP64、逐文件大小与 SHA-256 校验；界面可上传内层资源 ZIP，也可使用包旁的本地 catalog 安装。首次安装情景素材后重启应用；现有索引不会被自动替换。
+完整知识和情景素材的安装见[资源安装说明](resource_installation.zh.md)。资源包使用 ZIP64、逐文件大小与 SHA-256 校验；知识 ZIP 与场景 ZIP 通过工作台各自的入口或 `--archive` CLI 命令直接安装。首次安装情景素材后重启应用；现有索引不会被自动替换。
 
 首页“使用准备”显示配置、模型真实连接测试、活动索引、素材和技能依赖状态。配置检查不请求模型；点击连接测试才发起真实调用。内置 12 个技能均声明运行工具要求；第三方技能缺少工具或依赖时会在调用模型前报告。
 
