@@ -160,6 +160,10 @@ class LLMSupportEngine:
         extraction = load_yaml(self.extraction_config_path)
         local = load_yaml(self.model_config_path)
         resolved = merged_model_config(extraction, local)
+        # Interactive turns should fail visibly if the provider stalls; long
+        # extraction jobs retain their independently configured request budget.
+        resolved["timeout_seconds"] = min(int(resolved.get("timeout_seconds", 120)), 60)
+        resolved["retry_attempts"] = 0
         self.client = OpenAICompatibleClient(resolved)
         self.model_name = self.client.model
         self.estimate_prompt_tokens = estimate_prompt_tokens

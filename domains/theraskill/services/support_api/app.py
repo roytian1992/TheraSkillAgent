@@ -224,27 +224,31 @@ def create_app(
         service = service_override
     else:
         engine: SupportEngine | None = engine_override
+        engine_factory = None
         if engine is None and resolved.initialize_llm_engine:
-            engine = LLMSupportEngine(
-                project_root=PROJECT_ROOT,
-                extraction_config=resolved.extraction_config_path,
-                model_config=resolved.model_config_path,
-                work_root=resolved.work_root,
-                knowledge_release_id=resolved.knowledge_release_id,
-                memory_provider=(
-                    lambda subject_id: contribution_client.memory_context(
-                        subject_id=subject_id,
-                        role="user",
-                        include_sensitive=False,
-                        max_chars=3000,
-                    )
-                    if contribution_client is not None
-                    else {}
-                ),
-            )
+            def engine_factory() -> SupportEngine:
+                return LLMSupportEngine(
+                    project_root=PROJECT_ROOT,
+                    extraction_config=resolved.extraction_config_path,
+                    model_config=resolved.model_config_path,
+                    work_root=resolved.work_root,
+                    knowledge_release_id=resolved.knowledge_release_id,
+                    memory_provider=(
+                        lambda subject_id: contribution_client.memory_context(
+                            subject_id=subject_id,
+                            role="user",
+                            include_sensitive=False,
+                            max_chars=3000,
+                        )
+                        if contribution_client is not None
+                        else {}
+                    ),
+                )
+            engine = engine_factory()
         service = SupportSessionService(
             repository=SQLiteSupportRepository(resolved.database_path),
             engine=engine,
+            engine_factory=engine_factory,
             knowledge_release_id=resolved.knowledge_release_id,
             stale_job_seconds=resolved.stale_job_seconds,
         )

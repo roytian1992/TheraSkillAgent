@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Callable
 
 from .contracts import (
     GenerationState,
@@ -41,11 +41,13 @@ class SupportSessionService:
         *,
         repository: SQLiteSupportRepository,
         engine: SupportEngine | None,
+        engine_factory: Callable[[], SupportEngine] | None = None,
         knowledge_release_id: str,
         stale_job_seconds: float = 900.0,
     ) -> None:
         self.repository = repository
         self.engine = engine
+        self.engine_factory = engine_factory
         self.knowledge_release_id = knowledge_release_id
         self.stale_job_seconds = max(30.0, float(stale_job_seconds))
         self.recover_pending_jobs()
@@ -250,11 +252,12 @@ class SupportSessionService:
             or record.public.generation.job_id != job_id
         ):
             return
-        if self.engine is None:
+        if self.engine is None and self.engine_factory is None:
             self._mark_failed(record, job, "engine_not_configured")
             return
         try:
-            result = self.engine.generate(record, job_id)
+            engine = self.engine_factory() if self.engine_factory else self.engine
+            result = engine.generate(record, job_id)
         except Exception as exc:  # noqa: BLE001
             self._mark_failed(record, job, f"{type(exc).__name__}: {exc}")
             return

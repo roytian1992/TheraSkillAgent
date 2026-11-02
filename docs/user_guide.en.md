@@ -21,7 +21,7 @@ LLM and embedding are separate connections. The LLM is used for planning, genera
 1. Open **Models & connections**.
 2. Enter a model name, base URL, and API key for each service. Set a separate embedding endpoint when the provider requires `/embeddings`.
 3. Leave a masked key blank to keep the existing local key.
-4. Click **Test current values**. Save only after both checks are `ok`. **Test then save** combines the two actions.
+4. Click **Test current values**. Save only after both checks are `ok`. **Test then save** combines the two actions. The next Assistant turn reads the saved configuration; a task already running keeps its original provider. Restart the application if another workspace still uses the previous connection.
 
 ![Model connection settings](images/user-guide/en/en-02-models.png)
 
@@ -30,6 +30,7 @@ The test below was run against the configured OpenAI-compatible services. It ret
 ![Successful English model test](images/user-guide/en/en-13-model-test.png)
 
 Simple deterministic text checks and fast lexical searches can run without a model request. Generation, semantic indexing, and model review still require the corresponding provider.
+The Assistant shows elapsed time after 15 seconds. Professional questions may need query planning, knowledge retrieval, and response generation, so they can take much longer than a connection test. After 30 seconds, **Check model connection** opens the provider settings; completed responses remain available in conversation history.
 
 ## 3. Ask the Assistant
 

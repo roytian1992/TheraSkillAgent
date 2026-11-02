@@ -41,6 +41,60 @@ class _RiskEngine(SupportEngine):
         )
 
 
+def test_saved_provider_changes_reach_the_next_assistant_turn(tmp_path: Path, monkeypatch) -> None:
+    versions = {"current": "before"}
+
+    class VersionedEngine(_RiskEngine):
+        def __init__(self, **_kwargs) -> None:
+            self.version = versions["current"]
+
+        def generate(self, record, job_id: str) -> SupportEngineResult:
+            result = super().generate(record, job_id)
+            return result.model_copy(update={"response_text": self.version, "model_config_id": self.version})
+
+    monkeypatch.setattr("domains.theraskill.services.support_api.app.LLMSupportEngine", VersionedEngine)
+    settings = SupportAPISettings(
+        database_path=tmp_path / "support.sqlite", worker_enabled=False,
+        contribution_api_url=None,
+    )
+    with TestClient(create_app(settings)) as client:
+        session_id = client.post("/sessions", json={}).json()["session_id"]
+        for version in ("before", "after"):
+            versions["current"] = version
+            response = client.post(
+                f"/sessions/{session_id}/messages",
+                json={"text": "Test message"},
+                headers={"Idempotency-Key": version},
+            )
+            assert response.status_code == 202
+            current = client.get(f"/sessions/{session_id}").json()
+            assert current["messages"][-1]["text"] == version
+
+
+def test_assistant_caps_interactive_provider_waits(tmp_path: Path, monkeypatch) -> None:
+    from domains.theraskill.theraskill_support.engine import LLMSupportEngine
+    import domains.theraskill.theraskill_llm as llm
+
+    monkeypatch.setenv("THERASKILL_AGENT_ROOT", str(tmp_path))
+    monkeypatch.setattr(llm, "merged_model_config", lambda *_args: {
+        "name": "test-model", "base_url": "http://127.0.0.1:1/v1",
+        "timeout_seconds": 600, "retry_attempts": 2,
+    })
+    extraction_config = tmp_path / "extraction.yaml"
+    model_config = tmp_path / "retrieval.yaml"
+    extraction_config.write_text("{}", encoding="utf-8")
+    model_config.write_text("{}", encoding="utf-8")
+    engine = LLMSupportEngine(
+        project_root=Path(__file__).resolve().parents[1],
+        extraction_config=extraction_config,
+        model_config=model_config,
+        work_root=tmp_path / "runtime",
+        knowledge_release_id="test",
+    )
+    assert engine.client.timeout_seconds == 60
+    assert engine.client.retry_attempts == 0
+
+
 def _service(tmp_path: Path) -> SupportSessionService:
     return SupportSessionService(
         repository=SQLiteSupportRepository(tmp_path / "support.sqlite"),

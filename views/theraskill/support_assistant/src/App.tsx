@@ -385,11 +385,15 @@ export default function App() {
   useTranslationSubscription()
 
   const { locale, toggleLocale } = useLocale()
+  const t = (zh: string, en: string) => locale === 'zh' ? zh : en
   const [sessions, setSessions] = useState<SupportSession[]>([])
   const [session, setSession] = useState<SupportSession | null>(null)
   const [draft, setDraft] = useState('')
   const [connected, setConnected] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [responseStartedAt, setResponseStartedAt] = useState(Date.now())
+  const [clock, setClock] = useState(Date.now())
   const [error, setError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 760)
   const [contributionOpen, setContributionOpen] = useState(false)
@@ -403,6 +407,16 @@ export default function App() {
   const pending = session?.generation.status === 'pending'
   const failed = session?.generation.status === 'failed'
   const active = session?.status === 'active'
+  const lastUserMessage = [...(session?.messages || [])].reverse().find(message => message.role === 'user')
+  const savedStart = lastUserMessage ? Date.parse(lastUserMessage.created_at) : NaN
+  const elapsedSeconds = Math.max(0, Math.floor((clock - (pending && Number.isFinite(savedStart) ? savedStart : responseStartedAt)) / 1000))
+
+  useEffect(() => {
+    if (!pending && !sending) return
+    setClock(Date.now())
+    const timer = window.setInterval(() => setClock(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [pending, sending])
 
   const refreshList = async () => {
     const rows = await listSessions()
@@ -479,9 +493,11 @@ export default function App() {
   }
 
   const send = async () => {
-    if (!session || !draft.trim() || pending || !active) return
+    if (!session || !draft.trim() || pending || sending || !active) return
     const text = draft.trim()
     try {
+      setSending(true)
+      setResponseStartedAt(Date.now())
       setDraft('')
       setError('')
       const routed = await routeWorkspace(text).catch(() => null)
@@ -492,6 +508,8 @@ export default function App() {
     } catch (reason) {
       setDraft(text)
       setError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setSending(false)
     }
   }
 
@@ -624,10 +642,10 @@ export default function App() {
               key={message.message_id}
             />
           ))}
-          {pending && (
+          {(pending || sending) && (
             <article className="message assistant-message pending-message">
               <div className="message-meta">TheraSkillAgent</div>
-              <div className="message-body"><span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" /><p>{locale === 'zh' ? tr('正在准备回应。任务在后台继续，稍后可从会话历史找回。') : 'Preparing a response. The job continues in the background; you can return through conversation history.'}</p></div>
+              <div className="message-body"><span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" /><p>{sending && !pending ? t('正在提交请求…', 'Sending request…') : elapsedSeconds < 15 ? t('正在处理请求…', 'Processing request…') : t(`已等待 ${elapsedSeconds} 秒。任务仍在后台处理，可以稍后从会话历史查看。`, `Waiting ${elapsedSeconds} seconds. The task continues in the background; you can return through conversation history.`)}{pending && elapsedSeconds >= 30 && <> <a href={workbenchHref('settings')}>{t('检查模型连接', 'Check model connection')}</a></>}</p></div>
             </article>
           )}
           {failed && (
@@ -658,9 +676,9 @@ export default function App() {
                 }}
                 placeholder={tr("输入你想说的内容")}
                 rows={2}
-                disabled={pending}
+                disabled={pending || sending}
               />
-              <button className="send-button" onClick={send} disabled={!draft.trim() || pending} title={tr("发送")}><Send size={19} /></button>
+              <button className="send-button" onClick={send} disabled={!draft.trim() || pending || sending} title={tr("发送")}><Send size={19} /></button>
             </div>
           )}
         </footer>

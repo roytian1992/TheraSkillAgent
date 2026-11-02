@@ -345,7 +345,7 @@ llm:
     type: disabled
 ```
 
-There is no model-name condition or automatic reasoning change for other providers. Truncated output and upstream disconnects produce explicit failures with recovery actions. Restart the single application after changing these settings so existing model clients are refreshed. Preserve results from different settings separately.
+There is no model-name condition or automatic reasoning change for other providers. Truncated output and upstream disconnects produce explicit failures with recovery actions. Each interactive Assistant model request waits at most 60 seconds and does not retry network failures; a complete turn may still take longer because it can include multiple requests and retrieval. The next Assistant turn reads saved provider changes, while jobs already running keep their original settings. Restart the application if another workspace still uses the previous connection. Preserve results from different settings separately.
 
 ## Interactive workflows and reviewed upgrades
 
