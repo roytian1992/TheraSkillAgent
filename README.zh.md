@@ -121,6 +121,7 @@ Skill 描述任务目标、输入输出、工具、知识范围和检查要求�
 ## 快速开始
 
 Python 需要 3.11+。从源码构建浏览器界面需要 Node 22.12+；使用 wheel 时不需要 Node。
+如果已有 `.venv` 使用旧版 Python，应另建虚拟环境目录；见[macOS 修复步骤](docs/deployment.zh.md#macos-上已有-python-39-虚拟环境)。
 
 同版 Ubuntu 22.04 x86_64 的无网服务器可直接使用[程序离线 ZIP](docs/deployment_offline.zh.md)：包内已带 Python 3.12、Linux 共享库和全部应用依赖。知识与场景另用两份独立 ZIP 按需安装。
 
@@ -128,8 +129,9 @@ Python 需要 3.11+。从源码构建浏览器界面需要 Node 22.12+；使用 
 git clone https://github.com/roytian1992/TheraSkillAgent.git
 cd TheraSkillAgent
 
-python -m venv .venv
+python3.12 -m venv .venv # 也可使用已安装的其他 Python 3.11+
 source .venv/bin/activate
+python --version # 安装依赖前确认是 3.11+
 python -m pip install -e .
 
 # 源码安装需要构建界面

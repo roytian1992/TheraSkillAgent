@@ -2,12 +2,13 @@
 
 ## 软件
 
-Linux / Python 3.11+。本地开发源码需要 Node 22.12+ 来构建四个界面；部署已构建 wheel 不需要 Node。基础安装只需要 7 个直接 Python 依赖。索引进程锁使用 Linux 的 flock。
+Python 3.11+。本地开发源码需要 Node 22.12+ 来构建四个界面；部署已构建 wheel 不需要 Node。基础安装只需要 7 个直接 Python 依赖。索引进程锁使用 POSIX `flock`。下面以已安装的 `python3.12` 为例；也可以换成其他 Python 3.11+ 的完整路径。
 
 ```bash
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
-pip install /path/to/theraskill_agent-0.5.0-py3-none-any.whl
+python --version # 必须是 3.11+
+python -m pip install /path/to/theraskill_agent-0.5.0-py3-none-any.whl
 theraskill-agent project init ~/TheraSkillAgent
 theraskill-agent status
 theraskill-agent run extraction.plan --goal 'Extract response strategies grounded in source quotations'
@@ -16,6 +17,20 @@ theraskill-agent run extraction.plan --goal 'Extract response strategies grounde
 wheel 默认使用 `~/TheraSkillAgent` 保存配置和数据；源码安装默认使用项目目录。自定义目录时使用 `theraskill-agent --project /你的目录 ui`，无需设置环境变量。
 
 源码安装见根目录 README。需要 FAISS 向量构建与查询时，再安装同版本软件的 `retrieval` extra；模型权重和推理框架不在基础依赖中。
+
+### macOS 上已有 Python 3.9 虚拟环境
+
+`requires a different Python: 3.9 ... not in '>=3.11'` 表示当前 `.venv` 本身由 Python 3.9 创建。升级 pip 不能改变它的解释器。已安装 Homebrew 时，可新建一个环境，不动原来的 `.venv`：
+
+```bash
+brew install python@3.12
+"$(brew --prefix python@3.12)/bin/python3.12" -m venv .venv312
+source .venv312/bin/activate
+python --version
+python -m pip install -e .
+```
+
+以上在源码目录执行。如果机器上已有 Python 3.11+，直接用该解释器的完整路径执行 `-m venv .venv312` 即可。然后按根目录 README 运行 `npm ci`、`npm run build` 和 `theraskill-agent project init .`。Ubuntu 离线 ZIP 只适用于 Linux，不能拿到 macOS 安装。
 
 ## 模型配置
 

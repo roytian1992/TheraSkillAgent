@@ -14,6 +14,11 @@ For a source checkout:
 - Python 3.11 or newer
 - Node 22.12 or newer only when rebuilding the browser workspaces
 
+The `python` command may still point to Python 3.9 even when a newer version is
+installed. Create the virtual environment with an explicit Python 3.11+
+interpreter and verify its version before running pip. The commands below use
+`python3.12`; substitute another installed Python 3.11+ executable if needed.
+
 The base Python installation has seven direct dependencies. It does not install
 PyTorch, Transformers, FAISS, or a model server. Add the optional retrieval
 extra only when building or querying hybrid indexes:
@@ -34,8 +39,9 @@ before nearest-neighbor selection. This does not add base installation dependenc
 ```bash
 git clone https://github.com/roytian1992/TheraSkillAgent.git
 cd TheraSkillAgent
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
+python --version
 python -m pip install -e .
 
 npm ci
@@ -57,8 +63,9 @@ A wheel contains the built browser assets and does not require Node on the
 deployment machine:
 
 ```bash
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
+python --version
 python -m pip install /path/to/theraskill_agent-0.5.0-py3-none-any.whl
 
 theraskill-agent project init ~/TheraSkillAgent
@@ -78,6 +85,27 @@ use the checkout. To select another workspace, use
 `theraskill-agent --project /your/workspace ui` (the same flag works with other
 commands). No environment variable is required. Mutable data stays outside
 `site-packages`.
+
+### Existing Python 3.9 virtual environment on macOS
+
+The error `requires a different Python: 3.9 ... not in '>=3.11'` means the
+virtual environment itself uses Python 3.9. Upgrading pip does not change its
+interpreter. With Homebrew, install Python 3.12 and create a **new** environment
+without modifying the old `.venv`:
+
+```bash
+brew install python@3.12
+"$(brew --prefix python@3.12)/bin/python3.12" -m venv .venv312
+source .venv312/bin/activate
+python --version
+python -m pip install -e .
+```
+
+Run these commands from the source checkout. If you already have a Python 3.11+
+interpreter, use its full path for the `-m venv` command instead of installing
+another copy. Then continue with `npm ci`, `npm run build` and `theraskill-agent
+project init .` from the source deployment steps above. The Ubuntu offline ZIP
+is Linux-specific and cannot be installed on macOS.
 
 ## Configure the LLM and embedding services
 
