@@ -85,6 +85,7 @@ class CreateSessionRequest(BaseModel):
 class SubmitMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     output_language: Literal["auto", "zh", "en"] | None = None
+    knowledge_mode: Literal["auto", "model_only"] = "auto"
     text: str = Field(min_length=1, max_length=12000)
 
 
@@ -98,6 +99,7 @@ class RetryResponseRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     workflow: Literal["support", "response_review", "synthetic_construction"] | None = None
     output_language: Literal["auto", "zh", "en"] | None = None
+    knowledge_mode: Literal["auto", "model_only"] | None = None
 
 
 class ContributionConsentRequest(BaseModel):
@@ -452,6 +454,65 @@ def create_app(
         owner, _role = actor
         return service.get_public(session_id, owner_id=owner).model_dump(mode="json")
 
+    @app.get("/sessions/{session_id}/diagnostics")
+    def session_diagnostics(
+        session_id: str,
+        actor: tuple[str, str] = Depends(identity),
+    ) -> dict[str, Any]:
+        from theraskill_agent.indexing.embedding import require_compatible, resolve
+        from theraskill_agent.resources import active_index
+        from theraskill_agent.resource_api import _provider_snapshot
+
+        owner, _role = actor
+        record = service.repository.get(session_id)
+        service._assert_owner(record, owner)
+        latest = record.turn_traces[-1] if record.turn_traces else None
+        error = (latest.error or "").lower() if latest else ""
+        if not error:
+            code = "none"
+        elif "embedding configuration differs" in error:
+            code = "embedding_mismatch"
+        elif any(value in error for value in ("index is missing", "no active index", "no such file", "index is incomplete")):
+            code = "index_unavailable"
+        elif any(value in error for value in ("finish_reason: length", "finish_reason=length", "incomplete response", "max_output_tokens")):
+            code = "output_limit"
+        elif any(value in error for value in ("401", "403", "unauthorized", "invalid api key")):
+            code = "authentication"
+        elif any(value in error for value in ("429", "rate limit")):
+            code = "rate_limit"
+        elif any(value in error for value in ("timed out", "timeout", "connection error", "connection refused")):
+            code = "connection"
+        elif any(value in error for value in ("response_text", "invalid json", "jsondecodeerror")):
+            code = "invalid_model_output"
+        else:
+            code = "generation_error"
+        try:
+            selected = active_index()
+            if selected is None:
+                index = {"status": "missing"}
+            else:
+                directory, manifest = selected
+                mode = (manifest.get("input") or {}).get("mode", "lexical")
+                index = {"status": "ready", "id": directory.name, "mode": mode,
+                         "records": (manifest.get("counts") or {}).get("indexed", 0)}
+                if mode == "hybrid":
+                    try:
+                        require_compatible(manifest.get("embedding"), resolve())
+                    except ValueError:
+                        index["status"] = "embedding_mismatch"
+        except (OSError, ValueError, KeyError):
+            index = {"status": "invalid"}
+        try:
+            llm = _provider_snapshot()["llm"].get("model", "")
+        except (OSError, ValueError, KeyError):
+            llm = ""
+        return {"session_id": session_id, "generation_status": str(record.public.generation.status),
+                "job_id": latest.job_id if latest else None,
+                "knowledge_mode": latest.knowledge_mode if latest else "auto",
+                "failure_stage": latest.failure_stage if latest else None,
+                "error_code": code, "index": index, "llm_model": llm,
+                "latency_ms": latest.latency_ms if latest else {}}
+
     @app.post("/sessions/{session_id}/messages", status_code=202)
     def submit_message(
         session_id: str,
@@ -471,6 +532,7 @@ def create_app(
             owner_id=owner,
             idempotency_key=idempotency_key,
             output_language=request.output_language,
+            knowledge_mode=request.knowledge_mode,
         )
         if result.response_pending:
             background_tasks.add_task(
@@ -724,7 +786,8 @@ def create_app(
         owner, _role = actor
         public, job_id = service.retry_response(session_id, owner_id=owner,
             workflow=request.workflow if request else None,
-            output_language=request.output_language if request else None)
+            output_language=request.output_language if request else None,
+            knowledge_mode=request.knowledge_mode if request else None)
         background_tasks.add_task(service.finalize_response, session_id, job_id=job_id)
         return {"session": public.model_dump(mode="json"), "job_id": job_id, "response_pending": True}
 

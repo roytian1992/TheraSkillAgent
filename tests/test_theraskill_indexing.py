@@ -46,7 +46,7 @@ def embedding_server(workspace):
                'llm': {'model': 'mock-llm', 'base_url': 'http://127.0.0.1:1/v1'},
                'embedding': {'model': 'mock-A', 'base_url': f'http://127.0.0.1:{server.server_port}/v1',
                              'endpoint': f'http://127.0.0.1:{server.server_port}/v1/embeddings',
-                             'batch_size': 2, 'retry_attempts': 0, 'dimensions': 4}}
+                             'batch_size': 2, 'workers': 1, 'retry_attempts': 0, 'dimensions': 4}}
     folder = workspace / 'configs/theraskill'; folder.mkdir(parents=True)
     (folder / 'providers.yaml').write_text(yaml.safe_dump(profile))
     yield calls
@@ -70,6 +70,13 @@ def test_lexical_portable_and_policy_filtered(workspace):
     with pytest.raises(ValueError, match='immutable'):
         build_index(source, moved)
     assert build_index(source, moved, resume=True)['index_id'] == built['index_id']
+
+
+def test_build_reports_source_byte_progress(workspace):
+    progress = []
+    build_index(DEMO, workspace / 'progress', progress=progress.append)
+    complete = next(event for event in progress if event['stage'] == 'lexical_complete')
+    assert complete['bytes'] == complete['total_bytes'] == DEMO.stat().st_size
 
 
 def test_custom_mapping_and_phase6(workspace):

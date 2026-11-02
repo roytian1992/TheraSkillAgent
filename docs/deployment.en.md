@@ -140,6 +140,7 @@ embedding:
 
 Additional request controls such as `temperature`, `timeout_seconds`,
 `retry_attempts`, `batch_size`, and `ssl_verify` may remain in the template.
+The embedding `workers` setting controls concurrent index-build requests (default 4, range 1–32). It is also editable in **Models & connections**. Reduce it if your provider rate-limits requests; interrupted builds retain completed checkpoints. Build progress uses source bytes during keyword indexing and completed vectors during semantic indexing. Assistant turns can use **Model only** without an active index; the header diagnostics panel shows index status and the last failure category.
 The LLM and embedding services may use different URLs, model IDs, and keys.
 Both endpoints must expose the OpenAI-compatible API expected by the client.
 

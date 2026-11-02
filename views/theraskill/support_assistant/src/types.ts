@@ -96,6 +96,18 @@ export interface SubmitMessageResult {
   response_pending: boolean
 }
 
+export interface SessionDiagnostics {
+  session_id: string
+  generation_status: GenerationStatus
+  job_id: string | null
+  knowledge_mode: 'auto' | 'model_only'
+  failure_stage: string | null
+  error_code: string
+  index: { status: string; id?: string; mode?: string; records?: number }
+  llm_model: string
+  latency_ms: Record<string, number>
+}
+
 export interface WorkspaceRoute {
   workspace: string
   intent: string

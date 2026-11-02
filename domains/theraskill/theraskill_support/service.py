@@ -139,6 +139,7 @@ class SupportSessionService:
         owner_id: str,
         idempotency_key: str,
         output_language: str | None = None,
+        knowledge_mode: str = "auto",
     ) -> SubmitMessageResult:
         existing_job_id = self.repository.idempotent_job_id(
             session_id, idempotency_key
@@ -162,6 +163,10 @@ class SupportSessionService:
             raise ValueError("message text cannot be empty")
         if output_language is not None and output_language not in {"auto", "zh", "en"}:
             raise ValueError("Unsupported output language")
+        if knowledge_mode not in {"auto", "model_only"}:
+            raise ValueError("Unsupported knowledge mode")
+        if knowledge_mode == "model_only" and record.workflow != "support":
+            raise ValueError("Model-only mode is available for ordinary assistant conversations")
         now = utc_now()
         message = SupportMessage(
             message_id=f"support_message_{uuid.uuid4().hex}",
@@ -212,6 +217,7 @@ class SupportSessionService:
             job_id=job.job_id,
             user_message_id=message.message_id,
             knowledge_release_id=record.knowledge_release_id,
+            knowledge_mode=knowledge_mode,
         )
         next_record = record.model_copy(
             update={
@@ -259,7 +265,17 @@ class SupportSessionService:
             engine = self.engine_factory() if self.engine_factory else self.engine
             result = engine.generate(record, job_id)
         except Exception as exc:  # noqa: BLE001
-            self._mark_failed(record, job, f"{type(exc).__name__}: {exc}")
+            stage = "initialization"
+            frame = exc.__traceback__
+            while frame is not None:
+                stage = {
+                    "_compact_history": "history",
+                    "_route": "routing",
+                    "_retrieve": "retrieval",
+                    "_respond": "response",
+                }.get(frame.tb_frame.f_code.co_name, stage)
+                frame = frame.tb_next
+            self._mark_failed(record, job, f"{type(exc).__name__}: {exc}", stage=stage)
             return
 
         # Check-ins and safety actions may be saved while generation is running.
@@ -328,6 +344,8 @@ class SupportSessionService:
                 "latency_ms": result.latency_ms,
                 "history_compaction": result.history_compaction,
                 "status": "complete",
+                "error": None,
+                "failure_stage": None,
             }
         )
         next_record = record.model_copy(
@@ -500,7 +518,7 @@ class SupportSessionService:
         return public
 
     def _mark_failed(
-        self, record: SupportSessionRecord, job: SupportTurnJob, error: str
+        self, record: SupportSessionRecord, job: SupportTurnJob, error: str, *, stage: str | None = None
     ) -> None:
         record = self.repository.get(record.public.session_id)
         if record.public.generation.job_id != job.job_id:
@@ -522,7 +540,7 @@ class SupportSessionService:
             index for index, trace in enumerate(traces) if trace.job_id == job.job_id
         )
         traces[trace_index] = traces[trace_index].model_copy(
-            update={"status": "failed", "error": error[:2000]}
+            update={"status": "failed", "error": error[:2000], "failure_stage": stage}
         )
         next_record = record.model_copy(
             update={
@@ -571,6 +589,7 @@ class SupportSessionService:
     def retry_response(
         self, session_id: str, *, owner_id: str,
         workflow: str | None = None, output_language: str | None = None,
+        knowledge_mode: str | None = None,
     ) -> tuple[SupportPublicSession, str]:
         record = self.repository.get(session_id)
         self._assert_owner(record, owner_id)
@@ -578,6 +597,14 @@ class SupportSessionService:
         if generation.status != GenerationStatus.FAILED or not generation.job_id:
             raise SupportOperationError("there is no failed response to retry")
         job = self.repository.get_job(generation.job_id)
+        if knowledge_mode is not None and knowledge_mode not in {"auto", "model_only"}:
+            raise ValueError("Unsupported knowledge mode")
+        if knowledge_mode == "model_only" and (workflow or record.workflow) != "support":
+            raise ValueError("Model-only mode is available for ordinary assistant conversations")
+        traces = [trace.model_copy(update={
+            "knowledge_mode": knowledge_mode or trace.knowledge_mode,
+            "status": "pending", "error": None, "failure_stage": None,
+        }) if trace.job_id == job.job_id else trace for trace in record.turn_traces]
         now = utc_now()
         public = record.public.model_copy(
             update={
@@ -590,7 +617,8 @@ class SupportSessionService:
         next_record = record.model_copy(
             update={"public": public, "revision": record.revision + 1,
                     "workflow": workflow or record.workflow,
-                    "output_language": output_language or record.output_language}
+                    "output_language": output_language or record.output_language,
+                    "turn_traces": traces}
         )
         next_job = job.model_copy(
             update={

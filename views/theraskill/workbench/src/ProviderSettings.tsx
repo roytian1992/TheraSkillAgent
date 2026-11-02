@@ -13,6 +13,8 @@ type ProviderBlock = {
   temperature?: number
   reasoning_effort?: string
   ssl_verify?: boolean
+  workers?: number
+  batch_size?: number
 }
 
 type ProviderSnapshot = {
@@ -119,7 +121,7 @@ export default function ProviderSettings({ locale, onBack }: { locale: 'zh' | 'e
       {field(kind, 'base_url', 'Base URL', 'https://provider.example/v1')}
       {!isLlm && field(kind, 'endpoint', zh ? 'Embedding endpoint（可选）' : 'Embedding endpoint (optional)', 'https://provider.example/v1/embeddings')}
       <label className="provider-field"><span><KeyRound size={13} /> API key {configured && <em>{zh ? '已配置，留空保持不变' : 'configured; leave blank to keep'}</em>}</span><div className="secret-input"><input type={showKey[kind] ? 'text' : 'password'} value={form[kind].api_key} placeholder={configured ? '••••••••' : 'sk-...'} onChange={event => update(kind, 'api_key', event.target.value)} autoComplete="new-password" /><button type="button" aria-label={showKey[kind] ? 'Hide API key' : 'Show API key'} onClick={() => setShowKey(value => ({ ...value, [kind]: !value[kind] }))}>{showKey[kind] ? <EyeOff size={15} /> : <Eye size={15} />}</button></div></label>
-      <div className="provider-optional-grid">{field(kind, 'timeout_seconds', zh ? '超时（秒）' : 'Timeout (seconds)', '600', 'number')}{isLlm && field(kind, 'max_output_tokens', zh ? '最大输出 token' : 'Max output tokens', '4096', 'number')}{isLlm && field(kind, 'reasoning_effort', zh ? '推理强度（可选）' : 'Reasoning effort (optional)', '留空使用服务默认')}</div>
+      <div className="provider-optional-grid">{field(kind, 'timeout_seconds', zh ? '超时（秒）' : 'Timeout (seconds)', '600', 'number')}{isLlm && field(kind, 'max_output_tokens', zh ? '最大输出 token' : 'Max output tokens', '4096', 'number')}{isLlm && field(kind, 'reasoning_effort', zh ? '推理强度（可选）' : 'Reasoning effort (optional)', '留空使用服务默认')}{!isLlm && field(kind, 'workers', zh ? '并发请求数' : 'Concurrent requests', '4', 'number')}{!isLlm && field(kind, 'batch_size', zh ? '每次请求条数' : 'Records per request', '32', 'number')}</div>
     </article>
   }
 

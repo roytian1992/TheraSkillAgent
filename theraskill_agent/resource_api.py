@@ -36,6 +36,8 @@ class ProviderBlockInput(BaseModel):
     reasoning_effort: str | None = Field(default=None, max_length=64)
     thinking: dict[str, Any] | str | None = None
     ssl_verify: bool | None = None
+    workers: int | None = Field(default=None, ge=1, le=32)
+    batch_size: int | None = Field(default=None, ge=1, le=512)
 
 
 class ProviderConfigWrite(BaseModel):

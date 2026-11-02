@@ -42,6 +42,8 @@ The Assistant is the normal starting point. Describe the outcome you need instea
 4. Expand **Evidence** when it is shown. Open a knowledge item to read the actual content and source, then edit it in the knowledge workspace if needed.
 5. Use feedback buttons to record whether the response was useful. Keep patient material de-identified and follow the data policy of the model provider.
 
+Above the composer, choose **Use knowledge** to search the active index or **Model only** to skip retrieval for that turn. Model-only answers do not cite installed knowledge and work while an index is unavailable. After a failure, you can switch modes before clicking **Retry**. The diagnostics icon in the header, and the **Diagnostics** button on a failed turn, show the configured model, index status, failure stage, and error category. If the index is unavailable, check it in **Knowledge & indexes** or retry with **Model only**.
+
 ![Assistant entry](images/user-guide/en/en-10-assistant.png)
 
 ![Real English supervision request](images/user-guide/en/en-14-assistant-case.png)
@@ -91,6 +93,8 @@ For a first test, use the small `examples/knowledge/demo.jsonl` package. Large k
 4. Click **Verify** on the candidate version. Compare behavior before replacing an active version.
 5. Activate only after the check and human review pass. Building a new version never silently replaces the active one.
 6. Use **Meaning-based search** when different wording needs semantic matching. It requires the embedding provider and can be expensive for a large collection.
+
+The build job shows a progress bar in **Manage versions**. During keyword indexing it measures bytes read from the source; during semantic indexing it shows completed vectors out of eligible records. Embedding requests run concurrently (four workers by default); adjust **Concurrent requests** in **Models & connections** to match your provider's rate limits. Completed batches are checkpointed so an interrupted build can resume.
 
 ![Knowledge installation and search modes](images/user-guide/en/en-05-knowledge.png)
 

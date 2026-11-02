@@ -349,6 +349,10 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   border-top: 1px solid var(--line);
   background: var(--surface);
 }
+.composer-section{display:grid;gap:8px}
+.knowledge-mode{display:inline-flex;justify-self:start;gap:2px;padding:2px;border:1px solid var(--line);border-radius:6px;background:#f4f7f5}
+.knowledge-mode button{min-height:28px;padding:4px 10px;border:0;border-radius:4px;color:var(--muted);background:transparent;font-size:11px}
+.knowledge-mode button.selected{color:var(--green-dark);background:#fff;box-shadow:0 1px 3px #00000018;font-weight:650}
 .composer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 44px;
@@ -454,6 +458,16 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   background: var(--surface);
   box-shadow: -10px 0 26px rgba(23, 37, 31, .12);
 }
+.diagnostics-drawer{position:fixed;inset:0 0 0 auto;z-index:40;display:grid;grid-template-rows:auto minmax(0,1fr);width:min(420px,94vw);border-left:1px solid var(--line);background:var(--surface);box-shadow:-10px 0 26px rgba(23,37,31,.12)}
+.diagnostics-drawer>header{display:flex;align-items:center;justify-content:space-between;min-height:62px;padding:10px 16px;border-bottom:1px solid var(--line)}
+.diagnostics-drawer h2{display:flex;align-items:center;gap:8px;margin:0;font-size:15px}
+.diagnostics-content{min-height:0;overflow-y:auto;padding:16px;line-height:1.5;font-size:12px}
+.diagnostics-content dl{display:grid;grid-template-columns:105px minmax(0,1fr);gap:12px 10px;margin:0}
+.diagnostics-content dt{color:var(--muted)}
+.diagnostics-content dd{margin:0;overflow-wrap:anywhere}
+.diagnostics-content p{margin:18px 0;color:#6d4b29}
+.diagnostics-links{display:flex;flex-wrap:wrap;gap:12px;margin-top:20px}
+.diagnostics-links a{color:var(--green-dark)}
 .memory-drawer{position:fixed;inset:0 0 0 auto;z-index:40;display:grid;grid-template-rows:auto auto minmax(0,1fr);width:min(460px,94vw);border-left:1px solid var(--line);background:var(--surface);box-shadow:-10px 0 26px rgba(23,37,31,.12)}
 .memory-drawer>header{display:flex;align-items:center;justify-content:space-between;min-height:62px;padding:10px 16px;border-bottom:1px solid var(--line)}.memory-drawer h2{margin:0;font-size:15px}.memory-create{display:grid;gap:9px;padding:14px 16px;border-bottom:1px solid var(--line);background:#f8faf9}.memory-fields{display:grid;grid-template-columns:minmax(0,1fr) 110px;gap:8px}.memory-fields select,.memory-fields input,.memory-create textarea,.memory-list textarea{width:100%;border:1px solid #cbd3cf;border-radius:5px;background:white}.memory-fields select,.memory-fields input{height:36px;padding:0 8px}.memory-fields label{display:grid;gap:3px;color:var(--muted);font-size:9px}.memory-create textarea,.memory-list textarea{min-height:66px;padding:8px;resize:vertical;font-size:12px;line-height:1.5}.sensitive-toggle{display:flex;align-items:center;gap:6px;color:#4e5b55;font-size:11px}.sensitive-toggle input{accent-color:var(--green)}.memory-primary,.memory-actions button{display:inline-flex;align-items:center;justify-content:center;gap:5px;justify-self:start;min-height:30px;padding:5px 10px;border:1px solid var(--green);border-radius:5px;color:white;background:var(--green);font-size:11px}.memory-list{min-height:0;padding:0 16px 20px;overflow-y:auto}.memory-list article{display:grid;gap:7px;padding:14px 0;border-bottom:1px solid var(--line)}.memory-meta{display:flex;align-items:center;justify-content:space-between;gap:10px}.memory-meta strong{font-size:12px}.memory-meta span{color:var(--green-dark);font-size:10px}.memory-list p{margin:0;font-size:12px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}.memory-list small{color:var(--muted);font-size:9px}.memory-actions{display:flex;flex-wrap:wrap;gap:6px}.memory-actions button{color:var(--green-dark);background:var(--green-soft)}.memory-actions button.danger{color:var(--coral);border-color:#e8c8c1;background:var(--coral-soft)}
 .contribution-drawer > header { display: flex; align-items: center; justify-content: space-between; min-height: 62px; padding: 10px 16px; border-bottom: 1px solid var(--line); }

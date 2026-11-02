@@ -274,7 +274,8 @@ class LLMSupportEngine:
         )
 
     def _skip_retrieval(
-        self, session_id: str, job_id: str, route: RoutingDecision
+        self, session_id: str, job_id: str, route: RoutingDecision,
+        *, reason: str = "low_risk_lightweight_conversation",
     ) -> tuple[dict[str, Any], Path, int]:
         """Persist an explicit no-evidence trace for the fast path."""
 
@@ -282,13 +283,13 @@ class LLMSupportEngine:
         output.parent.mkdir(parents=True, exist_ok=True)
         bundle: dict[str, Any] = {
             "schema_version": "theraskill_support_retrieval_bundle_v1",
-            "retrieval_mode": "skipped_fast_path",
+            "retrieval_mode": "skipped_by_user" if reason == "user_selected_model_only" else "skipped_fast_path",
             "items": [],
             "warnings": [],
-            "skip_reason": "low_risk_lightweight_conversation",
-            "planner_trace": {"planner_status": "skipped", "reason": "fast_path"},
-            "quality_checks": {"status": "skipped", "reason": "fast_path"},
-            "policy_checks": {"status": "skipped", "reason": "fast_path"},
+            "skip_reason": reason,
+            "planner_trace": {"planner_status": "skipped", "reason": reason},
+            "quality_checks": {"status": "skipped", "reason": reason},
+            "policy_checks": {"status": "skipped", "reason": reason},
             "channel_counts": {},
             "timings": {},
         }
@@ -729,6 +730,8 @@ class LLMSupportEngine:
         }
 
     def generate(self, record: SupportSessionRecord, job_id: str) -> SupportEngineResult:
+        trace = next((item for item in reversed(record.turn_traces) if item.job_id == job_id), None)
+        model_only = trace is not None and trace.knowledge_mode == "model_only"
         user_message = next(
             message
             for message in reversed(record.public.messages)
@@ -766,9 +769,14 @@ class LLMSupportEngine:
                 summary,
                 recent,
             )
-            bundle, retrieval_path, retrieval_ms = self._retrieve(
-                record.public.session_id, job_id, route
-            )
+            if model_only:
+                bundle, retrieval_path, retrieval_ms = self._skip_retrieval(
+                    record.public.session_id, job_id, route, reason="user_selected_model_only"
+                )
+            else:
+                bundle, retrieval_path, retrieval_ms = self._retrieve(
+                    record.public.session_id, job_id, route
+                )
         domain_memory: dict[str, Any] = {}
         if self.memory_provider is not None:
             try:
@@ -803,7 +811,7 @@ class LLMSupportEngine:
             retrieval_summary={
                 "hit_count": len(items),
                 "retrieval_mode": bundle.get("retrieval_mode", "hybrid_v3"),
-                "retrieval_skipped": bundle.get("retrieval_mode") == "skipped_fast_path",
+                "retrieval_skipped": bundle.get("retrieval_mode") in {"skipped_fast_path", "skipped_by_user"},
                 "skip_reason": bundle.get("skip_reason"),
                 "warnings": bundle.get("warnings", []),
                 "planner_status": (bundle.get("planner_trace") or {}).get("planner_status"),

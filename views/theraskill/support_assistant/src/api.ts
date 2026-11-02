@@ -1,4 +1,4 @@
-import type { ContributionSummary, DomainMemory, FeedbackConsent, SubmitMessageResult, SupportSession, WorkspaceRoute } from './types'
+import type { ContributionSummary, DomainMemory, FeedbackConsent, SessionDiagnostics, SubmitMessageResult, SupportSession, WorkspaceRoute } from './types'
 
 const API_URL = (import.meta.env.VITE_SUPPORT_API_URL || '/api/plugins/theraskill-support').replace(/\/$/, '')
 function userId() {
@@ -44,14 +44,19 @@ export async function getSession(sessionId: string): Promise<SupportSession> {
   return request(`/sessions/${encodeURIComponent(sessionId)}`)
 }
 
+export async function getDiagnostics(sessionId: string): Promise<SessionDiagnostics> {
+  return request(`/sessions/${encodeURIComponent(sessionId)}/diagnostics`)
+}
+
 export async function submitMessage(
   sessionId: string,
   text: string,
+  knowledgeMode: 'auto' | 'model_only' = 'auto',
 ): Promise<SubmitMessageResult> {
   return request(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST',
     headers: { 'Idempotency-Key': crypto.randomUUID() },
-    body: JSON.stringify({ text, output_language: window.localStorage.getItem('theraskill-locale') === 'en' ? 'en' : 'zh' }),
+    body: JSON.stringify({ text, knowledge_mode: knowledgeMode, output_language: window.localStorage.getItem('theraskill-locale') === 'en' ? 'en' : 'zh' }),
   })
 }
 
@@ -62,8 +67,8 @@ export async function routeWorkspace(text: string): Promise<WorkspaceRoute> {
   })
 }
 
-export async function retryResponse(sessionId: string): Promise<SubmitMessageResult> {
-  return request(`/sessions/${encodeURIComponent(sessionId)}/retry`, { method: 'POST' })
+export async function retryResponse(sessionId: string, knowledgeMode: 'auto' | 'model_only'): Promise<SubmitMessageResult> {
+  return request(`/sessions/${encodeURIComponent(sessionId)}/retry`, { method: 'POST', body: JSON.stringify({ knowledge_mode: knowledgeMode }) })
 }
 
 export async function completeSession(sessionId: string): Promise<SupportSession> {

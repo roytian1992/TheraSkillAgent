@@ -2,6 +2,7 @@ import { tr, useTranslationSubscription } from '../../shared/i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
+  Activity,
   BookMarked,
   BookOpen,
   ClipboardList,
@@ -31,6 +32,7 @@ import {
   createSession,
   deleteSession,
   exportSession,
+  getDiagnostics,
   getSession,
   health,
   listContributions,
@@ -44,7 +46,7 @@ import {
   updatePlan,
   withdrawContribution,
 } from './api'
-import type { ContributionSummary, EvidenceSummary, FeedbackConsent, SupportMessage, SupportSession, WorkspaceRoute } from './types'
+import type { ContributionSummary, EvidenceSummary, FeedbackConsent, SessionDiagnostics, SupportMessage, SupportSession, WorkspaceRoute } from './types'
 import { useLocale } from './i18n'
 
 function downloadJson(filename: string, value: unknown) {
@@ -255,7 +257,9 @@ function Message({ message, sessionId, onError, onFeedbackSubmitted, onOpenEvide
         {!isUser && message.retrieval_summary?.retrieval_skipped && (
           <div className="retrieval-status" role="status">
             <BookOpen size={13} />
-            <span>{t('本轮为简单对话，未检索知识', 'Lightweight turn; no knowledge retrieval was needed')}</span>
+            <span>{message.retrieval_summary.skip_reason === 'user_selected_model_only'
+              ? t('仅使用模型，未检索知识', 'Model only; knowledge was not retrieved')
+              : t('本轮为简单对话，未检索知识', 'Lightweight turn; no knowledge retrieval was needed')}</span>
           </div>
         )}
         {!isUser && !message.retrieval_summary?.retrieval_skipped && message.retrieval_summary?.retrieval_mode && message.evidence_summary.length === 0 && (
@@ -395,6 +399,10 @@ export default function App() {
   const [responseStartedAt, setResponseStartedAt] = useState(Date.now())
   const [clock, setClock] = useState(Date.now())
   const [error, setError] = useState('')
+  const [knowledgeMode, setKnowledgeMode] = useState<'auto' | 'model_only'>('auto')
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
+  const [diagnostics, setDiagnostics] = useState<SessionDiagnostics | null>(null)
+  const [diagnosticsError, setDiagnosticsError] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 760)
   const [contributionOpen, setContributionOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
@@ -410,6 +418,31 @@ export default function App() {
   const lastUserMessage = [...(session?.messages || [])].reverse().find(message => message.role === 'user')
   const savedStart = lastUserMessage ? Date.parse(lastUserMessage.created_at) : NaN
   const elapsedSeconds = Math.max(0, Math.floor((clock - (pending && Number.isFinite(savedStart) ? savedStart : responseStartedAt)) / 1000))
+
+  const diagnosticLabel = (code?: string) => ({
+    index_unavailable: t('知识索引不可用', 'Knowledge index unavailable'),
+    embedding_mismatch: t('向量模型与索引不匹配', 'Embedding model does not match the index'),
+    output_limit: t('模型回复超过输出限制', 'Model response exceeded the output limit'),
+    authentication: t('模型服务认证失败', 'Model service authentication failed'),
+    rate_limit: t('模型服务达到请求限额', 'Model service rate limit reached'),
+    connection: t('模型服务连接或超时', 'Model service connection or timeout'),
+    invalid_model_output: t('模型回复格式无效', 'Invalid model response format'),
+    generation_error: t('回应生成失败', 'Response generation failed'),
+  }[code || ''] || t('回应生成失败', 'Response generation failed'))
+
+  const loadDiagnostics = async (sessionId: string) => {
+    try {
+      setDiagnosticsError('')
+      setDiagnostics(await getDiagnostics(sessionId))
+    } catch (reason) {
+      setDiagnosticsError(reason instanceof Error ? reason.message : String(reason))
+    }
+  }
+
+  useEffect(() => {
+    setDiagnostics(null)
+    if (session?.session_id && session.generation.status === 'failed') void loadDiagnostics(session.session_id)
+  }, [session?.session_id, session?.generation.status, session?.generation.job_id])
 
   useEffect(() => {
     if (!pending && !sending) return
@@ -502,7 +535,7 @@ export default function App() {
       setError('')
       const routed = await routeWorkspace(text).catch(() => null)
       setWorkspaceRoute(routed?.handoff_ready ? routed : null)
-      const result = await submitMessage(session.session_id, text)
+      const result = await submitMessage(session.session_id, text, knowledgeMode)
       setSession(result.session)
       setSessions((current) => current.map((row) => row.session_id === result.session.session_id ? result.session : row))
     } catch (reason) {
@@ -517,7 +550,7 @@ export default function App() {
     if (!session) return
     try {
       setError('')
-      const result = await retryResponse(session.session_id)
+      const result = await retryResponse(session.session_id, knowledgeMode)
       setSession(result.session)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
@@ -620,6 +653,7 @@ export default function App() {
             <button className="icon-button" onClick={() => setMemoryOpen(true)} title={tr("我的记忆")}><BookMarked size={18} /></button>
             <button className="icon-button" onClick={openContributions} title={tr("我的反馈")}><ListChecks size={18} /></button>
             <button className="icon-button" onClick={exportCurrent} title={tr("导出对话")} disabled={!session}><Download size={18} /></button>
+            <button className="icon-button" onClick={() => { setDiagnosticsOpen(true); if (session) void loadDiagnostics(session.session_id) }} title={t('诊断信息', 'Diagnostics')} aria-label={t('诊断信息', 'Diagnostics')} disabled={!session}><Activity size={18} /></button>
             {active && <button className="icon-button stop" onClick={finish} title={tr("结束对话")} disabled={busy || pending}><Square size={17} /></button>}
           </div>
         </header>
@@ -649,7 +683,7 @@ export default function App() {
             </article>
           )}
           {failed && (
-            <div className="generation-failed"><AlertCircle size={18} /><span>{tr("回应生成失败")}</span><button onClick={retry}><RefreshCw size={15} />{tr("重试")}</button></div>
+            <div className="generation-failed"><AlertCircle size={18} /><span>{diagnosticLabel(diagnostics?.error_code)}</span><button onClick={() => { setDiagnosticsOpen(true); if (session) void loadDiagnostics(session.session_id) }}>{t('诊断', 'Diagnostics')}</button><button onClick={retry}><RefreshCw size={15} />{tr("重试")}</button></div>
           )}
           {workspaceRoute?.handoff_ready && (
             <div className="workspace-handoff" role="status">
@@ -664,7 +698,12 @@ export default function App() {
           {session?.status === 'completed' ? (
             <div className="completed-state"><Check size={17} />{tr("这段对话已结束")}<button onClick={startNew}>{tr("开始新对话")}</button></div>
           ) : (
-            <div className="composer">
+            <div className="composer-section">
+              <div className="knowledge-mode" role="group" aria-label={t('回答依据', 'Answer source')}>
+                <button type="button" className={knowledgeMode === 'auto' ? 'selected' : ''} aria-pressed={knowledgeMode === 'auto'} onClick={() => setKnowledgeMode('auto')} title={t('检索已安装的知识；需要可用的知识索引', 'Search installed knowledge; requires a ready index')}>{t('使用知识', 'Use knowledge')}</button>
+                <button type="button" className={knowledgeMode === 'model_only' ? 'selected' : ''} aria-pressed={knowledgeMode === 'model_only'} onClick={() => setKnowledgeMode('model_only')} title={t('只使用已配置的模型，不检索知识', 'Use the configured model without knowledge retrieval')}>{t('仅模型', 'Model only')}</button>
+              </div>
+              <div className="composer">
               <textarea
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
@@ -679,6 +718,7 @@ export default function App() {
                 disabled={pending || sending}
               />
               <button className="send-button" onClick={send} disabled={!draft.trim() || pending || sending} title={tr("发送")}><Send size={19} /></button>
+              </div>
             </div>
           )}
         </footer>
@@ -709,6 +749,27 @@ export default function App() {
         </>
       )}
       {memoryOpen && <MemoryDrawer onClose={() => setMemoryOpen(false)} onError={setError} />}
+      {diagnosticsOpen && <>
+        <button className="drawer-scrim" onClick={() => setDiagnosticsOpen(false)} aria-label={t('关闭诊断', 'Close diagnostics')} />
+        <aside className="diagnostics-drawer" aria-label={t('诊断信息', 'Diagnostics')}>
+          <header><h2><Activity size={18} />{t('诊断信息', 'Diagnostics')}</h2><button className="icon-button" onClick={() => setDiagnosticsOpen(false)} title={t('关闭', 'Close')}><X size={17} /></button></header>
+          <div className="diagnostics-content">
+            {diagnosticsError && <p role="alert">{diagnosticsError}</p>}
+            {diagnostics && <><dl>
+              <dt>LLM</dt><dd>{diagnostics.llm_model || t('未配置', 'Not configured')}</dd>
+              <dt>{t('知识索引', 'Knowledge index')}</dt><dd>{diagnostics.index.status === 'ready' ? `${diagnostics.index.id} · ${diagnostics.index.records?.toLocaleString() || 0} ${t('条', 'records')}` : diagnostics.index.status === 'missing' ? t('未安装或未启用', 'Not installed or active') : diagnostics.index.status === 'embedding_mismatch' ? t('Embedding 配置与索引不匹配', 'Embedding configuration does not match the index') : t('索引状态异常', 'Index is unavailable')}</dd>
+              <dt>{t('本轮知识模式', 'Knowledge mode')}</dt><dd>{diagnostics.knowledge_mode === 'model_only' ? t('仅模型', 'Model only') : t('使用知识', 'Use knowledge')}</dd>
+              <dt>{t('任务状态', 'Turn status')}</dt><dd>{diagnostics.generation_status}</dd>
+              <dt>{t('失败阶段', 'Failure stage')}</dt><dd>{diagnostics.failure_stage || t('无', 'None')}</dd>
+              <dt>{t('失败原因', 'Failure reason')}</dt><dd>{diagnostics.error_code === 'none' ? t('无', 'None') : diagnosticLabel(diagnostics.error_code)}</dd>
+            </dl>
+            {diagnostics.error_code === 'output_limit' && <p>{t('可在模型与连接中增大最大输出 token，保存后重试。', 'Increase max output tokens in Models & connections, then retry.')}</p>}
+            {diagnostics.error_code === 'index_unavailable' && <p>{t('可安装并启用知识索引，或在输入框选择“仅模型”重新提问。', 'Install and activate an index, or ask again with Model only selected.')}</p>}
+            <div className="diagnostics-links"><a href={workbenchHref('settings')}>{t('模型与连接', 'Models & connections')}</a><a href={workbenchHref('knowledge')}>{t('知识与索引', 'Knowledge & indexes')}</a></div>
+            </>}
+          </div>
+        </aside>
+      </>}
       <KnowledgeDetailDrawer key={selectedEvidence ? [selectedEvidence.unit_id || selectedEvidence.source_id,selectedEvidence.source_index_id || selectedEvidence.index_id].join(':') : 'closed'} item={selectedEvidence} onClose={() => setSelectedEvidence(null)} />
     </main>
   )

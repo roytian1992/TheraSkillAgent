@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -145,6 +145,7 @@ class SupportTurnTrace(ContractModel):
     schema_version: str = "theraskill_support_turn_trace_v1"
     job_id: str
     user_message_id: str
+    knowledge_mode: Literal["auto", "model_only"] = "auto"
     assistant_message_id: str | None = None
     routing: RoutingDecision | None = None
     retrieval_report_path: str | None = None
@@ -157,6 +158,7 @@ class SupportTurnTrace(ContractModel):
     history_compaction: dict[str, Any] = Field(default_factory=dict)
     status: str = "pending"
     error: str | None = None
+    failure_stage: str | None = None
 
 
 class SupportSessionRecord(ContractModel):

@@ -36,6 +36,10 @@ def test_support_assistant_welcome_prompts(tmp_path):
             data = {"sessions": []}
         elif path == "/sessions" and route.request.method == "POST":
             data = session
+        elif path.endswith("/diagnostics"):
+            data = {"session_id": "fixture-session", "generation_status": "idle", "job_id": None,
+                    "knowledge_mode": "auto", "failure_stage": None, "error_code": "none",
+                    "index": {"status": "missing"}, "llm_model": "mock-llm", "latency_ms": {}}
         else:
             data = session
         route.fulfill(status=200, content_type="application/json", body=json.dumps(data, ensure_ascii=False))
@@ -66,15 +70,23 @@ def test_support_assistant_welcome_prompts(tmp_path):
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.route("**/api/plugins/theraskill-support/**", handle)
             page.goto(f"http://127.0.0.1:{server.server_port}/theraskill/support/")
-            page.get_by_placeholder("输入你想说的内容").wait_for()
-            page.get_by_role("button", name="帮我理解这段对话", exact=True).wait_for()
+            page.locator(".composer textarea").wait_for()
+            page.get_by_role("button", name="仅模型", exact=True).click()
+            assert page.get_by_role("button", name="仅模型", exact=True).get_attribute("aria-pressed") == "true"
             assert page.locator(".brand-row span").inner_text() == "助手"
             assert page.locator(".assistant-workspaces a").count() == 5
             assert page.locator(".assistant-workspaces a").nth(0).get_attribute("href") == "/?workspace=learning"
             assert page.locator(".assistant-workspaces a").nth(1).get_attribute("href") == "/?workspace=transcript"
-            page.get_by_role("button", name="帮我理解这段对话", exact=True).click()
-            assert page.get_by_placeholder("输入你想说的内容").input_value() == "帮我理解这段对话"
+            page.get_by_role("button", name="诊断信息").click()
+            page.locator(".diagnostics-drawer").get_by_text("mock-llm").wait_for()
+            page.get_by_role("button", name="关闭诊断").click()
             page.screenshot(path=str(tmp_path / "assistant-welcome.png"), full_page=True)
+            page.set_viewport_size({"width": 390, "height": 844})
+            page.get_by_role("button", name="关闭侧栏").click(position={"x": 375, "y": 50})
+            page.wait_for_timeout(250)
+            page.locator(".composer textarea").wait_for()
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+            page.screenshot(path=str(tmp_path / "assistant-mobile.png"), full_page=True)
             assert not errors, errors
             browser.close()
     finally:

@@ -80,6 +80,10 @@
 .knowledge-version-review label{min-width:min(320px,100%)}
 .knowledge-job-status{margin:14px 0;padding:12px 14px;border:1px solid #d4e6d9;border-radius:7px;background:#f4faf5;color:#355a43;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
 .knowledge-job-status p{margin:5px 0}
+.knowledge-build-progress{display:grid;gap:5px;margin:12px 0 8px;max-width:540px}
+.knowledge-build-progress>div{display:flex;justify-content:space-between;gap:12px}
+.knowledge-build-progress progress{width:100%;height:12px;accent-color:#16765d}
+.knowledge-build-progress small{color:#597368}
 .knowledge-history .resource-item{flex-direction:row;align-items:center;justify-content:space-between}
 .knowledge-history .resource-detail{max-height:320px}
 @media(max-width:680px){.knowledge-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.knowledge-simple .knowledge-tabs button{justify-content:center;padding:10px 5px;font-size:11px}.knowledge-add-grid,.knowledge-search-filters{grid-template-columns:1fr}.knowledge-search-filters{min-width:0}.knowledge-search-row{flex-wrap:wrap}.knowledge-search-row button{width:100%}}

@@ -62,6 +62,11 @@ def _lexical(source, output, mapping, progress, cancel):
         for suffix in ('', '-wal', '-shm'):
             (output / (name + suffix)).unlink(missing_ok=True)
     counts = _counts()
+    source_bytes = source.stat().st_size
+    processed_bytes = 0
+    def record_bytes(value):
+        nonlocal processed_bytes
+        processed_bytes = value
     with closing(sqlite3.connect(output / DB)) as db, closing(sqlite3.connect(output / 'retrieval_en.sqlite')) as english, closing(metadata.connect_db(output / 'metadata_v2.sqlite', False)) as meta, closing(labels.connect(output / 'compact_label_v1.sqlite', False)) as label:
         db.executescript('''
             CREATE TABLE retrieval_meta (
@@ -93,7 +98,7 @@ def _lexical(source, output, mapping, progress, cancel):
             CREATE INDEX route ON retrieval_meta(default_route);
         ''')
         fields = ['retrieval_id','release_unit_id','release_unit_type','dedup_family','canonical_knowledge_type','canonical_label','primary_dataset','primary_knowledge_type','primary_evidence_tier','primary_language','risk_scope','default_route','retrieval_eligible','embedding_eligible','member_count','retrieval_text_chars']
-        for row in rows(source, mapping):
+        for row in rows(source, mapping, on_progress=record_bytes):
             _check(cancel)
             for key in COLUMNS:
                 if row.get(key) is not None:
@@ -119,7 +124,7 @@ def _lexical(source, output, mapping, progress, cancel):
             if counts['total'] % 1000 == 0:
                 for connection in (db, english, meta, label):
                     connection.commit()
-                progress('lexical', dict(counts))
+                progress('lexical', dict(counts), bytes=processed_bytes, total_bytes=source_bytes)
         if not counts['total']:
             raise ValueError('knowledge input contains no records')
         db.executescript('CREATE INDEX family ON retrieval_meta(dedup_family); CREATE INDEX route ON retrieval_meta(default_route);')
@@ -144,7 +149,7 @@ def _dense(output, config, counts, progress, cancel):
         raise ValueError("hybrid build requires pip install 'theraskill-agent[retrieval]'") from exc
     from domains.theraskill.theraskill_llm import OpenAICompatibleEmbeddingClient
     batch_size = max(1, min(int(config.get('batch_size', 32)), 512))
-    workers = max(1, min(int(config.get('workers', 1)), 32))
+    workers = max(1, min(int(config.get('workers', 4)), 32))
     max_batch_chars = config.get('max_batch_chars')
     if max_batch_chars is not None and int(max_batch_chars) <= 0:
         raise ValueError('max_batch_chars must be positive')
@@ -293,11 +298,11 @@ def build_index(knowledge, output, *, mode='lexical', embedding_config=None,
             raise ValueError('output is not an empty index directory')
         state.update(input=signature, status='building')
         write_json(state_path, state)
-        def notify(stage, counts):
-            state.update(stage=stage, counts=counts)
+        def notify(stage, counts, **details):
+            state.update(stage=stage, counts=counts, **details)
             write_json(state_path, state)
             if progress:
-                progress({'stage': stage, 'counts': counts})
+                progress({'stage': stage, 'counts': counts, **details})
         try:
             _check(cancel)
             if not state.get('lexical_complete'):
@@ -327,7 +332,7 @@ def build_index(knowledge, output, *, mode='lexical', embedding_config=None,
                     lexical_names.append('metadata_inventory.json')
                 state['lexical_files'] = {name: digest(output / name) for name in lexical_names}
                 state['lexical_complete'] = True
-                notify('lexical_complete', counts)
+                notify('lexical_complete', counts, bytes=source.stat().st_size, total_bytes=source.stat().st_size)
             else:
                 for name, checksum in state.get('lexical_files', {}).items():
                     if digest(safe_path(output, name)) != checksum:

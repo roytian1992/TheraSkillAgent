@@ -36,6 +36,8 @@ python -m pip install -e .
 
 共享的 provider 模板在 `configs/theraskill/providers.yaml`，本机凭据和覆盖项放在自动读取的 `configs/theraskill/providers.local.yaml`。这个本地文件被 Git 忽略，也不会进入 wheel 或源码发布物。LLM 和 embedding 是两个直接配置块，可以分别填写 URL、模型名和 API key。
 
+Embedding 的 `workers` 可控制构建索引时的并发请求数（默认 4，范围 1–32）；`batch_size` 控制每次请求的条数。也可在「模型与连接」中修改。若服务限流，降低并发后从已保存进度继续。工作台的构建进度条在关键词阶段显示已读取字节比例，在语义阶段显示已完成向量比例。普通助手可在输入框选择「仅模型」，此时无需知识索引；右上角诊断入口可查看索引状态和上一轮失败类别。
+
 进入工作目录（wheel 安装为 `cd ~/TheraSkillAgent`），首次配置可复制模板：
 
 ```bash

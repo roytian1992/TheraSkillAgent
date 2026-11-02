@@ -63,9 +63,12 @@ def project(row, line, mapping=None):
     return result
 
 
-def rows(path, mapping=None):
-    with Path(path).open(encoding='utf-8-sig') as f:
-        for line_no, line in enumerate(f, 1):
+def rows(path, mapping=None, on_progress=None):
+    with Path(path).open('rb') as f:
+        for line_no, raw_line in enumerate(f, 1):
+            line = raw_line.decode('utf-8-sig' if line_no == 1 else 'utf-8')
+            if on_progress and line_no % 1000 == 0:
+                on_progress(f.tell())
             if line.strip():
                 try:
                     yield project(json.loads(line), line_no, mapping)
