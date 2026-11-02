@@ -91,9 +91,11 @@ Python 3.11+ interpreter. It includes a relocatable Python runtime, its Linux
 shared libraries, all Python wheels, and the browser assets. It contains no
 model weights, knowledge data, or simulation data.
 
-Run `./install_offline.sh` to install under `~/TheraSkillAgent`, then edit the
-project's `configs/theraskill/providers.local.yaml` to point at the existing
-vLLM LLM and embedding services.
+Run `./install_offline.sh` to install under `~/TheraSkillAgent`, then run
+`~/TheraSkillAgent/start_offline.sh --host 0.0.0.0 --port 5176`. In the
+workbench, open Models & connections to configure and test the existing
+LLM and embedding services. Knowledge and simulation ZIPs are installed
+separately when needed.
 
 See `docs/deployment_offline.en.md` or `docs/deployment_offline.zh.md`.
 The illustrated guides are `docs/user_guide.en.md` and `docs/user_guide.zh.md`.
@@ -139,7 +141,7 @@ def main() -> int:
     parser.add_argument("--runtime-archive", type=Path,
                         default=ROOT / "artifacts/_build/theraskill-python-3.12.7-linux-x86_64.tar.gz",
                         help="conda-pack archive with Python 3.12.7 and Linux shared libraries")
-    parser.add_argument("--version", default="20261029")
+    parser.add_argument("--version", default="20261102")
     args = parser.parse_args()
     build_bundle(args.output, args.runtime_archive, args.version)
     return 0

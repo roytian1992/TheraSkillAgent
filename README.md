@@ -123,7 +123,7 @@ When a response cites knowledge, open **Reference evidence** to read a structure
 Python 3.11 or newer is required. Node 22.12 or newer is required only when building the browser interface from a source checkout; a wheel installation already contains built assets.
 If an existing `.venv` uses an older Python, create a new virtual environment directory; see the [macOS recovery steps](docs/deployment.en.md#existing-python-39-virtual-environment-on-macos).
 
-For an Ubuntu 22.04 x86_64 server without internet access, use the separate [offline application ZIP](docs/deployment_offline.en.md). It includes Python 3.12, Linux shared libraries, and all application wheels. Knowledge and simulation are delivered as two independent resource ZIPs.
+For an Ubuntu 22.04 x86_64 server without internet access, use the [offline application ZIP](docs/deployment_offline.en.md). It includes Python 3.12, Linux shared libraries, and all application wheels. After `./install_offline.sh`, start the web app with `~/TheraSkillAgent/start_offline.sh` and configure the existing LLM and embedding services under **Models & connections**. Knowledge and simulation are separate optional ZIPs; installed knowledge also needs an active index.
 
 ```bash
 git clone https://github.com/roytian1992/TheraSkillAgent.git

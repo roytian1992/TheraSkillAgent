@@ -45,6 +45,8 @@ TARGET="$(realpath -m -- "$TARGET")"
 mkdir -p "$TARGET"
 RUNTIME="$TARGET/.runtime"
 RUNTIME_ARCHIVE="$BUNDLE_DIR/runtime/python-3.12.7-linux-x86_64.tar.gz"
+unset PYTHONPATH PYTHONHOME
+export PYTHONNOUSERSITE=1
 if [[ ! -f "$RUNTIME/.theraskill-ready" ]]; then
   if [[ -e "$RUNTIME" ]]; then
     echo "Incomplete runtime at $RUNTIME; remove it after checking its contents, then retry" >&2
@@ -66,15 +68,17 @@ if [[ -z "$PROJECT_WHEEL" ]]; then
   exit 2
 fi
 
-PIP_ARGS=("$RUNTIME_PY" -m pip install --no-index --disable-pip-version-check --find-links "$WHEELHOUSE")
+PIP_ARGS=("$RUNTIME_PY" -m pip --isolated install --no-index --no-cache-dir --disable-pip-version-check --find-links "$WHEELHOUSE")
 if [[ "$INSTALL_RETRIEVAL" == 1 ]]; then
   "${PIP_ARGS[@]}" "${PROJECT_WHEEL}[retrieval]"
 else
   "${PIP_ARGS[@]}" "$PROJECT_WHEEL"
 fi
-"$RUNTIME_PY" -m pip check
+"$RUNTIME_PY" -m pip --isolated check
 
 "$RUNTIME_BIN/theraskill-agent" --project "$TARGET" project init "$TARGET" >/dev/null
+cp "$BUNDLE_DIR/start_offline.sh" "$TARGET/start_offline.sh"
+chmod 755 "$TARGET/start_offline.sh"
 mkdir -p "$TARGET/docs"
 cp -a "$BUNDLE_DIR/docs/." "$TARGET/docs/"
 cp "$BUNDLE_DIR/docs/deployment_offline.en.md" "$TARGET/OFFLINE_DEPLOYMENT.en.md"
@@ -85,17 +89,12 @@ cat <<EOF
 
 Offline installation completed.
 Project: $TARGET
-Provider configuration: $TARGET/configs/theraskill/providers.local.yaml
+Start: "$TARGET/start_offline.sh" --host 0.0.0.0 --port 5176
 
-Copy the template, edit the LLM and embedding blocks with the existing vLLM
-OpenAI-compatible URLs and model names, then start the workbench:
-
-  cp "$TARGET/configs/theraskill/providers.local.example.yaml" \
-     "$TARGET/configs/theraskill/providers.local.yaml"
-  chmod 600 "$TARGET/configs/theraskill/providers.local.yaml"
-  "$BUNDLE_DIR/start_offline.sh" --target "$TARGET" --host 0.0.0.0 --port 5176
-
-Knowledge and simulation archives are separate downloads. Install them later
-with the knowledge/simulation --archive commands in OFFLINE_DEPLOYMENT.en.md.
+Open http://SERVER:5176/ and use Models & connections to configure and test
+the existing LLM and embedding services. The workbench can start before model
+configuration; model-backed tasks need the relevant connection to pass its test.
+Knowledge and simulation are separate optional ZIPs. To install and index
+them, follow $TARGET/OFFLINE_DEPLOYMENT.en.md or .zh.md.
 Illustrated guides: $TARGET/docs/user_guide.en.md and user_guide.zh.md.
 EOF

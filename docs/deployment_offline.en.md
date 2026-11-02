@@ -14,7 +14,7 @@ are two separately installable ZIPs.
 ## Install the application
 
 ```bash
-unzip TheraSkillAgent-app-offline-ubuntu22.04-x86_64-20261029.zip -d ~/theraskill-app
+unzip TheraSkillAgent-app-offline-ubuntu22.04-x86_64-20261102.zip -d ~/theraskill-app
 cd ~/theraskill-app
 sha256sum -c SHA256SUMS
 ./install_offline.sh
@@ -22,15 +22,32 @@ sha256sum -c SHA256SUMS
 
 The installer unpacks Python into `~/TheraSkillAgent/.runtime`, runs
 `conda-unpack`, and installs the app and retrieval dependencies from the
-wheelhouse using `pip --no-index`. It never accesses the network or changes
-system Python. It does not install knowledge or simulation data. Add
-`--no-retrieval` to omit NumPy/FAISS when only lexical retrieval is needed.
+wheelhouse using isolated `pip --no-index`. It ignores user Python packages,
+never accesses the network or changes system Python, and does not install
+knowledge or simulation data. Add `--no-retrieval` to omit NumPy/FAISS when
+only lexical retrieval is needed.
 
 ```bash
 ~/TheraSkillAgent/.runtime/bin/theraskill-agent --project ~/TheraSkillAgent status --json
+~/TheraSkillAgent/start_offline.sh --host 0.0.0.0 --port 5176
 ```
 
-## Connect the existing vLLM services
+Open `http://SERVER:5176/`. The start script is copied into the installed
+project, so the extracted bundle directory is not needed after installation.
+Use Ctrl-C to stop the foreground process. `/health` should report
+`status: ok`; that alone does not verify models or resources. Restrict access
+to port 5176 to a trusted network.
+
+## Connect the existing vLLM services in the workbench
+
+On first launch, open **Models & connections**. Enter the LLM and embedding
+model IDs, base URLs and API keys independently, plus the embedding endpoint.
+Use **Test current values** and save after both checks report `ok`, or use
+**Test then save**. The workbench can start before models are configured;
+generation and semantic indexing require the relevant services. Existing
+vLLM processes are managed separately.
+
+For command-line configuration, edit the installed local file instead:
 
 ```bash
 cp ~/TheraSkillAgent/configs/theraskill/providers.local.example.yaml \
@@ -52,19 +69,20 @@ llm:
   api_key: ""
 embedding:
   model: your-embedding-model
-  base_url: http://127.0.0.1:8001/v1
-  endpoint: http://127.0.0.1:8001/v1/embeddings
+  base_url: http://127.0.0.1:8081/v1
+  endpoint: http://127.0.0.1:8081/v1/embeddings
   api_key: ""
 ```
 
 ```bash
 ~/TheraSkillAgent/.runtime/bin/theraskill-agent --project ~/TheraSkillAgent provider check --kind llm --live
 ~/TheraSkillAgent/.runtime/bin/theraskill-agent --project ~/TheraSkillAgent provider check --kind embedding --live
-./start_offline.sh --host 0.0.0.0 --port 5176
 ```
 
-Open `http://SERVER:5176/`. The application uses one port; existing vLLM
-processes are managed separately.
+If vLLM requires authentication, the `api_key` values must match the
+credentials used by those running services. Keys in project templates are
+placeholders. Both checks must report `ok` to confirm the model connections.
+The workbench uses one web/API port; vLLM keeps its own ports.
 
 The illustrated guides are installed at
 `~/TheraSkillAgent/docs/user_guide.en.md` and `user_guide.zh.md`, with their
@@ -72,7 +90,9 @@ images under the same `docs/images/user-guide/` tree.
 
 ## Install knowledge or simulation later
 
-Obtain either resource ZIP separately. They need not share a directory, and no
+This step is optional for starting the workbench. Without full knowledge and
+simulation resources, the corresponding search and training workflows are not
+ready. Obtain either resource ZIP separately. They need not share a directory, and no
 external `catalog.json`, `provenance.json`, or enclosing resource archive is
 required. The installer validates each ZIP's internal `package.json`.
 
@@ -83,8 +103,11 @@ required. The installer validates each ZIP's internal `package.json`.
   simulation install --archive /path/to/simulation-phase7-20261028.zip
 ```
 
-Knowledge installation does not automatically call the embedding service.
-Inspect the build size with `index plan`, then build from the workbench or CLI:
+Knowledge installation does not automatically build or activate an index.
+Inspect the build size with `index plan`, then build from the workbench or CLI.
+The lexical example below does not call the embedding service but may take
+time for the full corpus. Use `--mode hybrid` for semantic retrieval after
+the embedding connection passes its live check:
 
 ```bash
 ~/TheraSkillAgent/.runtime/bin/theraskill-agent --project ~/TheraSkillAgent \
@@ -94,6 +117,12 @@ Inspect the build size with `index plan`, then build from the workbench or CLI:
 ~/TheraSkillAgent/.runtime/bin/theraskill-agent --project ~/TheraSkillAgent \
   knowledge activate --index knowledge-v1 --knowledge knowledge-phase7-20261028
 ```
+
+Restart the workbench after installing resources or activating an index.
+Check models, active index, simulation scenarios and skills under **Getting
+started** on the home page. `knowledge list` (including indexes) and
+`simulation list` also show installed resources. Run a real task for each workflow you
+intend to use before treating that workflow as deployed.
 
 The two resource ZIPs expand to about 7.4 GiB; reserve additional space for
 indexes, temporary files, and working data. See the [resource installation guide](resource_installation.en.md)
