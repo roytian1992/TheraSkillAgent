@@ -89,6 +89,8 @@ Installing knowledge does not make it searchable. Plan the storage first, then b
 
 In **Knowledge & indexes**, you can also select the installed knowledge, choose Fast search, and build a searchable version. Then select **Verify**, **Activate**, and **Try searching**. The 20261029 UI shows processed records under **View progress**, without a progress bar; a long-running status does not by itself mean the build is stuck. If it fails with `disk I/O error`, check the index volume and your user quota. After restoring enough space, use **Resume saved progress** with the same index ID. The lexical phase restarts from the beginning; an incomplete index cannot be activated.
 
+**Validated on 2026-11-03:** With the 20261029 application and this knowledge ZIP, a full build, verification, activation, Chinese/English UI searches, and source-bearing business retrieval succeeded in an isolated directory with enough capacity. The result contained 2,196,286 total and 1,808,415 searchable records; final index files used about 15.2 GiB. The 37.7 GiB `index plan` figure is a conservative estimate; reserve that amount plus temporary space. A storage quota failure was reproduced at about 593,000 records as `disk I/O error`.
+
 For semantic retrieval, use `--mode hybrid` **before the first build**, after checking the embedding connection and confirming the app was not installed with `--no-retrieval`. Replacing an already active index requires a reviewed behavior comparison report; the first-activation command above cannot simply be repeated. Restart the web process after installing resources, check **Getting started** on the home page, and try an Assistant knowledge query and a simulation session.
 
 ## Repair missing packages
