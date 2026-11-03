@@ -1,5 +1,7 @@
 # Install TheraSkillAgent offline
 
+**Already installed the 20261029 bundle?** Do not reinstall just to start using it. Follow the [post-install steps for that bundle](offline_after_install_20261029.en.md); the installation commands below are for a new server.
+
 This application ZIP targets another **Ubuntu 22.04 x86_64** server like the
 build machine. Installation requires no internet access, preinstalled Python,
 Conda, Node, or pip packages. It does not require root. The host needs `bash`,

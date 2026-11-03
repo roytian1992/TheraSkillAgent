@@ -1,5 +1,7 @@
 # 离线安装 TheraSkillAgent
 
+**已经安装了 20261029 版？**无需重装。直接按[旧版安装后的启动与资源配置步骤](offline_after_install_20261029.zh.md)继续；以下安装命令用于新设备。
+
 这份应用离线 ZIP 面向与制作机器相同的 **Ubuntu 22.04 x86_64** 服务器。服务器
 不需要联网，也不需要预先安装 Python、Conda、Node 或项目的 pip 包。安装器不用
 root 权限。系统需有 `bash`、`tar`、`unzip` 和 Ubuntu 22.04 自带的 glibc。
