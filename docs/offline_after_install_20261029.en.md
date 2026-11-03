@@ -70,16 +70,24 @@ Copy the separately delivered `knowledge-phase7-20261028.zip` (knowledge) and `s
   --archive /path/to/simulation-phase7-20261028.zip
 ```
 
-Installing knowledge does not make it searchable. For a first activation, build and activate an index. Lexical mode does not call the embedding service. The full source has about 2.2 million records, so allow time and extra disk space.
+Installing knowledge does not make it searchable. Plan the storage first, then build and activate an index. Lexical mode does not call the embedding service. For this 2.2-million-record package, `index plan` estimates about **37.7 GiB of additional index space**. The unpacked knowledge itself uses about **6.3 GiB**; allow more for temporary files and project data. Check the **current user's storage quota**, not just the filesystem-wide free space shown by `df -h`.
 
 ```bash
+"$APP_ROOT/.runtime/bin/theraskill-agent" --project "$APP_ROOT" index plan \
+  --knowledge knowledge-phase7-20261028 --mode lexical
 "$APP_ROOT/.runtime/bin/theraskill-agent" --project "$APP_ROOT" index build \
   --knowledge knowledge-phase7-20261028 --id knowledge-v1 --mode lexical
+"$APP_ROOT/.runtime/bin/theraskill-agent" --project "$APP_ROOT" index verify \
+  --index knowledge-v1
 "$APP_ROOT/.runtime/bin/theraskill-agent" --project "$APP_ROOT" knowledge activate \
   --index knowledge-v1 --knowledge knowledge-phase7-20261028
+"$APP_ROOT/.runtime/bin/theraskill-agent" --project "$APP_ROOT" index search \
+  --index knowledge-v1 --query 'anxiety low mood' --skill emotional-support --limit 3
 "$APP_ROOT/.runtime/bin/theraskill-agent" --project "$APP_ROOT" knowledge list
 "$APP_ROOT/.runtime/bin/theraskill-agent" --project "$APP_ROOT" simulation list
 ```
+
+In **Knowledge & indexes**, you can also select the installed knowledge, choose Fast search, and build a searchable version. Then select **Verify**, **Activate**, and **Try searching**. The 20261029 UI shows processed records under **View progress**, without a progress bar; a long-running status does not by itself mean the build is stuck. If it fails with `disk I/O error`, check the index volume and your user quota. After restoring enough space, use **Resume saved progress** with the same index ID. The lexical phase restarts from the beginning; an incomplete index cannot be activated.
 
 For semantic retrieval, use `--mode hybrid` **before the first build**, after checking the embedding connection and confirming the app was not installed with `--no-retrieval`. Replacing an already active index requires a reviewed behavior comparison report; the first-activation command above cannot simply be repeated. Restart the web process after installing resources, check **Getting started** on the home page, and try an Assistant knowledge query and a simulation session.
 

@@ -127,6 +127,7 @@ def _lexical(source, output, mapping, progress, cancel):
                 progress('lexical', dict(counts), bytes=processed_bytes, total_bytes=source_bytes)
         if not counts['total']:
             raise ValueError('knowledge input contains no records')
+        progress('optimizing', dict(counts), bytes=source_bytes, total_bytes=source_bytes)
         db.executescript('CREATE INDEX family ON retrieval_meta(dedup_family); CREATE INDEX route ON retrieval_meta(default_route);')
         metadata.create_indexes(meta)
         labels.create_indexes(label)
@@ -340,6 +341,7 @@ def build_index(knowledge, output, *, mode='lexical', embedding_config=None,
                 counts = state['counts']
             embedding = _dense(output, config, counts, notify, cancel) if config else None
             _check(cancel)
+            notify('finalizing', counts)
             if digest(source) != signature['knowledge_sha256']:
                 raise ValueError('knowledge input changed during build')
             files = {}
@@ -352,6 +354,7 @@ def build_index(knowledge, output, *, mode='lexical', embedding_config=None,
                         'artifacts': {'sqlite_fts': DB, 'metadata_v2': 'metadata_v2.sqlite', 'compact_label': 'compact_label_v1.sqlite',
                                       **({'faiss_shards': 'faiss_shards/manifest.json'} if embedding else {})}}
             # Validate before publishing the completion marker.
+            notify('verifying', counts)
             _verify_files(output, manifest)
             write_json(output / 'manifest.json', manifest)
             (output / 'embedding-checkpoint.sqlite').unlink(missing_ok=True)

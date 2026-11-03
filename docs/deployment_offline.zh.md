@@ -95,7 +95,9 @@ embedding:
 
 安装知识后还需构建并启用索引；安装程序不会自行发起海量 embedding 请求。先运行
 `index plan` 查看规模，再从工作台构建，或用 CLI。下面的词法模式不请求 embedding，
-但全量知识仍可能耗时较久；要使用语义检索，改用 `--mode hybrid` 并确保 BGE 等
+但全量知识仍可能耗时较久；本资源的词法索引新增空间粗估约 37.7 GiB，另有约
+6.3 GiB 的解包知识。须同时检查用户配额和整盘空间。要使用语义检索，改用
+`--mode hybrid` 并确保 BGE 等
 Embedding 服务已通过连接测试：
 
 ```bash
@@ -104,7 +106,11 @@ Embedding 服务已通过连接测试：
 ~/TheraSkillAgent/.runtime/bin/theraskill-agent --project ~/TheraSkillAgent \
   index build --knowledge knowledge-phase7-20261028 --id knowledge-v1 --mode lexical
 ~/TheraSkillAgent/.runtime/bin/theraskill-agent --project ~/TheraSkillAgent \
+  index verify --index knowledge-v1
+~/TheraSkillAgent/.runtime/bin/theraskill-agent --project ~/TheraSkillAgent \
   knowledge activate --index knowledge-v1 --knowledge knowledge-phase7-20261028
+~/TheraSkillAgent/.runtime/bin/theraskill-agent --project ~/TheraSkillAgent \
+  index search --index knowledge-v1 --query '焦虑 情绪低落' --skill emotional-support --limit 3
 ```
 
 资源安装或索引启用后，重启工作台，并在首页 **使用准备** 检查模型、活动索引、

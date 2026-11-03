@@ -19,7 +19,9 @@ def test_knowledge_build_progress_bar(tmp_path):
            "parameters": {"knowledge": "demo", "index_id": "demo-index"},
            "progress": {"stage": "lexical", "counts": {"total": 500},
                         "bytes": 5000, "total_bytes": 10000}}
-    catalog = {"indexes": [], "knowledge": [], "simulation": [], "jobs": [job]}
+    catalog = {"indexes": [], "knowledge": [{"id": "full", "manifest": {
+        "files": {"knowledge.jsonl": {"size": 6742984759}}, "counts": {"total": 2196286}}}],
+        "simulation": [], "jobs": [job]}
 
     def handle(route):
         path = route.request.url.split("/api/resources")[-1].split("?")[0]
@@ -52,6 +54,17 @@ def test_knowledge_build_progress_bar(tmp_path):
             assert page.get_by_text("500 条知识已处理").is_visible()
             assert page.get_by_text("View progress").count() == 0
             page.screenshot(path=str(tmp_path / "knowledge-progress.png"), full_page=True)
+            job['progress'] = {"stage": "verifying", "counts": {"total": 500}}
+            page.reload()
+            verifying = page.get_by_role("progressbar", name="核对索引完整性")
+            verifying.wait_for()
+            assert verifying.get_attribute("value") is None
+            job.update(status="failed", error="disk I/O error", error_code="storage_write_failed")
+            page.reload()
+            playwright.expect(page.get_by_text("索引写入失败。请检查索引所在目录的用户配额、可用空间和磁盘状态；修复后从已保存进度继续。")).to_be_visible()
+            page.get_by_role("button", name="添加知识").first.click()
+            page.get_by_label("选择已安装知识").select_option("full")
+            playwright.expect(page.get_by_text("知识文件占 6.3 GiB；关键词索引粗略预估还需 37.7 GiB。请确认安装目录的可用空间及当前用户配额。")).to_be_visible()
             assert not errors, errors
             browser.close()
     finally:

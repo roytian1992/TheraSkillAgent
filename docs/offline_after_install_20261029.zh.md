@@ -70,16 +70,24 @@ vi "$APP_ROOT/configs/theraskill/providers.local.yaml"
   --archive /path/to/simulation-phase7-20261028.zip
 ```
 
-**安装知识还不等于可以检索。** 首次启用时再执行以下命令。词法索引不调用 Embedding，适合先打通流程；全量知识约 220 万条，构建和校验可能耗时较久，并需预留额外磁盘空间。
+**安装知识还不等于可以检索。** 先预估索引所需空间，再构建和首次启用。词法索引不调用 Embedding；全量知识约 220 万条，`index plan` 对这份资源给出的新增索引空间粗估约 **37.7 GiB**，此外还要存放约 **6.3 GiB** 的解包知识、临时文件和项目数据。请检查**当前用户配额**，不能只看 `df -h` 的整盘剩余空间。
 
 ```bash
+"$APP_ROOT/.runtime/bin/theraskill-agent" --project "$APP_ROOT" index plan \
+  --knowledge knowledge-phase7-20261028 --mode lexical
 "$APP_ROOT/.runtime/bin/theraskill-agent" --project "$APP_ROOT" index build \
   --knowledge knowledge-phase7-20261028 --id knowledge-v1 --mode lexical
+"$APP_ROOT/.runtime/bin/theraskill-agent" --project "$APP_ROOT" index verify \
+  --index knowledge-v1
 "$APP_ROOT/.runtime/bin/theraskill-agent" --project "$APP_ROOT" knowledge activate \
   --index knowledge-v1 --knowledge knowledge-phase7-20261028
+"$APP_ROOT/.runtime/bin/theraskill-agent" --project "$APP_ROOT" index search \
+  --index knowledge-v1 --query '焦虑 情绪低落' --skill emotional-support --limit 3
 "$APP_ROOT/.runtime/bin/theraskill-agent" --project "$APP_ROOT" knowledge list
 "$APP_ROOT/.runtime/bin/theraskill-agent" --project "$APP_ROOT" simulation list
 ```
+
+也可在「知识与索引」选择已安装知识、快速搜索模式并点击「构建可检索版本」，完成后依次点击「验证」「启用」「查找测试」。20261029 版网页的「查看进度详情」显示处理条数而非进度条；界面长时间显示「进行中」不一定是卡死。若失败提示 `disk I/O error`，先检查索引目录所在磁盘及用户配额；空间足够后，用同一版本 ID 选择「从已保存进度继续」。词法阶段会从头重建，不能直接复用半成品。不要启用未完成的索引。
 
 需要语义检索时，在**第一次构建前**将 `--mode lexical` 改为 `--mode hybrid`，并先确认 Embedding 连接通过、安装时没有用 `--no-retrieval`。若已有活动索引，切换到新索引需要效果比较报告，不能直接重复上述首次启用命令。知识和场景安装完成后，停止并重新启动网页进程；在首页「使用准备」检查状态，再分别试一次助手检索和模拟训练。
 

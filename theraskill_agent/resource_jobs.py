@@ -1,5 +1,6 @@
 """Durable resource job records; interruption is explicit and builds can resume."""
 from __future__ import annotations
+import errno
 import os
 import hashlib
 import json
@@ -17,6 +18,17 @@ from .text import redact_secrets
 _POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix='resource-job')
 _EVENTS = {}
 _LOCK = threading.Lock()
+
+
+def _failure_details(exc, operation):
+    message = redact_secrets(str(exc))
+    if isinstance(exc, OSError) and exc.errno in {errno.EDQUOT, errno.ENOSPC}:
+        return 'storage_full', message
+    if operation in {'build', 'reindex', 'install', 'catalog'} and isinstance(exc, sqlite3.OperationalError) and any(
+        phrase in message.lower() for phrase in ('disk i/o error', 'database or disk is full')
+    ):
+        return 'storage_write_failed', message
+    return None, message
 
 
 def cancel_running_jobs():
@@ -305,13 +317,16 @@ def _enqueue(record, event):
         try:
             if event.is_set():
                 raise BuildCancelled('cancelled before starting')
-            record['status'] = 'running'; record.pop('error', None); write_json(_path(job_id), record)
+            record['status'] = 'running'; record.pop('error', None); record.pop('error_code', None); write_json(_path(job_id), record)
             def progress(value):
                 record['progress'] = value; write_json(_path(job_id), record)
             result = run_operation(record['operation'], record.get('parameters') or {}, progress=progress, cancel=event.is_set)
             record.update(status='succeeded', result=result)
         except Exception as exc:
-            record.update(status='cancelled' if event.is_set() or isinstance(exc, BuildCancelled) else 'failed', error=redact_secrets(str(exc)))
+            error_code, message = _failure_details(exc, record['operation'])
+            record.update(status='cancelled' if event.is_set() or isinstance(exc, BuildCancelled) else 'failed', error=message)
+            if error_code:
+                record['error_code'] = error_code
         finally:
             write_json(_path(job_id), record)
             with _LOCK:
@@ -346,6 +361,7 @@ def resume_job(job_id, *, rebuild_catalog=False):
         record = dict(record)
         record.update(status='queued', pid=os.getpid())
         record.pop('error', None)
+        record.pop('error_code', None)
         write_json(_path(job_id), record)
     _enqueue(record, threading.Event())
     return dict(record)

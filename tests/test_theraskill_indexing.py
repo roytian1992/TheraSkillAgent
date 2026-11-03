@@ -2,6 +2,8 @@ from __future__ import annotations
 import io
 import json
 import base64
+import errno
+import sqlite3
 import struct
 import shutil
 import tarfile
@@ -317,6 +319,27 @@ def test_workbench_resource_upload_and_build(workspace):
         assert job['status'] == 'succeeded', job
         assert client.get('/api/resources').json()['indexes'][0]['id'] == 'ui-demo'
         assert client.post('/api/resources/jobs', json={'operation': 'unknown'}).status_code == 400
+
+
+@pytest.mark.parametrize('failure,code', [
+    (OSError(errno.EDQUOT, 'Disk quota exceeded'), 'storage_full'),
+    (sqlite3.OperationalError('disk I/O error'), 'storage_write_failed'),
+])
+def test_resource_job_explains_storage_failure(workspace, monkeypatch, failure, code):
+    from theraskill_agent import resource_jobs
+
+    def fail(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(resource_jobs, 'run_operation', fail)
+    job = resource_jobs.submit_job('build', {'knowledge': 'fixture', 'index_id': 'fixture'})
+    for _ in range(100):
+        record = resource_jobs.get_job(job['id'])
+        if record['status'] == 'failed':
+            break
+        time.sleep(.01)
+    assert record['status'] == 'failed'
+    assert record['error_code'] == code
 
 
 def test_managed_tools_do_not_require_a_legacy_release(workspace):

@@ -108,7 +108,9 @@ required. The installer validates each ZIP's internal `package.json`.
 Knowledge installation does not automatically build or activate an index.
 Inspect the build size with `index plan`, then build from the workbench or CLI.
 The lexical example below does not call the embedding service but may take
-time for the full corpus. Use `--mode hybrid` for semantic retrieval after
+time for the full corpus. Its rough index estimate is 37.7 GiB beyond the
+6.3 GiB unpacked knowledge file; check the user's quota as well as
+filesystem-wide free space. Use `--mode hybrid` for semantic retrieval after
 the embedding connection passes its live check:
 
 ```bash
@@ -117,7 +119,11 @@ the embedding connection passes its live check:
 ~/TheraSkillAgent/.runtime/bin/theraskill-agent --project ~/TheraSkillAgent \
   index build --knowledge knowledge-phase7-20261028 --id knowledge-v1 --mode lexical
 ~/TheraSkillAgent/.runtime/bin/theraskill-agent --project ~/TheraSkillAgent \
+  index verify --index knowledge-v1
+~/TheraSkillAgent/.runtime/bin/theraskill-agent --project ~/TheraSkillAgent \
   knowledge activate --index knowledge-v1 --knowledge knowledge-phase7-20261028
+~/TheraSkillAgent/.runtime/bin/theraskill-agent --project ~/TheraSkillAgent \
+  index search --index knowledge-v1 --query 'anxiety low mood' --skill emotional-support --limit 3
 ```
 
 Restart the workbench after installing resources or activating an index.
