@@ -59,11 +59,19 @@ def test_knowledge_build_progress_bar(tmp_path):
             verifying = page.get_by_role("progressbar", name="核对索引完整性")
             verifying.wait_for()
             assert verifying.get_attribute("value") is None
+            job.update(operation="verify", progress={"stage": "verifying", "bytes": 50, "total_bytes": 100})
+            page.reload()
+            assert page.get_by_role("progressbar", name="核对索引完整性").get_attribute("value") == "50"
+            job.update(operation="activate", progress={"stage": "checking_databases", "completed": 2, "total": 3})
+            page.reload()
+            assert page.get_by_role("progressbar", name="检查索引数据库").get_attribute("value") == "67"
+            job.update(operation="build", progress={"stage": "verifying", "counts": {"total": 500}})
             job.update(status="failed", error="disk I/O error", error_code="storage_write_failed")
             page.reload()
             playwright.expect(page.get_by_text("索引写入失败。请检查索引所在目录的用户配额、可用空间和磁盘状态；修复后从已保存进度继续。")).to_be_visible()
             page.get_by_role("button", name="添加知识").first.click()
             page.get_by_label("选择已安装知识").select_option("full")
+            assert page.get_by_label("检索方式").locator("option").all_text_contents() == ["关键词检索", "语义与关键词检索"]
             playwright.expect(page.get_by_text("知识文件占 6.3 GiB；关键词索引粗略预估还需 37.7 GiB。请确认安装目录的可用空间及当前用户配额。")).to_be_visible()
             assert not errors, errors
             browser.close()

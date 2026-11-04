@@ -81,6 +81,22 @@ def test_build_reports_source_byte_progress(workspace):
     assert complete['bytes'] == complete['total_bytes'] == DEMO.stat().st_size
 
 
+def test_verify_and_activate_report_real_progress(workspace):
+    from theraskill_agent.paths import data_root
+    index = data_root() / 'indexes' / 'progress-demo'
+    build_index(DEMO, index)
+    events = []
+    verify_index(index, progress=events.append)
+    checks = [event for event in events if event['stage'] == 'verifying']
+    assert checks[0]['bytes'] == 0
+    assert checks[-1]['bytes'] == checks[-1]['total_bytes'] > 0
+    assert events[-1] == {'stage': 'checking_databases', 'completed': 3, 'total': 3}
+    events.clear()
+    resources.activate_index('progress-demo', progress=events.append)
+    assert any(event['stage'] == 'verifying' for event in events)
+    assert events[-1]['stage'] == 'activating'
+
+
 def test_custom_mapping_and_phase6(workspace):
     source = workspace / 'custom.jsonl'
     source.write_text(json.dumps({'key': 'x', 'body': {'text': 'evidence quote'}, 'review_status': 'approved', 'retrieval_policy': {'retrieval_eligible': True}})+'\n')

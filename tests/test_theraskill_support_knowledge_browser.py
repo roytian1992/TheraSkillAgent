@@ -139,10 +139,46 @@ def open_drawer(page, base):
     page.get_by_role('heading', name='原始知识内容', exact=True).wait_for()
 
 
+def test_long_transcript_scroll_and_readable_evidence(knowledge_browser):
+    page, api, base, artifacts, expect = knowledge_browser
+    original = deepcopy(api.session['messages'][0])
+    original['evidence_summary'][0].update(
+        label='method_label_or_pattern',
+        excerpt='method_label_or_pattern Not distorted. The source label indicates no clear cognitive distortion. '
+                '[{"source_id":"thinking_traps.jsonl:261","thought":"feeling down"}]',
+    )
+    api.session['messages'] = [
+        {**deepcopy(original), 'message_id': f'assistant-{index}', 'sequence': index,
+         'text': ('Clinical discussion and therapeutic context. ' * 18),
+         'evidence_summary': original['evidence_summary'] if index == 7 else []}
+        for index in range(1, 8)
+    ]
+    page.goto(base + '/theraskill/support/')
+    pane = page.locator('.conversation')
+    expect(pane).to_be_visible()
+    assert pane.evaluate('(node) => node.scrollHeight > node.clientHeight')
+    assert page.evaluate('window.scrollY') == 0
+    assert page.locator('.workspace-header').bounding_box()['y'] >= 0
+    page.locator('.evidence-details summary').click()
+    row = page.locator('.evidence-row')
+    expect(row).to_contain_text('认知模式')
+    expect(row).to_contain_text('Not distorted')
+    assert 'source_id' not in row.inner_text()
+    assert 'thinking_traps.jsonl' not in row.inner_text()
+    page.screenshot(path=str(artifacts / 'assistant-readable-evidence.png'))
+    before = pane.evaluate('(node) => node.scrollTop')
+    page.mouse.move(900, 450)
+    page.mouse.wheel(0, -1000)
+    page.wait_for_timeout(150)
+    assert pane.evaluate('(node) => node.scrollTop') < before
+    assert page.evaluate('window.scrollY') == 0
+    page.screenshot(path=str(artifacts / 'assistant-long-transcript.png'))
+
+
 def test_evidence_original_nested_content_guarded_save_and_candidate_handoff(knowledge_browser):
     page, api, base, artifacts, expect = knowledge_browser
     open_drawer(page, base)
-    expect(page.locator('.ke-citation').get_by_text('这是一段固定的历史引用。', exact=True)).to_be_visible()
+    expect(page.locator('.ke-citation')).to_have_count(0)
     expect(page.get_by_text('可以告诉我哪里理解偏了吗？', exact=True)).to_be_visible()
     assert '[object Object]' not in page.get_by_role('dialog').inner_text()
     assert page.get_by_role('dialog').locator('pre').count() == 0
@@ -152,7 +188,7 @@ def test_evidence_original_nested_content_guarded_save_and_candidate_handoff(kno
     page.get_by_text('草稿已保存，当前引用保持不变。', exact=False).wait_for()
     patch = next(call['body'] for call in api.calls if call['method'] == 'PATCH')
     assert patch == {'summary': '只修改摘要，不覆盖数组。', 'expected_revision': 3, 'expected_index_id': 'index-fixture'}
-    expect(page.locator('.ke-citation').get_by_text('这是一段固定的历史引用。', exact=True)).to_be_visible()
+    expect(page.locator('.ke-citation')).to_have_count(0)
     expect(page.get_by_text('原始知识摘要：邀请对方修正你的理解。', exact=True)).to_be_visible()
     page.get_by_role('button', name='重新生成索引', exact=True).click()
     page.get_by_role('region', name='索引任务', exact=True).wait_for()

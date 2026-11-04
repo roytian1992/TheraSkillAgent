@@ -270,7 +270,7 @@ def run_operation(operation, parameters, *, progress=None, cancel=None):
     if operation == 'catalog':
         return _build_source_catalog(p.get('source'), p.get('output'), expected_sha256=p.get('expected_sha256'), mapping=p.get('mapping'), source_stat=p.get('source_stat'), progress=progress, cancel=cancel)
     if operation == 'verify':
-        return verify_index(resources.index_path(p['index']), scratch_root=p.get('scratch_root'))
+        return verify_index(resources.index_path(p['index']), scratch_root=p.get('scratch_root'), progress=progress)
     if operation == 'search':
         if p.get('production'):
             from .resources import using_index
@@ -286,7 +286,7 @@ def run_operation(operation, parameters, *, progress=None, cancel=None):
             filters=p.get('filters'),
         )
     if operation == 'activate':
-        return resources.activate_index(p['index'], knowledge=p.get('knowledge'), scratch_root=p.get('scratch_root'), report_id=p.get('report_id'))
+        return resources.activate_index(p['index'], knowledge=p.get('knowledge'), scratch_root=p.get('scratch_root'), report_id=p.get('report_id'), progress=progress)
     if operation == 'rollback':
         return resources.rollback_index()
     if operation == 'install':

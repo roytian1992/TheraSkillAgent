@@ -93,19 +93,23 @@ def list_resources():
     return result
 
 
-def activate_index(index, *, knowledge=None, scratch_root=None, report_id=None):
+def activate_index(index, *, knowledge=None, scratch_root=None, report_id=None, progress=None):
     root = data_root().resolve()
     path = index_path(index).resolve()
     if not path.is_relative_to(root / 'indexes'):
         raise ValueError('install or build the index under the project indexes directory before activation')
-    manifest = verify_index(path, scratch_root=scratch_root)
+    manifest = verify_index(path, scratch_root=scratch_root, progress=progress)
     if knowledge:
+        if progress:
+            progress({'stage': 'checking_knowledge'})
         source = knowledge_path(knowledge)
         if digest(source) != manifest['input']['knowledge_sha256']:
             raise ValueError('knowledge and index fingerprints do not match')
     selection = {'schema_version': 'theraskill_active_index_v1', 'index': path.relative_to(root).as_posix(),
                  'index_id': manifest['index_id'], 'knowledge_sha256': manifest['input']['knowledge_sha256'],
                  'mode': manifest['input']['mode'], 'embedding': manifest.get('embedding')}
+    if progress:
+        progress({'stage': 'activating'})
     with exclusive(root / '.activation.lock'):
         current = root / 'active-index.json'
         if current.is_file():

@@ -9,11 +9,15 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
 
-def digest(path):
+def digest(path, progress=None):
     h = hashlib.sha256()
+    completed = 0
     with Path(path).open('rb') as f:
         for chunk in iter(lambda: f.read(4 * 1024 * 1024), b''):
             h.update(chunk)
+            completed += len(chunk)
+            if progress:
+                progress(completed)
     return h.hexdigest()
 
 

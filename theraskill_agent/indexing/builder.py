@@ -341,21 +341,34 @@ def build_index(knowledge, output, *, mode='lexical', embedding_config=None,
                 counts = state['counts']
             embedding = _dense(output, config, counts, notify, cancel) if config else None
             _check(cancel)
-            notify('finalizing', counts)
-            if digest(source) != signature['knowledge_sha256']:
+            indexed_files = [path for path in sorted(output.rglob('*'))
+                             if path.is_file() and path.name not in {'build-state.json', '.build.lock', 'embedding-checkpoint.sqlite'}]
+            total_bytes = source.stat().st_size + sum(path.stat().st_size for path in indexed_files)
+            completed_bytes = 0
+            reported_bytes = 0
+            notify('finalizing', counts, bytes=0, total_bytes=total_bytes)
+            def report_hash_bytes(value):
+                nonlocal reported_bytes
+                current = completed_bytes + value
+                if current - reported_bytes >= 32 * 1024 * 1024 or current == total_bytes:
+                    reported_bytes = current
+                    notify('finalizing', counts, bytes=current, total_bytes=total_bytes)
+            if digest(source, progress=report_hash_bytes) != signature['knowledge_sha256']:
                 raise ValueError('knowledge input changed during build')
+            completed_bytes += source.stat().st_size
             files = {}
-            for path in sorted(output.rglob('*')):
-                if path.is_file() and path.name not in {'build-state.json', '.build.lock', 'embedding-checkpoint.sqlite'}:
-                    relative = path.relative_to(output).as_posix()
-                    files[relative] = {'sha256': digest(path), 'size': path.stat().st_size}
+            for path in indexed_files:
+                relative = path.relative_to(output).as_posix()
+                files[relative] = {'sha256': digest(path, progress=report_hash_bytes), 'size': path.stat().st_size}
+                completed_bytes += path.stat().st_size
+            notify('finalizing', counts, bytes=total_bytes, total_bytes=total_bytes)
             manifest = {'schema_version': SCHEMA, 'status': 'complete', 'index_id': 'idx_' + identity(signature)[:24],
                         'input': signature, 'counts': counts, 'embedding': embedding, 'files': files,
                         'artifacts': {'sqlite_fts': DB, 'metadata_v2': 'metadata_v2.sqlite', 'compact_label': 'compact_label_v1.sqlite',
                                       **({'faiss_shards': 'faiss_shards/manifest.json'} if embedding else {})}}
             # Validate before publishing the completion marker.
             notify('verifying', counts)
-            _verify_files(output, manifest)
+            _verify_files(output, manifest, progress=lambda event: progress(event) if progress else None)
             write_json(output / 'manifest.json', manifest)
             (output / 'embedding-checkpoint.sqlite').unlink(missing_ok=True)
             state.update(status='complete', stage='complete', counts=counts)
@@ -370,15 +383,31 @@ def build_index(knowledge, output, *, mode='lexical', embedding_config=None,
             raise
 
 
-def _verify_files(root, manifest, *, scratch_root=None):
+def _verify_files(root, manifest, *, scratch_root=None, progress=None):
     if manifest.get('schema_version') != SCHEMA or manifest.get('status') != 'complete':
         raise ValueError('not a completed supported index')
     if not manifest.get('files'):
         raise ValueError('index file inventory is empty')
+    total_bytes = sum(record['size'] for record in manifest['files'].values())
+    completed_bytes = 0
+    reported_bytes = 0
+    if progress:
+        progress({'stage': 'verifying', 'bytes': 0, 'total_bytes': total_bytes})
     for name, record in manifest['files'].items():
         path = safe_path(root, name)
-        if not path.is_file() or path.stat().st_size != record['size'] or digest(path) != record['sha256']:
+        if not path.is_file() or path.stat().st_size != record['size']:
             raise ValueError(f'index file integrity check failed: {name}')
+        def report_file_bytes(value):
+            nonlocal reported_bytes
+            current = completed_bytes + value
+            if progress and (current - reported_bytes >= 32 * 1024 * 1024 or current == total_bytes):
+                reported_bytes = current
+                progress({'stage': 'verifying', 'bytes': current, 'total_bytes': total_bytes})
+        if digest(path, progress=report_file_bytes if progress else None) != record['sha256']:
+            raise ValueError(f'index file integrity check failed: {name}')
+        completed_bytes += record['size']
+    if progress:
+        progress({'stage': 'checking_databases', 'completed': 0, 'total': 3})
     for reference in manifest.get('artifacts', {}).values():
         if reference not in manifest['files']:
             raise ValueError('artifact is not declared in file inventory')
@@ -387,7 +416,7 @@ def _verify_files(root, manifest, *, scratch_root=None):
         scratch_root.mkdir(parents=True, exist_ok=True)
     scratch = tempfile.TemporaryDirectory(prefix='theraskill-verify-', dir=scratch_root) if scratch_root is not None else nullcontext(None)
     with scratch as temporary:
-        for name in (DB, 'metadata_v2.sqlite', 'compact_label_v1.sqlite'):
+        for checked, name in enumerate((DB, 'metadata_v2.sqlite', 'compact_label_v1.sqlite'), 1):
             if name not in manifest['files']:
                 raise ValueError(f'required index artifact missing: {name}')
             sqlite_path = Path(root) / name
@@ -408,7 +437,11 @@ def _verify_files(root, manifest, *, scratch_root=None):
                         raise ValueError('index row counts differ from manifest')
             if temporary:
                 sqlite_path.unlink()
+            if progress:
+                progress({'stage': 'checking_databases', 'completed': checked, 'total': 3})
     if manifest.get('embedding'):
+        if progress:
+            progress({'stage': 'checking_vectors'})
         import faiss
         shard_manifest = read_json(safe_path(root, manifest['artifacts']['faiss_shards']))
         count = 0
@@ -431,10 +464,10 @@ def _verify_files(root, manifest, *, scratch_root=None):
             raise ValueError('vector coverage differs from manifest')
 
 
-def verify_index(path, *, scratch_root=None):
+def verify_index(path, *, scratch_root=None, progress=None):
     root = Path(path).expanduser().resolve()
     manifest = read_json(root / 'manifest.json')
-    _verify_files(root, manifest, scratch_root=scratch_root)
+    _verify_files(root, manifest, scratch_root=scratch_root, progress=progress)
     return manifest
 
 

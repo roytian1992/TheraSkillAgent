@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import MemoryDrawer from './MemoryDrawer'
 import KnowledgeEntry from '../../shared/KnowledgeEntry'
+import { knowledgeLabel, knowledgePreview } from '../../shared/knowledgePresentation'
 import {
   completeSession,
   createSession,
@@ -133,10 +134,10 @@ function KnowledgeDetailDrawer({ item, onClose }: { item: EvidenceSummary | null
   return <>
     <button className="drawer-scrim" tabIndex={-1} onClick={requestClose} aria-label={t('关闭知识详情', 'Close knowledge details')} />
     <aside ref={dialog} className="knowledge-drawer" tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="knowledge-detail-title">
-      <header><div><span className="drawer-kicker">{t('参考依据', 'Evidence')}</span><h2 id="knowledge-detail-title">{item.label}</h2></div><button className="icon-button" onClick={requestClose} aria-label={t('关闭知识详情', 'Close knowledge details')}><X size={17} /></button></header>
+      <header><div><span className="drawer-kicker">{t('参考依据', 'Evidence')}</span><h2 id="knowledge-detail-title">{knowledgeLabel(item.label, locale)}</h2></div><button className="icon-button" onClick={requestClose} aria-label={t('关闭知识详情', 'Close knowledge details')}><X size={17} /></button></header>
       <div className="knowledge-drawer-body">
         {dismiss && <div className="ke-dismiss" role="alert"><p>{t('草稿还有未保存的修改。', 'Your draft has unsaved changes.')}</p><button onClick={() => setDismiss(false)}>{t('继续编辑', 'Keep editing')}</button><button onClick={() => close.current()}>{t('放弃修改并关闭', 'Discard changes and close')}</button></div>}
-        {unitId ? <KnowledgeEntry key={[unitId,indexId,item.knowledge_sha256].join(':')} id={unitId} indexId={indexId} checksum={item.knowledge_sha256} citation={item} locale={locale} onDirtyChange={value => { dirty.current = value }} /> : <div className="ke-citation"><h3>{t('对话中保存的引用', 'Citation saved with the response')}</h3><blockquote>{item.excerpt || item.label}</blockquote><p>{t('该历史条目没有可定位的知识 ID。', 'This historical citation has no knowledge entry ID.')}</p></div>}
+        {unitId ? <KnowledgeEntry key={[unitId,indexId,item.knowledge_sha256].join(':')} id={unitId} indexId={indexId} checksum={item.knowledge_sha256} citation={item} locale={locale} onDirtyChange={value => { dirty.current = value }} /> : <div className="ke-citation"><h3>{t('对话中保存的引用', 'Citation saved with the response')}</h3><blockquote>{knowledgePreview(item.excerpt, item.label) || knowledgeLabel(item.label, locale)}</blockquote><p>{t('该历史条目没有可定位的知识 ID。', 'This historical citation has no knowledge entry ID.')}</p></div>}
       </div>
     </aside>
   </>
@@ -275,14 +276,11 @@ function Message({ message, sessionId, onError, onFeedbackSubmitted, onOpenEvide
               {message.evidence_summary.map((item, index) => (
                 <button className="evidence-row" key={`${item.label}-${index}`} onClick={() => onOpenEvidence(item)} title={tr('查看知识详情')}>
                   <div>
-                    <span className="evidence-row-title">{item.label.replaceAll('_', ' ')}</span>
-                    {item.excerpt && <blockquote style={{whiteSpace:'pre-wrap'}}>{item.excerpt}</blockquote>}
-                    {(item.dataset || item.source_id) && <small className="evidence-row-detail">{item.dataset || tr('知识库')} · {item.source_id ? `${item.source_id.slice(0, 18)}…` : ''}</small>}
+                    <span className="evidence-row-title">{knowledgeLabel(item.label, locale)}</span>
+                    {knowledgePreview(item.excerpt, item.label) && <blockquote>{knowledgePreview(item.excerpt, item.label)}</blockquote>}
                     {item.used_for && <small className="evidence-row-detail">{tr("用途：")}{item.used_for}</small>}
-                    {item.boundary && <small className="evidence-row-detail">{tr("边界：")}{item.boundary}</small>}
-                    {item.inference && <small className="evidence-row-detail">{item.inference}</small>}
                   </div>
-                  <small className="evidence-row-role">{readableRole(item.role)}{item.source_type ? ` · ${item.source_type}` : ''}<ExternalLink size={12} /></small>
+                  <small className="evidence-row-role">{readableRole(item.role)}<ExternalLink size={12} /></small>
                 </button>
               ))}
             </div>
@@ -410,7 +408,7 @@ export default function App() {
   const [selectedEvidence, setSelectedEvidence] = useState<EvidenceSummary | null>(null)
   const [workspaceRoute, setWorkspaceRoute] = useState<WorkspaceRoute | null>(null)
   const [contributionLoading, setContributionLoading] = useState(false)
-  const transcriptEnd = useRef<HTMLDivElement>(null)
+  const conversationRef = useRef<HTMLDivElement>(null)
 
   const pending = session?.generation.status === 'pending'
   const failed = session?.generation.status === 'failed'
@@ -502,8 +500,9 @@ export default function App() {
   }, [session?.session_id, session?.generation.status])
 
   useEffect(() => {
-    transcriptEnd.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [session?.messages.length, pending])
+    const pane = conversationRef.current
+    if (pane) pane.scrollTop = pane.scrollHeight
+  }, [session?.session_id, session?.messages.length, pending])
 
   const orderedSessions = useMemo(
     () => [...sessions].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
@@ -662,7 +661,7 @@ export default function App() {
 
         {session && <SafetyAndPlanCard session={session} onSession={setSession} onError={setError} />}
 
-        <div className="conversation">
+        <div className="conversation" ref={conversationRef}>
           {!session?.messages.length && (
             <div className="empty-state"><div className="assistant-welcome-mark"><MessageCircle size={30} /></div><p className="empty-kicker">{tr('TheraSkill 助手')}</p><h2>{tr("今天想完成什么？")}</h2><p className="empty-description">{tr('可以从一个问题、一段对话或一个教学目标开始。我会先理解你的意图，再决定是否需要知识、技能或任务。')}</p><div className="starter-prompts"><button onClick={() => setDraft(tr('帮我理解这段对话'))}>{tr('帮我理解这段对话')}</button><button onClick={() => setDraft(tr('查找适用的治疗知识'))}>{tr('查找适用的治疗知识')}</button><button onClick={() => setDraft(tr('帮我设计一个练习'))}>{tr('帮我设计一个练习')}</button></div><div className="assistant-workspaces"><span className="assistant-workspaces-label">{tr('需要直接处理时：')}</span><nav aria-label={tr('专业工作区')}><a href={workbenchHref('learning')}><BookOpen size={14} /><span>{tr('课程与学习')}</span></a><a href={workbenchHref('transcript')}><FileText size={14} /><span>{tr('对话分析')}</span></a><a href={workbenchHref('extraction')}><Database size={14} /><span>{tr('知识抽取')}</span></a><a href={workbenchHref('knowledge')}><Database size={14} /><span>{tr('知识与索引')}</span></a><a href={workbenchHref('tasks')}><ClipboardList size={14} /><span>{tr('任务与历史')}</span></a></nav></div></div>
           )}
@@ -691,7 +690,6 @@ export default function App() {
               <a href={workbenchHref(workspaceRoute.workspace)}>{tr('进入工作区')} <ExternalLink size={13} /></a>
             </div>
           )}
-          <div ref={transcriptEnd} />
         </div>
 
         <footer className="composer-wrap">
