@@ -98,6 +98,26 @@ curl http://127.0.0.1:5176/api/overview
 
 源码更新并重新构建前端后，正在运行的 Python 进程仍可能保留旧接口。退出旧的 `theraskill-agent ui`（启动终端中按 Ctrl+C），再用原来的端口参数重新启动，最后刷新浏览器。若课程页提示微练习接口尚不可用，应先完成这个重启步骤；只刷新浏览器不能加载新的后端代码。
 
+### Mac 源码更新后的完整步骤
+
+源码仓库不跟踪 `views/theraskill/*/dist`，因此 `git pull` 后必须重新生成网页文件。请在项目根目录执行：
+
+```bash
+cd /你的路径/TheraSkillAgent
+git pull --ff-only origin main
+node --version                         # 需要 Node 20.19+ 或 22.12+
+npm ci                                  # 依赖没有变化时也可以跳过
+npm run build                           # 构建工作台、助手及其他网页入口
+```
+
+然后退出旧的 UI 进程，再启动同一个源码目录：
+
+```bash
+theraskill-agent ui --host 127.0.0.1 --port 5176
+```
+
+如果 `theraskill-agent` 指向其他 Python 环境，请改用该仓库环境中的 `python -m theraskill_agent ui --host 127.0.0.1 --port 5176`。浏览器中使用 `Cmd+Shift+R` 强制刷新；若仍显示旧页面，确认地址栏访问的是当前进程的端口，并检查页面 HTML 中的 `assets/index-*.js` 文件名已经变化。只重启服务或只刷新浏览器都不会替代前端构建步骤。
+
 ## 数据
 
 `project init` 会创建配置和小型自编知识示例。完整知识、索引与模拟素材需独立安装，参见 [知识和索引](knowledge_and_indexes.zh.md)。首次体验可直接在界面导入 `examples/knowledge/demo.jsonl`，选择词法构建，无需启动任何模型。没有完整素材时，不应把界面可启动理解为所有正式训练课程均已安装。

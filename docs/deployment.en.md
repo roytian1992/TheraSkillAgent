@@ -289,6 +289,26 @@ index management.
 
 After updating source and rebuilding the frontend, stop the existing `theraskill-agent ui` process with Ctrl+C in its terminal, then start it again with the same port arguments and refresh the browser. A running Python process can keep old API routes while serving newly built browser files. If the learning page reports that micro-practice endpoints are unavailable, restart the application; refreshing the browser alone cannot load new backend code.
 
+### Complete Mac source upgrade
+
+The repository does not track `views/theraskill/*/dist`, so `git pull` updates the browser source but leaves the previously built pages in place. From the project root, run:
+
+```bash
+cd /your/path/TheraSkillAgent
+git pull --ff-only origin main
+node --version                         # Node 20.19+ or 22.12+
+npm ci                                  # Can be skipped when dependencies are unchanged
+npm run build                           # Build the workbench, assistant, and other browser views
+```
+
+Stop the old UI process, then start the UI from this same checkout:
+
+```bash
+theraskill-agent ui --host 127.0.0.1 --port 5176
+```
+
+If `theraskill-agent` belongs to another Python environment, use `python -m theraskill_agent ui --host 127.0.0.1 --port 5176` from the environment attached to this checkout. In the browser, force reload with `Cmd+Shift+R`. If the old page remains, verify that the address uses the port of the new process and that the HTML references a changed `assets/index-*.js` filename. Restarting the server or refreshing the browser alone cannot replace the frontend build step.
+
 ## Model output troubleshooting
 
 Normal setup only requires model names, URLs, and keys. The shared model client
